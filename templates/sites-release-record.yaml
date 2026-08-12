@@ -1,0 +1,15 @@
+schema_version: "1.0"
+artifact_id: "synthetic-sites-release-001"
+release_state: "awaiting_approval"
+publication_approval: null
+canonical_source: "synthetic-source-record"
+source_ref: "synthetic-ref"
+build_hash: "sha256:synthetic-value"
+target_project: "private-runtime-value"
+intended_access: "private"
+routes_expected: []
+routes_verified: []
+deployment_status: null
+rollback_reference: null
+blockers: []
+

@@ -1,0 +1,20 @@
+fixture_type: "synthetic"
+project_id: "civicassist-pilot"
+topic: "Whether a fictional city service team should pilot a digital appointment assistant"
+audience: "Fictional municipal service leaders"
+purpose: "Decide whether to run a limited, human-supervised pilot"
+reporting_period:
+  start: "2030-01-01"
+  end: "2030-06-30"
+evidence_cutoff: "2030-06-30"
+last_fact_checked: "2030-07-02"
+required_outputs:
+  - "source-backed analytical report"
+  - "figure specifications"
+  - "neutral editable publication system"
+  - "local responsive website candidate"
+constraints:
+  network_allowed: false
+  publication_authorized: false
+  use_only_supplied_synthetic_evidence: true
+

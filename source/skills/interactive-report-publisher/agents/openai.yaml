@@ -1,0 +1,6 @@
+interface:
+  display_name: "Interactive Report Publisher"
+  short_description: "Build complete accessible report websites"
+  default_prompt: "Use $interactive-report-publisher to build a complete responsive editorial website from this approved report."
+policy:
+  allow_implicit_invocation: true

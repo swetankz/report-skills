@@ -1,0 +1,18 @@
+schema_version: "1.0"
+workflow_id: "synthetic-workflow-001"
+topic: "Synthetic report topic"
+audience: "Synthetic decision-making audience"
+purpose: "Evaluate an evidence-led publication workflow"
+reporting_period:
+  start: "2030-01-01"
+  end: "2030-06-30"
+evidence_cutoff: "2030-06-30"
+visibility: "private"
+requested_outputs: []
+selected_skills: []
+stages: []
+approval_gates: []
+blockers: []
+external_actions:
+  publication_authorized: false
+

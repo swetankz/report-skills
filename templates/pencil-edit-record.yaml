@@ -1,0 +1,14 @@
+schema_version: "1.0"
+artifact_id: "synthetic-pencil-edit-001"
+intended_file: "private-runtime-value"
+active_file_confirmed: false
+connectivity_confirmed: false
+original_hash: null
+backup_path: null
+backup_hash: null
+requested_changes: []
+applied_changes: []
+final_hash: null
+validation: []
+status: "blocked"
+

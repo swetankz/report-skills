@@ -1,0 +1,6 @@
+interface:
+  display_name: "Visual Hygiene Auditor"
+  short_description: "Audit publication visual quality"
+  default_prompt: "Use $visual-hygiene-auditor to run structural, optical, and reader-comprehension QA on this publication."
+policy:
+  allow_implicit_invocation: true

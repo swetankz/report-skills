@@ -1,0 +1,20 @@
+schema_version: "1.0"
+artifact_id: "synthetic-web-candidate-001"
+version: "0.1"
+status: "working"
+source_report: {}
+source_design: {}
+source_figures: []
+source_ref: "synthetic-local-ref"
+build_command: "documented-local-build-command"
+build_artifact: "dist"
+build_hash: "sha256:synthetic-value"
+routes: []
+content_map: []
+citation_checks: []
+viewport_checks: []
+accessibility_checks: []
+reduced_motion: "not-verified"
+external_deployment_authorized: false
+blockers: []
+

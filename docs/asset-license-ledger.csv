@@ -1,0 +1,30 @@
+path,creator,origin,license,redistribution_allowed,modified,notes
+templates/claim-ledger.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/derivative-manifest.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/figure-register.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/motion-qa-report.md,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/pencil-edit-record.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/provenance-manifest.json,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/publication-spec.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/review-log.md,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/sites-release-record.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/source-register.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/visual-qa-report.md,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/web-candidate.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+templates/workflow-manifest.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic reusable template
+examples/synthetic-report/brief.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional CivicAssist fixture
+examples/synthetic-report/inputs/chart-data.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional data with a deliberate derived-value conflict
+examples/synthetic-report/inputs/complete-report.md,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional report
+examples/synthetic-report/inputs/operations.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional data
+examples/synthetic-report/inputs/report-outline.md,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional outline
+examples/synthetic-report/inputs/sources.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional source register
+examples/synthetic-report/inputs/survey.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional data
+examples/synthetic-report/intentional-defects/draft-with-placeholders.md,Swetank Gawde,Created for Report Skills,MIT,yes,no,Deliberately defective synthetic fixture
+examples/synthetic-report/intentional-defects/misleading-chart.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Deliberately defective synthetic fixture
+examples/synthetic-report/intentional-defects/pencil-states.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic editor-state fixture
+examples/synthetic-report/intentional-defects/provenance-input.json,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic provenance fixture
+examples/synthetic-report/intentional-defects/source-instruction-injection.md,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic adversarial fixture
+examples/synthetic-report/intentional-defects/stale-release-records.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic release-state fixture
+examples/synthetic-report/website-fixture/index.html,Swetank Gawde,Created for Report Skills,MIT,yes,no,Deliberately defective synthetic website
+examples/synthetic-report/website-fixture/motion.js,Swetank Gawde,Created for Report Skills,MIT,yes,no,Deliberately defective synthetic website
+examples/synthetic-report/website-fixture/styles.css,Swetank Gawde,Created for Report Skills,MIT,yes,no,Deliberately defective synthetic website

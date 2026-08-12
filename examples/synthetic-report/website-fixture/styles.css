@@ -1,0 +1,6 @@
+body { margin: 0; font-family: system-ui, sans-serif; }
+header, main { width: min(70rem, calc(100% - 2rem)); margin: 0 auto; }
+.loader { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: white; }
+.too-wide { width: 900px; padding: 2rem; background: #e8eef7; }
+section { min-height: 70vh; padding-block: 3rem; }
+

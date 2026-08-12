@@ -1,0 +1,6 @@
+interface:
+  display_name: "Report Visual System"
+  short_description: "Build editable publication design systems"
+  default_prompt: "Use $report-visual-system to translate this approved report into an editable, tool-neutral publication system."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,13 @@
+# Limitations
+
+- The system improves traceability and review discipline but cannot guarantee factual accuracy without adequate accessible evidence.
+- Internal academic-style review is not external academic peer review.
+- Tool-dependent skills can only claim runtime, browser, deployment, or editor behavior that was directly observed.
+- `interactive-report-publisher` creates a release candidate but never authorizes deployment.
+- `sites-release-manager` is OpenAI Sites-specific and remains explicit-use-only; a dry run is the default when approval or authenticated tooling is absent.
+- `pencil-safe-editor` is Pencil-specific and performs no write when connectivity or active-file identity is ambiguous.
+- Motion thresholds in synthetic evaluations are fixture-specific, not universal performance guarantees.
+- Synthetic examples demonstrate behavior and are not real-world evidence.
+- A generated standalone skill intentionally duplicates selected shared references; maintainers edit only canonical source.
+- Tag-based installation is verified as part of each release; later installer or platform changes may require retesting.
+- Original bundled material is licensed under MIT by Swetank Gawde. Third-party and private material remains excluded.

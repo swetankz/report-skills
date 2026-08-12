@@ -1,0 +1,16 @@
+[project]
+name = "report-skills-tooling"
+version = "0.1.0"
+description = "Build and validation tooling for the Report Skills repository."
+requires-python = ">=3.11"
+dependencies = []
+authors = [{ name = "Swetank Gawde" }]
+license = { file = "LICENSE" }
+
+[project.urls]
+Homepage = "https://github.com/swetankz/report-skills#readme"
+Repository = "https://github.com/swetankz/report-skills"
+Issues = "https://github.com/swetankz/report-skills/issues"
+
+[tool.unittest]
+test-directory = "tests"

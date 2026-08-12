@@ -1,0 +1,37 @@
+name: Validate Report Skills
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check generated packages
+        run: python scripts/check_generated.py
+
+      - name: Validate repository
+        run: python scripts/validate_repository.py
+
+      - name: Scan public content
+        run: python scripts/scan_public_content.py
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests
+
+      - name: Validate isolated standalone packages
+        run: python scripts/test_standalone_packages.py

@@ -1,0 +1,26 @@
+schema_version: "1.0"
+artifact_id: "synthetic-publication-design-001"
+version: "0.1"
+status: "working"
+source_report:
+  artifact_id: "synthetic-report-001"
+  version: "0.1"
+  hash: "sha256:synthetic-value"
+format:
+  type: "pages"
+  width: 1920
+  height: 1080
+  units: "px"
+authoring_surface: "tool-neutral"
+tokens:
+  typography: {}
+  color: {}
+  spacing: {}
+  layout: {}
+components: []
+section_map: []
+assets: []
+accessibility_constraints: []
+export_targets: []
+blockers: []
+

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Editorial Data Storytelling"
+  short_description: "Turn verified evidence into clear visuals"
+  default_prompt: "Use $editorial-data-storytelling to create truthful, reproducible figure specifications from validated findings."
+policy:
+  allow_implicit_invocation: true
+

@@ -1,0 +1,6 @@
+source_id,title,author_or_publisher,publication_date,retrieval_date,url_or_identifier,source_type,evidence_tier,cutoff_status,access_status,rights_status,notes
+SYN-S1,Synthetic resident survey,Synthetic Civic Lab,2030-06-15,2030-07-01,https://example.org/civicassist/survey,synthetic-survey,primary,within-cutoff,available,synthetic-owned,Measures stated willingness among 500 fictional respondents
+SYN-S2,Synthetic appointment operations log,Synthetic Service Office,2030-06-20,2030-07-01,https://example.org/civicassist/operations,synthetic-administrative-data,primary,within-cutoff,available,synthetic-owned,Measures completed appointments rather than stated willingness
+SYN-S3,Synthetic post-cutoff pilot bulletin,Synthetic Civic Lab,2030-07-10,2030-07-10,https://example.org/civicassist/post-cutoff,synthetic-bulletin,secondary,after-cutoff,available,synthetic-owned,Must be flagged and excluded from the period analysis
+SYN-S4,Synthetic accessibility interview note,Synthetic Access Panel,2030-05-29,2030-07-01,synthetic-id-incomplete,synthetic-interview,primary,within-cutoff,partial,synthetic-owned,Identifier is intentionally incomplete and requires qualification
+

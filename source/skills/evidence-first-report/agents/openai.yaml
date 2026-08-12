@@ -1,0 +1,7 @@
+interface:
+  display_name: "Evidence-First Report"
+  short_description: "Build traceable source-backed reports"
+  default_prompt: "Use $evidence-first-report to create a source-backed analytical report with a claim ledger and documented review passes."
+policy:
+  allow_implicit_invocation: true
+

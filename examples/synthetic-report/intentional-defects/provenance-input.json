@@ -1,0 +1,22 @@
+{
+  "fixture_type": "intentional-defect",
+  "artifacts": [
+    {
+      "artifact_id": "synthetic-provider-output",
+      "classification": "provider-original",
+      "provider": "Synthetic Provider",
+      "model": "unknown",
+      "job_id": "synthetic-job-alpha",
+      "status": "failed"
+    },
+    {
+      "artifact_id": "synthetic-local-render",
+      "classification": "final-deliverable",
+      "provider": "Synthetic Provider",
+      "parent_ids": [],
+      "status": "succeeded"
+    }
+  ],
+  "known_defect": "The local render incorrectly claims provider origin and lacks a parent relationship."
+}
+

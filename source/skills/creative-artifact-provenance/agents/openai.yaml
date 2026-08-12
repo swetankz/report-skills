@@ -1,0 +1,7 @@
+interface:
+  display_name: "Creative Artifact Provenance"
+  short_description: "Record and sanitize creative artifact lineage"
+  default_prompt: "Use $creative-artifact-provenance to reconcile these creative files into a private lineage manifest and a safe public projection."
+
+policy:
+  allow_implicit_invocation: true

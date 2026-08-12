@@ -1,0 +1,40 @@
+{
+  "name": "report-skills",
+  "version": "0.1.0",
+  "description": "A modular, evidence-led research-to-publication skill system.",
+  "author": {
+    "name": "Swetank Gawde",
+    "url": "https://github.com/swetankz"
+  },
+  "homepage": "https://github.com/swetankz/report-skills#readme",
+  "repository": "https://github.com/swetankz/report-skills",
+  "license": "MIT",
+  "keywords": [
+    "research",
+    "reports",
+    "citations",
+    "data-storytelling",
+    "publication",
+    "quality-assurance"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Report Skills",
+    "shortDescription": "Build and validate evidence-led publications.",
+    "longDescription": "Coordinate source-backed analytical reports, evidence visuals, editable publication systems, responsive report websites, quality assurance, derivatives, provenance, and controlled release workflows.",
+    "developerName": "Swetank Gawde",
+    "websiteURL": "https://github.com/swetankz/report-skills",
+    "category": "Productivity",
+    "capabilities": [
+      "Research",
+      "Reports",
+      "Data visualization",
+      "Publication quality assurance"
+    ],
+    "defaultPrompt": [
+      "Create a source-backed analytical report from this evidence set.",
+      "Turn this approved report into a complete accessible publication.",
+      "Audit this report package and stop before external publication."
+    ]
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "skills": {
+    "report-skills": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "evidence-language.md", "validation-conventions.md"],
+      "templates": ["workflow-manifest.yaml"]
+    },
+    "evidence-first-report": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "evidence-language.md", "validation-conventions.md"],
+      "templates": ["source-register.csv", "claim-ledger.csv", "review-log.md"]
+    },
+    "editorial-data-storytelling": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "evidence-language.md", "validation-conventions.md"],
+      "templates": ["figure-register.csv"]
+    },
+    "report-visual-system": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "evidence-language.md", "validation-conventions.md"],
+      "templates": ["publication-spec.yaml"]
+    },
+    "interactive-report-publisher": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "evidence-language.md", "validation-conventions.md"],
+      "templates": ["web-candidate.yaml"]
+    },
+    "visual-hygiene-auditor": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "evidence-language.md", "validation-conventions.md"],
+      "templates": ["visual-qa-report.md"]
+    },
+    "motion-performance-qa": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "evidence-language.md", "validation-conventions.md"],
+      "templates": ["motion-qa-report.md"]
+    },
+    "report-content-repurposer": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "evidence-language.md", "validation-conventions.md"],
+      "templates": ["derivative-manifest.yaml"]
+    },
+    "sites-release-manager": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "validation-conventions.md"],
+      "templates": ["sites-release-record.yaml"]
+    },
+    "pencil-safe-editor": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "validation-conventions.md"],
+      "templates": ["pencil-edit-record.yaml"]
+    },
+    "creative-artifact-provenance": {
+      "shared_references": ["artifact-contracts.md", "approval-and-stop-gates.md", "public-safety.md", "validation-conventions.md"],
+      "templates": ["provenance-manifest.json"]
+    }
+  }
+}

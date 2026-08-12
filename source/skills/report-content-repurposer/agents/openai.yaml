@@ -1,0 +1,7 @@
+interface:
+  display_name: "Report Content Repurposer"
+  short_description: "Create traceable draft report derivatives"
+  default_prompt: "Use $report-content-repurposer to create channel-ready drafts from this approved report without publishing them."
+
+policy:
+  allow_implicit_invocation: true

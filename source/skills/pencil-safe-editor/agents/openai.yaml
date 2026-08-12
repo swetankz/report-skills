@@ -1,0 +1,7 @@
+interface:
+  display_name: "Pencil Safe Editor"
+  short_description: "Verify, preserve, and safely edit Pencil files"
+  default_prompt: "Use $pencil-safe-editor to verify the exact active Pencil file, preserve it, and then apply these authorized changes."
+
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,10 @@
+fixture_type: "intentional-defect"
+requested_target:
+  synthetic_path_id: "pencil-target-a"
+  expected_hash: "sha256:synthetic-target"
+application_state:
+  connectivity: "available"
+  active_file_id: "pencil-target-b"
+  active_file_hash: "sha256:synthetic-other"
+required_behavior: "stop-without-writing"
+

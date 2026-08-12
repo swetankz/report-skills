@@ -1,0 +1,7 @@
+interface:
+  display_name: "Sites Release Manager"
+  short_description: "Prepare exact, approval-gated Sites releases"
+  default_prompt: "Use $sites-release-manager to dry-run this exact validated candidate and prepare its Sites release record without deploying."
+
+policy:
+  allow_implicit_invocation: false

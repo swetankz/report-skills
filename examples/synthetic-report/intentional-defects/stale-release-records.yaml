@@ -1,0 +1,12 @@
+fixture_type: "intentional-defect"
+validated_candidate:
+  source_ref: "synthetic-ref-new"
+  build_hash: "sha256:synthetic-new-build"
+  qa_state: "pass"
+  publication_authorized: false
+convenient_checkout:
+  source_ref: "synthetic-ref-old"
+  build_hash: "sha256:synthetic-old-build"
+  has_deployment_metadata: true
+expected_safe_state: "awaiting_approval"
+

@@ -1,0 +1,17 @@
+fixture_type: "intentional-defect"
+title: "The assistant closes the service gap"
+chart_type: "bar"
+y_axis_starts_at: 55
+series:
+  - label: "Willing to try"
+    value: 62
+    source_id: "SYN-S1"
+  - label: "Completed appointments"
+    value: 59.8
+    source_id: "SYN-S2"
+implied_claim: "The 2.2-point difference is a causal opportunity gap"
+known_defects:
+  - "The series measure different constructs and populations."
+  - "The truncated axis exaggerates the difference."
+  - "The causal interpretation is unsupported."
+

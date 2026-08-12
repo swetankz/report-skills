@@ -1,0 +1,6 @@
+interface:
+  display_name: "Motion Performance QA"
+  short_description: "Measure report motion and startup behavior"
+  default_prompt: "Use $motion-performance-qa to diagnose and verify loader, reveal, reduced-motion, and frame-pacing behavior."
+policy:
+  allow_implicit_invocation: true
