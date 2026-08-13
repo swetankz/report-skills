@@ -1,6 +1,6 @@
 ---
 name: visual-hygiene-auditor
-description: Audit a visual publication or reachable build through three separately evidenced passes for structure, optical quality, and reader comprehension. Use to review report layouts, websites, slides, or exported pages across declared formats and viewports, produce severity-ranked findings, and recheck authorized fixes; do not use for factual review or deployment.
+description: Audit a visual publication or reachable build through three separately evidenced passes for structure, optical quality, and reader comprehension. Use to review report layouts, websites, slides, or exported pages across declared formats and viewports, produce severity-ranked findings, and recheck authorized fixes; do not use for factual review or deployment. Do not use when the primary task is specialized motion lifecycle or animation-performance diagnosis, such as loader and reveal sequencing, motion initialization, reduced-motion behavior, or frame pacing; route that work to motion-performance-qa.
 ---
 
 # Visual Hygiene Auditor
@@ -20,6 +20,7 @@ Audit the exact artifact through three distinct passes. Treat review as read-onl
 
 - Own presentation review across structure, optical clarity, and reader comprehension.
 - Keep argument, source, and factual review with the report authoring workflow.
+- Route specialized loader, reveal, motion-runtime, and animation-performance measurement to `motion-performance-qa`.
 - Do not deploy, publish, or describe a partial review as comprehensive.
 - Do not alter the artifact when the user requests review, critique, audit, or diagnosis only.
 - Preserve the exact artifact version and hash throughout a review pass.

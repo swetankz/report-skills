@@ -164,7 +164,7 @@
     "source/skills/sites-release-manager/SKILL.md": "9032f2595218d1b8893c780d2bca66fe6855f206b49629c0b378102328818ecc",
     "source/skills/sites-release-manager/agents/openai.yaml": "f5c06a74ccbabd9341d9e2621dc355ea3e9805929622fd31d83791b473b5cae5",
     "source/skills/sites-release-manager/references/sites-release-protocol.md": "2872c42c864d4276b80a1452d0ad87fb4f276a23162f66c8ef8517edc1c48c3d",
-    "source/skills/visual-hygiene-auditor/SKILL.md": "880d8cf5434dcc6b3140a9b97af93e5ccb06592d5528884844f018d5db373a65",
+    "source/skills/visual-hygiene-auditor/SKILL.md": "360147003b5b19ab1ba14dd03e7a4aecd39bf96a05853adad8636fe16db9eeb3",
     "source/skills/visual-hygiene-auditor/agents/openai.yaml": "89fd5c679947fef5d0cd535840aadbbc3db514d8a0474203f8ccbdc96558fb6a",
     "source/skills/visual-hygiene-auditor/references/three-pass-audit-protocol.md": "854abe88dc9e16c3089e87927bbd53ae2a6eb1911f579a4984b42b938db7407d",
     "templates/claim-ledger.csv": "07eba9e0f8156be9bb6d210d15fb747396c17d92732da926bd200bccf8a38eb5",
