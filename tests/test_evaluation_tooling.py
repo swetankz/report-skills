@@ -29,13 +29,21 @@ from evaluation_common import (  # noqa: E402
 )
 from grade_behavioral_benchmark import validate_grade  # noqa: E402
 from run_blind_comparisons import copy_blind_bundle, label_map, validate_comparison  # noqa: E402
-from run_trigger_evals import confusion_metrics, summarize  # noqa: E402
+from run_trigger_evals import (  # noqa: E402
+    body_proven_activation,
+    confusion_metrics,
+    install_sentinel_skill,
+    run_trigger_prediction,
+    summarize,
+    trigger_task_prompt,
+)
 from validate_release_eval_plan import (  # noqa: E402
     canonical_contract_hashes,
     canonical_plan_rows,
     validate_release_eval_plan,
 )
 import run_behavioral_benchmark  # noqa: E402
+import run_trigger_evals  # noqa: E402
 
 
 class EvaluationToolingTests(unittest.TestCase):
@@ -338,6 +346,104 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertEqual(metrics["suite_wide"]["precision"], 0.5)
         self.assertEqual(metrics["suite_wide"]["recall"], 0.5)
         self.assertEqual(set(metrics["per_skill"]), {"one", "two"})
+
+    def test_trigger_task_prompt_requires_policy_neutral_body_load(self) -> None:
+        query = "Review an existing publication at desktop and mobile widths."
+        prompt = trigger_task_prompt(query)
+        self.assertEqual(prompt.count(query), 1)
+        self.assertIn("not an explicit invocation", prompt)
+        self.assertIn("explicit-only or implicit-invocation policy", prompt)
+        self.assertIn("Decide whether a skill applies before opening its body", prompt)
+        self.assertIn("read its SKILL.md completely", prompt)
+        self.assertIn("follow its instructions", prompt)
+        self.assertIn("merely to fill the response schema", prompt)
+        self.assertIn("Description-only classification does not count", prompt)
+        self.assertIn("set it to null", prompt)
+        candidates = {
+            case["candidate_skill"]
+            for case in load_json(REPO_ROOT / "evals" / "trigger-evals.json")["cases"]
+        }
+        self.assertFalse(any(candidate in prompt for candidate in candidates))
+        self.assertNotIn("report-skills-triggered:", prompt)
+        self.assertNotIn(".agents/skills", prompt)
+
+    def test_trigger_task_prompt_preserves_explicit_only_invocation_boundary(self) -> None:
+        cases = load_json(REPO_ROOT / "evals" / "trigger-evals.json")["cases"]
+        explicit_cases = [
+            case for case in cases if case["invocation_policy"] == "explicit_invocation"
+        ]
+        self.assertGreater(len(explicit_cases), 0)
+        for case in explicit_cases:
+            token = f"${case['candidate_skill']}"
+            wrapped = trigger_task_prompt(case["query"])
+            self.assertEqual(wrapped.count(token), case["query"].count(token))
+
+    def test_trigger_output_schema_requires_actual_activation_semantics(self) -> None:
+        schema = load_json(REPO_ROOT / "evals" / "schemas" / "trigger-output.schema.json")
+        self.assertEqual(schema["title"], "Skill activation observation")
+        selected_description = schema["properties"]["selected_skill"]["description"]
+        self.assertIn("actually invoked", selected_description)
+        self.assertIn("SKILL.md was read", selected_description)
+
+    def test_trigger_prediction_applies_versioned_prompt_contract(self) -> None:
+        query = "Build the approved report as a responsive editorial website."
+        command = ["codex.cmd", "exec"]
+        expected = object()
+        with patch.object(run_trigger_evals, "run_codex", return_value=expected) as mocked:
+            result = run_trigger_prediction(command, query, 600)
+        self.assertIs(result, expected)
+        mocked.assert_called_once_with(command, trigger_task_prompt(query), 600)
+
+    def test_body_proven_activation_requires_exact_candidate_and_marker(self) -> None:
+        marker = "report-skills-triggered:abc123"
+        candidate = "interactive-report-publisher"
+        self.assertTrue(
+            body_proven_activation(
+                {"selected_skill": candidate, "rationale": marker}, candidate, marker
+            )
+        )
+        self.assertTrue(
+            body_proven_activation(
+                {"selected_skill": f"report-skills:{candidate}", "rationale": marker},
+                candidate,
+                marker,
+            )
+        )
+        self.assertFalse(
+            body_proven_activation(
+                {"selected_skill": candidate, "confidence": 1, "rationale": "Correct skill."},
+                candidate,
+                marker,
+            )
+        )
+        self.assertFalse(
+            body_proven_activation(
+                {"selected_skill": candidate, "rationale": marker + " extra"}, candidate, marker
+            )
+        )
+        self.assertFalse(
+            body_proven_activation(
+                {"selected_skill": "report-visual-system", "rationale": marker}, candidate, marker
+            )
+        )
+
+    def test_trigger_sentinel_marker_is_body_only(self) -> None:
+        case = {
+            "candidate_skill": "interactive-report-publisher",
+            "observation_id": "sentinel-body-proof__r01",
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            workspace = Path(temp_name)
+            marker = install_sentinel_skill(workspace, case)
+            target = workspace / ".agents" / "skills" / case["candidate_skill"]
+            skill_text = (target / "SKILL.md").read_text(encoding="utf-8")
+            frontmatter, body = skill_text.split("---", 2)[1:]
+            self.assertNotIn(marker, frontmatter)
+            self.assertIn(marker, body)
+            self.assertNotIn(
+                marker,
+                (target / "agents" / "openai.yaml").read_text(encoding="utf-8"),
+            )
 
     def test_context_mismatch_is_rejected(self) -> None:
         profile = {

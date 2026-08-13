@@ -1,11 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Skill description routing observation",
+  "title": "Skill activation observation",
   "type": "object",
   "required": ["selected_skill", "confidence", "rationale"],
   "additionalProperties": false,
   "properties": {
-    "selected_skill": {"type": ["string", "null"]},
+    "selected_skill": {
+      "type": ["string", "null"],
+      "description": "Name of a skill actually invoked and whose SKILL.md was read in this turn; null if no skill was activated."
+    },
     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
     "rationale": {"type": "string"}
   }

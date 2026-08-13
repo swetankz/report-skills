@@ -57,14 +57,15 @@ If a required runtime is unavailable, record the relevant expectation as `not_ve
 
 ## Trigger evaluation
 
-Trigger evaluation is separate from task-quality evaluation. Run the 25 queries in `evals/trigger-evals.json` three times each in fresh contexts and record whether the intended skill was selected. The runner installs one candidate in an external temporary `.agents/skills` workspace and proves real host activation with a body-only sentinel; description-only classification does not count. Near-miss negatives should resemble valid requests but fall outside the skill boundary. Some safety-critical skills are explicit-only: they should load for an exact `$skill-name` request and must not auto-load from topical similarity alone.
+Trigger evaluation is separate from task-quality evaluation. Run the 25 queries in `evals/trigger-evals.json` three times each in fresh contexts and record whether the intended skill was activated. The runner installs one candidate in an external temporary `.agents/skills` workspace and gives the host the same candidate-neutral instruction for every observation: apply ordinary discovery and the declared invocation policy, decide applicability before opening a body, and load `SKILL.md` only when a skill applies. The instruction never names or favors the candidate. The runner then proves real host activation with a body-only sentinel; description-only classification is recorded as `sentinel_not_observed` and remains a false negative for a positive case. Near-miss negatives should resemble valid requests but fall outside the skill boundary. Some safety-critical skills are explicit-only: they should load for an exact `$skill-name` request and must not auto-load from topical similarity alone.
 
 Calculate:
 
-- precision: correct skill selections divided by all selections of that skill;
-- recall: correct skill selections divided by all queries that should select that skill.
+- precision: true-positive sentinel-confirmed activations divided by all sentinel-confirmed activations for that candidate skill;
+- recall: true-positive sentinel-confirmed activations divided by all positive observations for that candidate skill.
 
 Review false positives and false negatives before changing a skill description. Description changes require a new trigger-evaluation run.
+Any change to the trigger harness instruction, activation scorer, or output schema requires a new complete 75-observation run. Do not mix observations across methods or replace selected failed repetitions.
 
 ## Release thresholds
 

@@ -99,6 +99,38 @@ def make_plan(data: dict[str, Any], repetitions: int) -> list[dict[str, Any]]:
     ]
 
 
+def trigger_task_prompt(query: str) -> str:
+    """Require ordinary, policy-respecting skill loading without candidate leakage."""
+    return (
+        "Handle the request below as a normal fresh-context task.\n\n"
+        "Follow the platform's ordinary skill invocation rules. This generic instruction is "
+        "not an explicit invocation of any skill and does not override a skill's explicit-only "
+        "or implicit-invocation policy. Decide whether a skill applies before opening its body. "
+        "Do not inspect or invoke a skill merely to fill the response schema.\n\n"
+        "If the request activates a skill under those ordinary rules, invoke it, read its "
+        "SKILL.md completely, and follow its instructions before returning the structured "
+        "response. Set selected_skill only "
+        "to a skill actually invoked and read in this turn; if no skill was activated, set it "
+        "to null. Description-only classification does not count as activation.\n\n"
+        f"Request:\n{query}"
+    )
+
+
+def body_proven_activation(prediction: dict[str, Any], candidate_skill: str, marker: str) -> bool:
+    """Count activation only when the selected candidate returns its body-only marker."""
+    selected = prediction.get("selected_skill")
+    selected_matches = selected in {
+        candidate_skill,
+        f"report-skills:{candidate_skill}",
+    }
+    return selected_matches and prediction.get("rationale") == marker
+
+
+def run_trigger_prediction(command: list[str], query: str, timeout: int) -> Any:
+    """Run one prediction through the versioned, candidate-neutral prompt contract."""
+    return run_codex(command, trigger_task_prompt(query), timeout)
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", type=Path, default=DEFAULT_TRIGGERS)
@@ -196,7 +228,7 @@ def main() -> int:
                     execution_profile["model"],
                     execution_profile["reasoning_effort"],
                 )
-                result = run_codex(command, case["query"], args.timeout)
+                result = run_trigger_prediction(command, case["query"], args.timeout)
             require_unchanged_repository(repo_receipt)
             (observation_dir / "transcript.jsonl").write_text(result.stdout, encoding="utf-8", newline="\n")
             validation_errors: list[str] = []
@@ -205,12 +237,7 @@ def main() -> int:
             if not output_path.is_file():
                 validation_errors.append("prediction.json was not produced")
             prediction = load_json(output_path) if not validation_errors else {}
-            selected = prediction.get("selected_skill")
-            selected_matches = selected in {
-                case["candidate_skill"],
-                f"report-skills:{case['candidate_skill']}",
-            }
-            triggered = selected_matches and prediction.get("rationale") == marker
+            triggered = body_proven_activation(prediction, case["candidate_skill"], marker)
             observation = {
                 "observation_id": case["observation_id"],
                 "case_id": case["case_id"],
