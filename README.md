@@ -31,10 +31,17 @@ python scripts/build_skills.py
 python scripts/check_generated.py
 python scripts/validate_repository.py
 python scripts/scan_public_content.py
+python scripts/validate_eval_suite.py
+python scripts/run_behavioral_benchmark.py --dry-run
+python scripts/run_trigger_evals.py --dry-run
 python -m unittest discover -s tests
 ```
 
 Also validate every `skills/*` folder with the current Codex skill validator and validate the repository root with the current Codex plugin validator.
+
+## Evaluation
+
+Repository CI validates the evaluation contracts and expands the complete benchmark plan without starting a model. A later release candidate must also pass three fresh paired runs per case (`with_skill` versus `without_skill`), blind comparison, adversarial safety checks, and trigger tests. Live model evaluation stays outside public CI because it requires authentication and incurs usage. See the [evaluation protocol and release thresholds](docs/evaluation.md).
 
 ## Installation
 

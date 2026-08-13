@@ -1,6 +1,6 @@
 ---
 name: evidence-first-report
-description: Produce or revise source-backed analytical reports with an evidence cutoff, source and evidence registers, claim traceability, linked citations, explicit limitations, and documented academic-style, factual, and reader review passes. Use when asked to create an analytical or academia-level report from supplied or authorized evidence, build a claim ledger before drafting, fact-check or revise a report, or prepare a report package for approval. Do not use for visual-only redesign, citation formatting without claim review, or open-ended source discovery without evidence-access authority.
+description: Produce, fact-check, or substantively revise a complete source-backed analytical report and its evidence package. Use when the requested deliverable includes report text, an evidence cutoff, source or evidence registers, a claim ledger, citation-to-claim review, limitations, or documented academic-style, factual, and reader review passes. Do not use when a completed report and verified claims are already supplied and the requested deliverable is only charts or figure specifications, visual layout, a website, or promotional derivatives; route those tasks to the corresponding publication skill. Do not use for open-ended source discovery without evidence-access authority.
 ---
 
 # Evidence-First Report

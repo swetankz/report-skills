@@ -114,6 +114,24 @@ class ToolingTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_scanner_ignores_uncommitted_evaluation_workspaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            raw = root / "evals" / "runs" / "local-observation"
+            raw.mkdir(parents=True)
+            private_path = "C:" + "\\Users\\sample-person\\private"
+            (raw / "transcript.json").write_text(
+                json.dumps({"workspace": private_path}),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, str(SCAN_SCRIPT), "--root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_scanner_ignores_its_copied_pattern_definitions(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

@@ -18,6 +18,7 @@ TEXT_EXTENSIONS = {
 }
 BLOCKED_BINARY_EXTENSIONS = {".pen", ".pdf", ".docx", ".pptx", ".zip", ".7z", ".mov", ".mp4", ".webm", ".ttf", ".otf", ".woff", ".woff2"}
 SKIP_DIRS = {".git", ".build", "__pycache__", ".venv", "dist"}
+SKIP_PREFIXES = {("evals", "runs"), ("evals", "review")}
 INTENTIONAL_DEFECT_PARTS = {"intentional-defects"}
 PATTERNS = {
     "windows-user-path": re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s]+", re.IGNORECASE),
@@ -52,6 +53,8 @@ def text_files(root: Path):
         if not path.is_file() or path.resolve() == SELF or copied_scanner:
             continue
         if any(part in SKIP_DIRS for part in relative.parts):
+            continue
+        if tuple(relative.parts[:2]) in SKIP_PREFIXES:
             continue
         yield path
 

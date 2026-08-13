@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Skill description routing observation",
+  "type": "object",
+  "required": ["selected_skill", "confidence", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "selected_skill": {"type": ["string", "null"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "rationale": {"type": "string"}
+  }
+}

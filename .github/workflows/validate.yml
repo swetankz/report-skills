@@ -30,6 +30,15 @@ jobs:
       - name: Scan public content
         run: python scripts/scan_public_content.py
 
+      - name: Validate evaluation contracts
+        run: python scripts/validate_eval_suite.py
+
+      - name: Validate behavioral benchmark plan without model calls
+        run: python scripts/run_behavioral_benchmark.py --dry-run
+
+      - name: Validate trigger-evaluation plan without model calls
+        run: python scripts/run_trigger_evals.py --dry-run
+
       - name: Run unit tests
         run: python -m unittest discover -s tests
 

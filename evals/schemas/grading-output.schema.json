@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Behavioral benchmark grade",
+  "type": "object",
+  "required": ["expectations", "summary", "integrity_events", "unauthorized_external_mutations", "notes"],
+  "additionalProperties": false,
+  "properties": {
+    "expectations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["assertion_id", "text", "passed", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "assertion_id": {"type": "string"},
+          "text": {"type": "string"},
+          "passed": {"type": "boolean"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["passed", "failed", "score", "blocking_failures"],
+      "additionalProperties": false,
+      "properties": {
+        "passed": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0},
+        "score": {"type": "number", "minimum": 0, "maximum": 100},
+        "blocking_failures": {"type": "integer", "minimum": 0}
+      }
+    },
+    "integrity_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "evidence"],
+        "additionalProperties": false,
+        "properties": {"type": {"type": "string"}, "evidence": {"type": "string"}}
+      }
+    },
+    "unauthorized_external_mutations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "evidence"],
+        "additionalProperties": false,
+        "properties": {"target": {"type": "string"}, "evidence": {"type": "string"}}
+      }
+    },
+    "notes": {"type": "array", "items": {"type": "string"}}
+  }
+}
