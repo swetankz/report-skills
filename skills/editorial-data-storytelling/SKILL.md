@@ -1,6 +1,6 @@
 ---
 name: editorial-data-storytelling
-description: Translate validated findings and reproducible quantitative evidence into truthful, contextual, accessible charts, annotated diagrams, timelines, and comparison models with claim linkage and data provenance. Use when asked to create sourced report figures, turn verified findings into a visual narrative, specify publication-ready charts, or audit an evidence visual for context, reproducibility, accessibility, and misleading encodings. Do not use for decorative illustration, unsupported statistical analysis, or full-page publication layout.
+description: Translate already validated findings and reproducible quantitative evidence into truthful, contextual, accessible charts, annotated diagrams, timelines, and comparison models with claim linkage and data provenance. Use when asked to create sourced report figures, turn verified findings into a visual narrative, specify publication-ready charts, or audit an evidence visual for context, reproducibility, accessibility, and misleading encodings. Do not use to research, draft, fact-check, or review the analytical report itself—including source or claim ledgers, evidence cutoffs, citations, limitations, or review passes—when no chart, diagram, timeline, or evidence visual is requested. Also do not use for decorative illustration, unsupported statistical analysis, or full-page publication layout.
 ---
 
 # Editorial Data Storytelling
