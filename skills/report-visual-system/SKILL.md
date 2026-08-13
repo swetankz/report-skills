@@ -1,6 +1,6 @@
 ---
 name: report-visual-system
-description: Translate an approved long-form report and figure set into an editable, tool-neutral publication system with design tokens, reusable components, page or frame maps, accessibility constraints, and export specifications. Use for report layout systems in Pencil, Penpot, slides, or comparable authoring surfaces; do not use for evidence validation, one-off illustration, or web interaction implementation.
+description: Translate an approved long-form report and figure set into an editable, tool-neutral publication system with design tokens, reusable components, page or frame maps, accessibility constraints, and export specifications. Use for report layout systems in Pencil, Penpot, slides, or comparable authoring surfaces; do not use for evidence validation, one-off illustration, or web interaction implementation. Do not use when the primary deliverable is an independent visual audit of an existing publication or reachable build; route standalone QA across formats or viewports to visual-hygiene-auditor.
 ---
 
 # Report Visual System
