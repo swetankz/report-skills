@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shutil
 import statistics
 import subprocess
 import sys
 import time
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +28,18 @@ DEFAULT_TRIGGERS = EVAL_ROOT / "trigger-evals.json"
 DEFAULT_RUNS_ROOT = EVAL_ROOT / "runs"
 DEFAULT_REVIEW_ROOT = EVAL_ROOT / "review"
 RESULTS_ROOT = (EVAL_ROOT / "results").resolve()
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
+PROFILE_IDENTITY_KEYS = (
+    "model",
+    "reasoning_effort",
+    "codex_cli_version",
+    "codex_command_sha256",
+    "codex_implementation_sha256",
+    "selected_model_sha256",
+    "python_version",
+    "platform",
+)
+REPOSITORY_IDENTITY_KEYS = ("commit", "tree", "dirty")
 
 
 class EvaluationError(RuntimeError):
@@ -38,6 +52,217 @@ def utc_now() -> str:
 
 def timestamp_id(prefix: str) -> str:
     return f"{prefix}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+
+
+def directory_sha256(root: Path) -> str:
+    """Hash a directory deterministically from relative paths and file bytes."""
+
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def tracked_directory_sha256(root: Path) -> str:
+    """Hash only Git-tracked files under a release-evaluated directory."""
+
+    relative_root = root.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    result = subprocess.run(
+        [
+            "git",
+            "-c",
+            f"safe.directory={REPO_ROOT}",
+            "-C",
+            str(REPO_ROOT),
+            "ls-files",
+            "--",
+            relative_root,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise EvaluationError(
+            f"Cannot list tracked files for {root}: {result.stderr.strip() or result.stdout.strip()}"
+        )
+    tracked = [line for line in result.stdout.splitlines() if line]
+    if not tracked:
+        raise EvaluationError(f"No Git-tracked files found under {root}")
+    actual = [path for path in sorted(root.rglob("*")) if path.is_file()]
+    tracked_paths = [(REPO_ROOT / path).resolve() for path in tracked]
+    extras = sorted(path.relative_to(root).as_posix() for path in set(actual) - set(tracked_paths))
+    if extras:
+        raise EvaluationError(f"Untracked or ignored files affect evaluated directory {root}: {extras}")
+    digest = hashlib.sha256()
+    for relative, path in sorted(zip(tracked, tracked_paths, strict=True)):
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def repository_receipt(require_clean: bool = False) -> dict[str, Any]:
+    """Return the exact candidate Git state used by a model-backed run."""
+
+    def git(*arguments: str) -> str:
+        result = subprocess.run(
+            ["git", "-c", f"safe.directory={REPO_ROOT}", "-C", str(REPO_ROOT), *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise EvaluationError(f"Cannot record repository state: {result.stderr.strip() or result.stdout.strip()}")
+        return result.stdout.strip()
+
+    root = Path(git("rev-parse", "--show-toplevel")).resolve()
+    if root != REPO_ROOT.resolve():
+        raise EvaluationError(f"Git root mismatch: expected {REPO_ROOT.resolve()}, got {root}")
+    commit = git("rev-parse", "HEAD")
+    tree = git("rev-parse", "HEAD^{tree}")
+    status = git("status", "--porcelain=v1", "--untracked-files=all")
+    dirty = bool(status)
+    if require_clean and dirty:
+        raise EvaluationError("Refusing a release evaluation from a dirty repository; commit or remove candidate changes first")
+    return {"root": str(root), "commit": commit, "tree": tree, "dirty": dirty}
+
+
+def require_pinned_profile(execute: bool, model: str | None, reasoning_effort: str | None) -> None:
+    if execute and (not model or not reasoning_effort):
+        raise EvaluationError("Live evaluation requires both --model and --reasoning-effort for reproducibility")
+
+
+def codex_execution_profile(codex_command: str, model: str, reasoning_effort: str) -> dict[str, Any]:
+    """Verify and record the exact Codex CLI/model profile used for live calls."""
+
+    version_result = subprocess.run(
+        [codex_command, "--version"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        timeout=30,
+    )
+    if version_result.returncode != 0:
+        raise EvaluationError(
+            "Cannot record Codex CLI version: "
+            + (version_result.stderr.strip() or version_result.stdout.strip())
+        )
+    version = version_result.stdout.strip()
+
+    catalog_result = subprocess.run(
+        [codex_command, "debug", "models"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        check=False,
+        timeout=120,
+    )
+    if catalog_result.returncode != 0:
+        raise EvaluationError(
+            "Cannot verify the live Codex model catalog: "
+            + (catalog_result.stderr.strip() or catalog_result.stdout.strip())
+        )
+    try:
+        catalog = json.loads(catalog_result.stdout)
+    except json.JSONDecodeError as exc:
+        raise EvaluationError(f"Codex returned an invalid model catalog: {exc}") from exc
+    entries = catalog.get("models", []) if isinstance(catalog, dict) else []
+    selected = next((item for item in entries if item.get("slug") == model), None)
+    if selected is None:
+        raise EvaluationError(f"Pinned model is not available in the live Codex catalog: {model}")
+    supported = {
+        item.get("effort")
+        for item in selected.get("supported_reasoning_levels", [])
+        if isinstance(item, dict)
+    }
+    if reasoning_effort not in supported:
+        raise EvaluationError(
+            f"Reasoning effort {reasoning_effort!r} is not supported by {model}; "
+            f"available efforts: {sorted(value for value in supported if value)}"
+        )
+    resolved_command = Path(codex_command).resolve()
+    command_hash = hashlib.sha256(resolved_command.read_bytes()).hexdigest()
+    implementation = resolved_command
+    npm_package = resolved_command.parent / "node_modules" / "@openai" / "codex"
+    if npm_package.is_dir():
+        executable_name = "codex.exe" if sys.platform == "win32" else "codex"
+        candidates = sorted(
+            path.resolve()
+            for path in (npm_package / "node_modules" / "@openai").glob(
+                f"codex-*/vendor/**/bin/{executable_name}"
+            )
+            if path.is_file()
+        )
+        if len(candidates) == 1:
+            implementation = candidates[0]
+    implementation_hash = hashlib.sha256(implementation.read_bytes()).hexdigest()
+    selected_json = json.dumps(selected, sort_keys=True, separators=(",", ":"))
+    return {
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+        "codex_cli_version": version,
+        "codex_command": str(resolved_command),
+        "codex_command_sha256": command_hash,
+        "codex_implementation": str(implementation),
+        "codex_implementation_sha256": implementation_hash,
+        "model_catalog_sha256": hashlib.sha256(catalog_result.stdout.encode("utf-8")).hexdigest(),
+        "selected_model_sha256": hashlib.sha256(selected_json.encode("utf-8")).hexdigest(),
+        "model_default_reasoning_effort": str(selected.get("default_reasoning_level")),
+        "model_supported_reasoning_efforts": sorted(value for value in supported if value),
+        "python_version": platform.python_version(),
+        "platform": f"{platform.system()}-{platform.release()}-{platform.machine()}",
+    }
+
+
+def require_matching_context(
+    expected_profile: dict[str, Any],
+    expected_repository: dict[str, Any],
+    actual_profile: dict[str, Any],
+    actual_repository: dict[str, Any],
+    label: str,
+) -> None:
+    expected_profile_identity = {key: expected_profile.get(key) for key in PROFILE_IDENTITY_KEYS}
+    actual_profile_identity = {key: actual_profile.get(key) for key in PROFILE_IDENTITY_KEYS}
+    if actual_profile_identity != expected_profile_identity or any(
+        value in {None, ""} for value in actual_profile_identity.values()
+    ):
+        raise EvaluationError(
+            f"{label} execution profile does not match the benchmark plan: "
+            f"expected {expected_profile_identity}, got {actual_profile_identity}"
+        )
+    expected_repository_identity = {
+        key: expected_repository.get(key) for key in REPOSITORY_IDENTITY_KEYS
+    }
+    actual_repository_identity = {
+        key: actual_repository.get(key) for key in REPOSITORY_IDENTITY_KEYS
+    }
+    if actual_repository_identity != expected_repository_identity or actual_repository_identity.get("dirty") is not False:
+        raise EvaluationError(
+            f"{label} repository receipt does not match the benchmark plan: "
+            f"expected {expected_repository_identity}, got {actual_repository_identity}"
+        )
+
+
+def require_unchanged_repository(expected: dict[str, Any]) -> None:
+    """Abort a long run if the candidate Git state changes between calls."""
+
+    current = repository_receipt(require_clean=True)
+    if current != expected:
+        raise EvaluationError(
+            f"Repository changed during evaluation: expected {expected}, got {current}"
+        )
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -251,6 +476,7 @@ def codex_base_command(
     output_schema: Path,
     output_message: Path,
     model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> list[str]:
     command = [
         codex_command,
@@ -271,6 +497,8 @@ def codex_base_command(
     ]
     if model:
         command.extend(["--model", model])
+    if reasoning_effort:
+        command.extend(["--config", f'model_reasoning_effort="{reasoning_effort}"'])
     command.append("-")
     return command
 
@@ -290,6 +518,8 @@ def run_codex(command: list[str], prompt: str, timeout: int) -> CommandResult:
             command,
             input=prompt,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             check=False,
             timeout=timeout,

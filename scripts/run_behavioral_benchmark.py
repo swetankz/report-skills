@@ -22,19 +22,27 @@ from evaluation_common import (
     EVAL_ROOT,
     EvaluationError,
     REPO_ROOT,
+    REASONING_EFFORTS,
     baseline_contamination_paths,
     build_run_plan,
+    codex_execution_profile,
     codex_base_command,
     configured_repetitions,
+    directory_sha256,
+    file_sha256,
     find_codex_command,
     load_json,
     normalize_suite,
+    repository_receipt,
+    require_pinned_profile,
+    require_unchanged_repository,
     resolve_suite,
     run_codex,
     safe_copy_fixture,
     suite_fixture,
     timestamp_id,
     token_usage_from_jsonl,
+    tracked_directory_sha256,
     utc_now,
     validate_output_root,
     write_json,
@@ -98,14 +106,17 @@ def run_one(
     run: dict[str, Any],
     fixture: Path,
     codex_command: str,
-    model: str | None,
+    execution_profile: dict[str, Any],
+    repo_receipt: dict[str, Any],
     timeout: int,
 ) -> dict[str, Any]:
+    require_unchanged_repository(repo_receipt)
     run_dir = suite_run_dir / "runs" / run["run_id"]
     if run_dir.exists():
         raise EvaluationError(f"Refusing to overwrite existing run: {run_dir}")
     run_dir.mkdir(parents=True)
     workspace = prepare_workspace(run_dir, run, fixture)
+    require_unchanged_repository(repo_receipt)
     output_path = run_dir / "task-output.json"
     transcript_path = run_dir / "transcript.jsonl"
     stderr_path = run_dir / "stderr.txt"
@@ -116,17 +127,27 @@ def run_one(
         sandbox="workspace-write",
         output_schema=TASK_SCHEMA,
         output_message=output_path,
-        model=model,
+        model=execution_profile["model"],
+        reasoning_effort=execution_profile["reasoning_effort"],
     )
     result = run_codex(command, prompt, timeout=timeout)
+    require_unchanged_repository(repo_receipt)
     transcript_path.write_text(result.stdout, encoding="utf-8", newline="\n")
     stderr_path.write_text(result.stderr, encoding="utf-8", newline="\n")
+    validation_errors: list[str] = []
+    if result.returncode != 0:
+        validation_errors.append(f"task exited {result.returncode}")
+    if not output_path.is_file():
+        validation_errors.append("task-output.json was not produced")
     metadata = {
         **{key: value for key, value in run.items() if key not in {"prompt", "assertions"}},
         "started_and_completed_at": utc_now(),
         "returncode": result.returncode,
+        "validation_errors": validation_errors,
         "wall_clock_seconds": result.wall_clock_seconds,
         "token_usage": token_usage_from_jsonl(result.stdout),
+        "execution_profile": execution_profile,
+        "repository": repo_receipt,
         "workspace": "workspace",
         "task_output": "task-output.json",
         "transcript": "transcript.jsonl",
@@ -157,7 +178,8 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-plan", action="store_true", help="Include every observation in dry-run JSON")
     parser.add_argument("--execute", action="store_true", help="Deliberately launch the planned Codex runs")
     parser.add_argument("--codex-command", help="Codex CLI executable name or path")
-    parser.add_argument("--model", help="Optional model override shared by both configurations")
+    parser.add_argument("--model", help="Model shared by every configuration; required with --execute")
+    parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS, help="Reasoning effort shared by every configuration")
     parser.add_argument("--timeout", type=int, default=1800, help="Seconds allowed per run")
     parser.add_argument("--allow-baseline-contamination", action="store_true")
     parser.add_argument("--allow-tracked-output", action="store_true")
@@ -169,6 +191,7 @@ def main() -> int:
     if args.execute and args.dry_run:
         raise SystemExit("Choose either --dry-run or --execute, not both")
     try:
+        require_pinned_profile(args.execute, args.model, args.reasoning_effort)
         suite_path = resolve_suite(args.suite)
         suite = normalize_suite(load_json(suite_path))
         thresholds = load_json(args.thresholds) if args.thresholds.is_file() else {}
@@ -190,6 +213,11 @@ def main() -> int:
             raise EvaluationError(f"Fixture does not exist: {fixture}")
         output_root = validate_output_root(args.output_root, args.allow_tracked_output)
         contamination = baseline_contamination_paths({run["skill"] for run in plan})
+        hash_directory = tracked_directory_sha256 if args.execute else directory_sha256
+        skill_hashes = {
+            skill: hash_directory(REPO_ROOT / "skills" / skill)
+            for skill in sorted({run["skill"] for run in plan})
+        }
         plan_document = {
             "schema_version": "1.0",
             "suite": str(suite_path),
@@ -200,6 +228,13 @@ def main() -> int:
             "pair_count": len({run["pair_id"] for run in plan}),
             "configurations": configurations,
             "baseline_contamination_risk": contamination,
+            "skill_hashes": skill_hashes,
+            "contract_hashes": {
+                "benchmark_suite_sha256": file_sha256(suite_path),
+                "thresholds_sha256": file_sha256(args.thresholds),
+                "fixture_sha256": hash_directory(fixture),
+            },
+            "execution_profile": {"model": args.model, "reasoning_effort": args.reasoning_effort},
         }
         if not args.execute:
             printable = dict(plan_document)
@@ -216,11 +251,17 @@ def main() -> int:
                 "Baseline contamination risk detected. Remove/disable these auto-discoverable target skills "
                 "or pass --allow-baseline-contamination and record the limitation:\n- " + joined
             )
-        codex_command = find_codex_command(args.codex_command)
         run_id = args.run_id or timestamp_id("benchmark")
         suite_run_dir = output_root / run_id
         if suite_run_dir.exists():
             raise EvaluationError(f"Refusing to overwrite suite run: {suite_run_dir}")
+        codex_command = find_codex_command(args.codex_command)
+        execution_profile = codex_execution_profile(
+            codex_command, str(args.model), str(args.reasoning_effort)
+        )
+        repo_receipt = repository_receipt(require_clean=True)
+        plan_document["execution_profile"] = execution_profile
+        plan_document["repository"] = repo_receipt
         suite_run_dir.mkdir(parents=True)
         write_json(
             suite_run_dir / "run-plan.json",
@@ -235,8 +276,19 @@ def main() -> int:
         completed = []
         for index, run in enumerate(plan, 1):
             print(f"[{index}/{len(plan)}] {run['run_id']}", flush=True)
-            completed.append(run_one(suite_run_dir, run, fixture, codex_command, args.model, args.timeout))
-        failed = [item for item in completed if item["returncode"] != 0]
+            completed.append(
+                run_one(
+                    suite_run_dir,
+                    run,
+                    fixture,
+                    codex_command,
+                    execution_profile,
+                    repo_receipt,
+                    args.timeout,
+                )
+            )
+        require_unchanged_repository(repo_receipt)
+        failed = [item for item in completed if item.get("validation_errors")]
         write_json(
             suite_run_dir / "execution-summary.json",
             {

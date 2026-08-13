@@ -1,28 +1,41 @@
 from __future__ import annotations
 
 import json
+import copy
+import io
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from aggregate_benchmark import evaluate_release  # noqa: E402
+from aggregate_benchmark import evaluate_release, validate_evidence_invariants  # noqa: E402
 from evaluation_common import (  # noqa: E402
     EvaluationError,
     build_run_plan,
+    codex_execution_profile,
+    codex_base_command,
     load_json,
     normalize_suite,
+    require_matching_context,
     validate_output_root,
 )
 from grade_behavioral_benchmark import validate_grade  # noqa: E402
-from run_blind_comparisons import copy_blind_bundle, label_map  # noqa: E402
+from run_blind_comparisons import copy_blind_bundle, label_map, validate_comparison  # noqa: E402
 from run_trigger_evals import confusion_metrics, summarize  # noqa: E402
+from validate_release_eval_plan import (  # noqa: E402
+    canonical_contract_hashes,
+    canonical_plan_rows,
+    validate_release_eval_plan,
+)
+import run_behavioral_benchmark  # noqa: E402
 
 
 class EvaluationToolingTests(unittest.TestCase):
@@ -34,6 +47,69 @@ class EvaluationToolingTests(unittest.TestCase):
     def test_full_and_primary_run_plan_counts(self) -> None:
         self.assertEqual(len(build_run_plan(self.suite, 3)), 96)
         self.assertEqual(len(build_run_plan(self.suite, 3, include_adversarial=False)), 66)
+
+    def canonical_release_documents(self) -> tuple[dict, dict]:
+        hashes = canonical_contract_hashes()
+        plan = {
+            "suite": str((REPO_ROOT / "evals" / "benchmark-suite.json").resolve()),
+            "fixture": str((REPO_ROOT / "examples" / "synthetic-report").resolve()),
+            "mode": "execute",
+            "repetitions": 3,
+            "run_count": 96,
+            "pair_count": 48,
+            "configurations": ["with_skill", "without_skill"],
+            "contract_hashes": {
+                "benchmark_suite_sha256": hashes["benchmark_suite_sha256"],
+                "thresholds_sha256": hashes["thresholds_sha256"],
+                "fixture_sha256": hashes["fixture_sha256"],
+            },
+            "runs": canonical_plan_rows(),
+        }
+        triggers = {
+            "suite": str((REPO_ROOT / "evals" / "trigger-evals.json").resolve()),
+            "contract_hashes": {
+                "trigger_suite_sha256": hashes["trigger_suite_sha256"]
+            },
+        }
+        return plan, triggers
+
+    def test_release_contract_accepts_only_canonical_plan_and_hashes(self) -> None:
+        plan, triggers = self.canonical_release_documents()
+        issues = validate_release_eval_plan(
+            plan,
+            triggers,
+            REPO_ROOT / "evals" / "release-thresholds.json",
+            REPO_ROOT / "evals" / "trigger-evals.json",
+        )
+        self.assertEqual(issues, [])
+
+    def test_release_contract_rejects_reduced_repetition_plan(self) -> None:
+        plan, triggers = self.canonical_release_documents()
+        plan["repetitions"] = 1
+        plan["run_count"] = 32
+        plan["runs"] = build_run_plan(self.suite, 1)
+        issues = validate_release_eval_plan(
+            plan,
+            triggers,
+            REPO_ROOT / "evals" / "release-thresholds.json",
+            REPO_ROOT / "evals" / "trigger-evals.json",
+        )
+        self.assertTrue(any("exact canonical 96-run plan" in issue for issue in issues))
+
+    def test_release_contract_rejects_custom_inputs_and_hash_drift(self) -> None:
+        plan, triggers = self.canonical_release_documents()
+        plan["contract_hashes"]["fixture_sha256"] = "0" * 64
+        triggers["contract_hashes"]["trigger_suite_sha256"] = "1" * 64
+        issues = validate_release_eval_plan(
+            plan,
+            triggers,
+            REPO_ROOT / "custom-thresholds.json",
+            REPO_ROOT / "custom-trigger-suite.json",
+        )
+        self.assertTrue(any("thresholds are not the tracked default" in issue for issue in issues))
+        self.assertTrue(any("trigger suite is not the tracked default" in issue for issue in issues))
+        self.assertTrue(any("behavioral input receipts" in issue for issue in issues))
+        self.assertTrue(any("trigger input receipt" in issue for issue in issues))
 
     def test_dry_run_is_compact_by_default(self) -> None:
         result = subprocess.run(
@@ -62,6 +138,93 @@ class EvaluationToolingTests(unittest.TestCase):
         with self.assertRaises(EvaluationError):
             validate_output_root(REPO_ROOT / "evals" / "results" / "raw")
 
+    def test_codex_command_pins_reasoning_effort(self) -> None:
+        command = codex_base_command(
+            "codex.cmd",
+            REPO_ROOT,
+            "read-only",
+            REPO_ROOT / "evals" / "schemas" / "trigger-output.schema.json",
+            REPO_ROOT / "evals" / "runs" / "output.json",
+            model="gpt-5.6-sol",
+            reasoning_effort="ultra",
+        )
+        self.assertIn("gpt-5.6-sol", command)
+        self.assertIn('model_reasoning_effort="ultra"', command)
+        self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-sol")
+        self.assertEqual(
+            command[command.index("--config") + 1], 'model_reasoning_effort="ultra"'
+        )
+
+    def test_live_profile_verifies_cli_catalog_and_records_provenance(self) -> None:
+        model_entry = {
+            "slug": "gpt-5.6-sol",
+            "description": "Maximum reasoning with typographic punctuation: \u2014",
+            "default_reasoning_level": "low",
+            "supported_reasoning_levels": [{"effort": "low"}, {"effort": "ultra"}],
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            command = Path(temp_name) / "codex.cmd"
+            command.write_text("@echo off\n", encoding="utf-8")
+            results = [
+                subprocess.CompletedProcess([], 0, "codex-cli 0.147.0\n", ""),
+                subprocess.CompletedProcess([], 0, json.dumps({"models": [model_entry]}), ""),
+            ]
+            with (
+                patch("evaluation_common.subprocess.run", side_effect=results),
+                patch("evaluation_common.platform.system", return_value="Windows"),
+                patch("evaluation_common.platform.release", return_value="11"),
+                patch("evaluation_common.platform.machine", return_value="ARM64"),
+            ):
+                profile = codex_execution_profile(str(command), "gpt-5.6-sol", "ultra")
+        self.assertEqual(profile["codex_cli_version"], "codex-cli 0.147.0")
+        self.assertEqual(profile["model"], "gpt-5.6-sol")
+        self.assertEqual(profile["reasoning_effort"], "ultra")
+        self.assertRegex(profile["codex_command_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(profile["codex_implementation_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(profile["selected_model_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_live_profile_rejects_unsupported_effort(self) -> None:
+        model_entry = {
+            "slug": "gpt-5.6-sol",
+            "default_reasoning_level": "low",
+            "supported_reasoning_levels": [{"effort": "low"}],
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            command = Path(temp_name) / "codex.cmd"
+            command.write_text("@echo off\n", encoding="utf-8")
+            results = [
+                subprocess.CompletedProcess([], 0, "codex-cli 0.147.0\n", ""),
+                subprocess.CompletedProcess([], 0, json.dumps({"models": [model_entry]}), ""),
+            ]
+            with patch("evaluation_common.subprocess.run", side_effect=results):
+                with self.assertRaisesRegex(EvaluationError, "not supported"):
+                    codex_execution_profile(str(command), "gpt-5.6-sol", "ultra")
+
+    def test_behavioral_dry_run_does_not_require_git_receipt(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch.object(sys, "argv", ["run_behavioral_benchmark.py", "--dry-run"]),
+            patch.object(
+                run_behavioral_benchmark,
+                "repository_receipt",
+                side_effect=AssertionError("dry-run must not inspect Git"),
+            ),
+            redirect_stdout(stdout),
+        ):
+            self.assertEqual(run_behavioral_benchmark.main(), 0)
+        self.assertEqual(json.loads(stdout.getvalue())["run_count"], 96)
+
+    def test_live_execution_requires_pinned_profile(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "run_trigger_evals.py"), "--execute"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires both --model and --reasoning-effort", result.stderr)
+
     def test_grade_recalculation_detects_mismatch(self) -> None:
         contract = {
             "assertions": [
@@ -83,6 +246,65 @@ class EvaluationToolingTests(unittest.TestCase):
         first = label_map("case__r01", "seed")
         self.assertEqual(first, label_map("case__r01", "seed"))
         self.assertEqual(set(first.values()), {"with_skill", "without_skill"})
+
+    def test_blind_comparison_semantics_accept_complete_result(self) -> None:
+        contract = {
+            "assertions": [
+                {"assertion_id": "case.a01", "text": "First expectation"},
+                {"assertion_id": "case.a02", "text": "Second expectation"},
+            ]
+        }
+        comparison = {
+            "winner": "A",
+            "rationale": "A has stronger evidence.",
+            "expectation_results": [
+                {
+                    "assertion_id": "case.a01",
+                    "better": "A",
+                    "evidence": "A/report.md contains the required field.",
+                },
+                {
+                    "assertion_id": "case.a02",
+                    "text": "Second expectation",
+                    "better": "tie",
+                    "evidence": "Both outputs preserve the limitation.",
+                },
+            ],
+        }
+        self.assertEqual(validate_comparison(comparison, contract), [])
+
+    def test_blind_comparison_semantics_reject_incomplete_or_duplicate_result(self) -> None:
+        contract = {
+            "assertions": [
+                {"assertion_id": "case.a01", "text": "First expectation"},
+                {"assertion_id": "case.a02", "text": "Second expectation"},
+            ]
+        }
+        comparison = {
+            "winner": "with_skill",
+            "rationale": "   ",
+            "expectation_results": [
+                {
+                    "assertion_id": "case.a01",
+                    "text": "Changed expectation",
+                    "better": "with_skill",
+                    "evidence": "",
+                },
+                {
+                    "assertion_id": "case.a01",
+                    "better": "A",
+                    "evidence": "duplicate",
+                },
+            ],
+        }
+        errors = validate_comparison(comparison, contract)
+        self.assertTrue(any("winner" in error for error in errors))
+        self.assertTrue(any("rationale" in error for error in errors))
+        self.assertTrue(any("duplicate assertion IDs" in error for error in errors))
+        self.assertTrue(any("coverage mismatch" in error for error in errors))
+        self.assertTrue(any("does not match" in error for error in errors))
+        self.assertTrue(any(".better" in error for error in errors))
+        self.assertTrue(any(".evidence" in error for error in errors))
 
     def test_blind_bundle_excludes_execution_metadata_and_skill(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
@@ -116,6 +338,94 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertEqual(metrics["suite_wide"]["precision"], 0.5)
         self.assertEqual(metrics["suite_wide"]["recall"], 0.5)
         self.assertEqual(set(metrics["per_skill"]), {"one", "two"})
+
+    def test_context_mismatch_is_rejected(self) -> None:
+        profile = {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "ultra",
+            "codex_cli_version": "codex-cli 0.147.0",
+            "codex_command_sha256": "a" * 64,
+            "codex_implementation_sha256": "f" * 64,
+            "selected_model_sha256": "b" * 64,
+            "python_version": "3.12.0",
+            "platform": "test",
+        }
+        repository = {"root": "repo", "commit": "c" * 40, "tree": "d" * 40, "dirty": False}
+        mismatched = dict(profile, reasoning_effort="high")
+        with self.assertRaisesRegex(EvaluationError, "does not match"):
+            require_matching_context(profile, repository, mismatched, repository, "test")
+
+    def test_invariants_reject_mixed_stage_and_trigger_metrics(self) -> None:
+        profile = {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "ultra",
+            "codex_cli_version": "codex-cli 0.147.0",
+            "codex_command_sha256": "a" * 64,
+            "codex_implementation_sha256": "f" * 64,
+            "selected_model_sha256": "b" * 64,
+            "python_version": "3.12.0",
+            "platform": "test",
+        }
+        repository = {"root": "repo", "commit": "c" * 40, "tree": "d" * 40, "dirty": False}
+        skill_hashes = {"one": "e" * 64}
+        row = {
+            "run_id": "case__with_skill__r01",
+            "pair_id": "case__r01",
+            "case_id": "case",
+            "case_kind": "primary",
+            "skill": "one",
+            "configuration": "with_skill",
+            "repetition": 1,
+        }
+        plan = {
+            "execution_profile": profile,
+            "repository": repository,
+            "skill_hashes": skill_hashes,
+            "runs": [row],
+        }
+        grader = {"execution_profile": profile, "repository": repository, "returncode": 0, "validation_errors": []}
+        records = [{**row, "execution_profile": profile, "repository": repository, "grader_metadata": grader}]
+        comparison = {"pair_id": "case__r01", "execution_profile": profile, "repository": repository, "returncode": 0}
+        trigger_suite = {
+            "protocol": {"repetitions_per_case": 1},
+            "cases": [{"case_id": "t", "candidate_skill": "one", "should_trigger": True}],
+        }
+        observation = {
+            "observation_id": "t__r01",
+            "case_id": "t",
+            "candidate_skill": "one",
+            "repetition": 1,
+            "should_trigger": True,
+            "triggered": True,
+            "correct": True,
+            "returncode": 0,
+            "validation_errors": [],
+            "execution_profile": profile,
+            "repository": repository,
+        }
+        triggers = {
+            "execution_profile": profile,
+            "repository": repository,
+            "skill_hashes": skill_hashes,
+            "observations": [observation],
+            "metrics": summarize([observation]),
+            "failed_observations": [],
+        }
+        self.assertEqual(
+            validate_evidence_invariants(plan, records, [comparison], triggers, trigger_suite), []
+        )
+        mixed_records = copy.deepcopy(records)
+        mixed_records[0]["grader_metadata"]["repository"]["commit"] = "f" * 40
+        issues = validate_evidence_invariants(
+            plan, mixed_records, [comparison], triggers, trigger_suite
+        )
+        self.assertTrue(any("grader" in issue and "mismatch" in issue for issue in issues))
+        bad_triggers = copy.deepcopy(triggers)
+        bad_triggers["metrics"]["suite_wide"]["recall"] = 0.0
+        issues = validate_evidence_invariants(
+            plan, records, [comparison], bad_triggers, trigger_suite
+        )
+        self.assertIn("trigger-results:stored metrics do not match observations", issues)
 
     def test_release_requires_every_hard_gate(self) -> None:
         skills = [case["skill"] for case in self.suite["primary_cases"]]

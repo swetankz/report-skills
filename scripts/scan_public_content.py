@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ TEXT_EXTENSIONS = {
 BLOCKED_BINARY_EXTENSIONS = {".pen", ".pdf", ".docx", ".pptx", ".zip", ".7z", ".mov", ".mp4", ".webm", ".ttf", ".otf", ".woff", ".woff2"}
 SKIP_DIRS = {".git", ".build", "__pycache__", ".venv", "dist"}
 SKIP_PREFIXES = {("evals", "runs"), ("evals", "review")}
+RAW_EVAL_PATHSPECS = ("evals/runs", "evals/review")
 INTENTIONAL_DEFECT_PARTS = {"intentional-defects"}
 PATTERNS = {
     "windows-user-path": re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s]+", re.IGNORECASE),
@@ -46,6 +48,60 @@ class Finding:
     detail: str
 
 
+def tracked_raw_eval_findings(root: Path) -> list[Finding]:
+    """Reject raw evaluation material that was force-added to a Git index."""
+
+    probe = subprocess.run(
+        ["git", "-c", f"safe.directory={root}", "-C", str(root), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if probe.returncode != 0:
+        return []
+    git_root = Path(probe.stdout.strip()).resolve()
+    if git_root != root.resolve():
+        return []
+    tracked = subprocess.run(
+        [
+            "git",
+            "-c",
+            f"safe.directory={git_root}",
+            "-C",
+            str(git_root),
+            "ls-files",
+            "-z",
+            "--",
+            *RAW_EVAL_PATHSPECS,
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if tracked.returncode != 0:
+        return [
+            Finding(
+                "git-index-check-failed",
+                ".git",
+                0,
+                "could not verify that raw evaluation directories are untracked",
+            )
+        ]
+    paths = sorted(
+        value.decode("utf-8", errors="replace").replace("\\", "/")
+        for value in tracked.stdout.split(b"\0")
+        if value
+    )
+    return [
+        Finding(
+            "tracked-raw-eval-artifact",
+            path,
+            0,
+            "raw evaluation runs and reviews must remain local and untracked",
+        )
+        for path in paths
+    ]
+
+
 def text_files(root: Path):
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
@@ -60,7 +116,7 @@ def text_files(root: Path):
 
 
 def scan(root: Path) -> list[Finding]:
-    findings: list[Finding] = []
+    findings = tracked_raw_eval_findings(root)
     for path in text_files(root):
         relative = path.relative_to(root)
         suffix = path.suffix.casefold()

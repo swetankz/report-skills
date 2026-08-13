@@ -31,14 +31,14 @@ python -m unittest discover -s tests
 After reviewing both dry-run plans, run the authenticated workflow locally with explicit run identifiers:
 
 ```text
-python scripts/run_behavioral_benchmark.py --execute --run-id <benchmark-id>
-python scripts/grade_behavioral_benchmark.py evals/runs/<benchmark-id> --execute
-python scripts/run_blind_comparisons.py evals/runs/<benchmark-id> --execute --seed <seed>
-python scripts/run_trigger_evals.py --execute --run-id <trigger-id>
+python scripts/run_behavioral_benchmark.py --execute --run-id <benchmark-id> --model <model> --reasoning-effort <effort>
+python scripts/grade_behavioral_benchmark.py evals/runs/<benchmark-id> --execute --model <model> --reasoning-effort <effort>
+python scripts/run_blind_comparisons.py evals/runs/<benchmark-id> --execute --seed <seed> --model <model> --reasoning-effort <effort>
+python scripts/run_trigger_evals.py --execute --run-id <trigger-id> --model <model> --reasoning-effort <effort>
 python scripts/aggregate_benchmark.py evals/runs/<benchmark-id> --trigger-results evals/runs/<trigger-id>/trigger-results.json
 ```
 
-Every command with `--execute` invokes Codex and can incur usage. Under the default protocol, a complete evaluation can make up to 300 model-backed invocations: 96 task runs, 96 grading runs, 33 blind comparisons, and 75 trigger observations. Keep the model and reasoning configuration fixed across the paired benchmark, grading, and comparison stages, and record any override.
+Every command with `--execute` invokes Codex and can incur usage. Under the default protocol, a complete evaluation can make up to 300 model-backed invocations: 96 task runs, 96 grading runs, 33 blind comparisons, and 75 trigger observations. Live execution requires an explicit model and reasoning effort, records the CLI/model/catalog identity plus the candidate Git commit/tree, and refuses a dirty repository. Use the same profile for every stage.
 
 The behavioral plan contains 96 task runs: 66 paired primary runs and 30 paired adversarial runs. Use `--primary-only` only for development diagnostics; it is not sufficient for a release decision. Raw output is written under `evals/runs/<id>/` and must remain uncommitted. The aggregator writes `benchmark.json` in the benchmark run directory and returns `release`, `hold`, or `incomplete` from the evidence it can verify.
 
@@ -80,10 +80,10 @@ A new release candidate passes only when all machine-readable thresholds in `eva
 
 The aggregate score cannot hide a failing skill, repetition, or safety case. Efficiency metrics are reported alongside quality results, but quality and safety gates are evaluated independently. When the `with_skill` median exceeds the baseline median by more than 2x for wall-clock time or total tokens, the result receives an advisory warning and the release record must explain the concrete quality or safety benefit. This warning is not a hard gate in the current policy.
 
-Missing required runs, blind pairs, trigger observations, grades, or integrity audits make the result incomplete and hold the release.
+Missing required runs, blind pairs, trigger observations, grades, or integrity audits make the result incomplete and hold the release. A release verdict also requires the exact tracked benchmark suite, threshold policy, trigger suite, synthetic fixture, two configurations, and three-repetition 96-run plan. Filtered or custom runs remain useful diagnostics but cannot produce a release verdict.
 
 ## Release evidence
 
-Publish only sanitized aggregate evidence. A release record should identify the evaluated commit and skill hashes, environment and model settings, repetitions, per-skill medians, variance, adversarial outcomes, blind-comparison results, trigger metrics, unresolved findings, and the final pass/fail decision. Keep raw run material local unless every file has passed public-safety and rights review.
+Publish only sanitized aggregate evidence. A release record should identify the evaluated commit and skill hashes, environment and model settings, repetitions, per-skill medians, variance, adversarial outcomes, blind-comparison results, trigger metrics, unresolved findings, and the final pass/fail decision. The raw `benchmark.json`, transcripts, grades, comparisons, and observations contain local paths or execution detail and are private review material, not public artifacts. Keep them local unless a separate public projection has passed public-safety and rights review.
 
 The published `v0.1.0` tag remains immutable. This protocol gates a later release candidate; it does not rewrite the evidence or claims attached to `v0.1.0`.

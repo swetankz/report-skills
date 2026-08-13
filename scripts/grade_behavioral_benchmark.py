@@ -12,9 +12,15 @@ from typing import Any
 from evaluation_common import (
     EVAL_ROOT,
     EvaluationError,
+    REASONING_EFFORTS,
+    codex_execution_profile,
     codex_base_command,
     find_codex_command,
     load_json,
+    repository_receipt,
+    require_matching_context,
+    require_pinned_profile,
+    require_unchanged_repository,
     run_codex,
     token_usage_from_jsonl,
     utc_now,
@@ -106,6 +112,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--execute", action="store_true", help="Deliberately invoke the Codex grader")
     parser.add_argument("--codex-command")
     parser.add_argument("--model")
+    parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS)
     parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--overwrite", action="store_true")
     return parser
@@ -116,6 +123,7 @@ def main() -> int:
     if args.execute and args.dry_run:
         raise SystemExit("Choose either --dry-run or --execute, not both")
     try:
+        require_pinned_profile(args.execute, args.model, args.reasoning_effort)
         suite_run_dir = args.run_dir.resolve()
         runs = discover_runs(suite_run_dir)
         if not runs:
@@ -132,10 +140,30 @@ def main() -> int:
             print(json.dumps(plan, indent=2))
             return 0
         command_name = find_codex_command(args.codex_command)
+        execution_profile = codex_execution_profile(
+            command_name, str(args.model), str(args.reasoning_effort)
+        )
+        repo_receipt = repository_receipt(require_clean=True)
+        run_plan = load_json(suite_run_dir / "run-plan.json")
+        require_matching_context(
+            run_plan.get("execution_profile", {}),
+            run_plan.get("repository", {}),
+            execution_profile,
+            repo_receipt,
+            "Grading",
+        )
         failed: list[str] = []
         for index, run_dir in enumerate(pending, 1):
             print(f"[{index}/{len(pending)}] grade {run_dir.name}", flush=True)
+            require_unchanged_repository(repo_receipt)
             metadata = load_json(run_dir / "run_metadata.json")
+            require_matching_context(
+                execution_profile,
+                repo_receipt,
+                metadata.get("execution_profile", {}),
+                metadata.get("repository", {}),
+                f"Task {run_dir.name}",
+            )
             contract = load_json(run_dir / "case_contract.json")
             grade_path = run_dir / "grading.json"
             command = codex_base_command(
@@ -144,9 +172,12 @@ def main() -> int:
                 sandbox="read-only",
                 output_schema=GRADE_SCHEMA,
                 output_message=grade_path,
-                model=args.model,
+                model=execution_profile["model"],
+                reasoning_effort=execution_profile["reasoning_effort"],
             )
+            require_unchanged_repository(repo_receipt)
             result = run_codex(command, grader_prompt(run_dir, metadata, contract), args.timeout)
+            require_unchanged_repository(repo_receipt)
             (run_dir / "grader-transcript.jsonl").write_text(result.stdout, encoding="utf-8", newline="\n")
             (run_dir / "grader-stderr.txt").write_text(result.stderr, encoding="utf-8", newline="\n")
             grade_errors: list[str] = []
@@ -165,10 +196,13 @@ def main() -> int:
                     "wall_clock_seconds": result.wall_clock_seconds,
                     "token_usage": token_usage_from_jsonl(result.stdout),
                     "validation_errors": grade_errors,
+                    "execution_profile": execution_profile,
+                    "repository": repo_receipt,
                 },
             )
             if grade_errors:
                 failed.append(run_dir.name)
+        require_unchanged_repository(repo_receipt)
         print(f"Grading complete; invalid or failed grades: {len(failed)}")
         return 1 if failed else 0
     except EvaluationError as exc:

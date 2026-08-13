@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +15,20 @@ from evaluation_common import (
     DEFAULT_THRESHOLDS,
     DEFAULT_TRIGGERS,
     EvaluationError,
+    PROFILE_IDENTITY_KEYS,
+    REPOSITORY_IDENTITY_KEYS,
+    REPO_ROOT,
     compare,
+    tracked_directory_sha256,
     load_json,
+    repository_receipt,
+    require_matching_context,
     summary_stats,
     utc_now,
     write_json,
 )
+from run_trigger_evals import summarize
+from validate_release_eval_plan import validate_release_eval_plan
 
 
 def collect_runs(run_dir: Path) -> tuple[list[dict[str, Any]], list[str]]:
@@ -37,16 +46,25 @@ def collect_runs(run_dir: Path) -> tuple[list[dict[str, Any]], list[str]]:
         metadata = load_json(metadata_path)
         if metadata.get("returncode") != 0:
             missing.append(f"{path.name}:successful task execution")
+        if metadata.get("validation_errors"):
+            missing.append(f"{path.name}:valid task output")
         if not grade_path.is_file():
             missing.append(f"{path.name}:grading.json")
-            records.append({**metadata, "grade": None})
+            records.append({**metadata, "grade": None, "grader_metadata": None})
             continue
-        grader_metadata = path / "grader_metadata.json"
-        if not grader_metadata.is_file():
+        grader_metadata_path = path / "grader_metadata.json"
+        grader_metadata = None
+        if not grader_metadata_path.is_file():
             missing.append(f"{path.name}:grader_metadata.json")
-        elif load_json(grader_metadata).get("validation_errors"):
-            missing.append(f"{path.name}:valid grade")
-        records.append({**metadata, "grade": load_json(grade_path)})
+        else:
+            grader_metadata = load_json(grader_metadata_path)
+            if grader_metadata.get("returncode") != 0:
+                missing.append(f"{path.name}:successful grader execution")
+            if grader_metadata.get("validation_errors"):
+                missing.append(f"{path.name}:valid grade")
+        records.append(
+            {**metadata, "grade": load_json(grade_path), "grader_metadata": grader_metadata}
+        )
     return records, missing
 
 
@@ -68,6 +86,187 @@ def gate_value(gates: dict[str, Any], name: str) -> tuple[str, float]:
     if not isinstance(gate, dict):
         raise EvaluationError(f"Missing release threshold: {name}")
     return str(gate["operator"]), float(gate["value"])
+
+
+def evidence_identity(
+    document: dict[str, Any], label: str, issues: list[str]
+) -> tuple[Any, ...] | None:
+    profile = document.get("execution_profile")
+    repository = document.get("repository")
+    if not isinstance(profile, dict) or not isinstance(repository, dict):
+        issues.append(f"{label}:missing evaluation identity")
+        return None
+    profile_identity = tuple(profile.get(key) for key in PROFILE_IDENTITY_KEYS)
+    commit = repository.get("commit")
+    tree = repository.get("tree")
+    if not all(isinstance(value, str) and value.strip() for value in profile_identity):
+        issues.append(f"{label}:incomplete execution profile")
+        return None
+    for key in (
+        "codex_command_sha256",
+        "codex_implementation_sha256",
+        "selected_model_sha256",
+    ):
+        value = profile.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            issues.append(f"{label}:invalid {key}")
+            return None
+    if not all(
+        isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40,64}", value)
+        for value in (commit, tree)
+    ):
+        issues.append(f"{label}:invalid repository commit/tree")
+        return None
+    if repository.get("dirty") is not False:
+        issues.append(f"{label}:dirty repository receipt")
+        return None
+    repository_identity = tuple(repository.get(key) for key in REPOSITORY_IDENTITY_KEYS)
+    if not isinstance(repository.get("root"), str) or not repository["root"].strip():
+        issues.append(f"{label}:missing repository root")
+        return None
+    return (*profile_identity, *repository_identity)
+
+
+def validate_evidence_invariants(
+    plan: dict[str, Any],
+    records: list[dict[str, Any]],
+    comparisons: list[dict[str, Any]],
+    trigger_results: dict[str, Any] | None,
+    trigger_suite: dict[str, Any],
+) -> list[str]:
+    """Return non-compensable evidence identity and coverage failures."""
+
+    issues: list[str] = []
+    anchor = evidence_identity(plan, "run-plan", issues)
+    if anchor is None:
+        return issues
+    expected_skill_hashes = plan.get("skill_hashes")
+    if not isinstance(expected_skill_hashes, dict) or not expected_skill_hashes:
+        issues.append("run-plan:missing skill hashes")
+    elif any(
+        not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in expected_skill_hashes.values()
+    ):
+        issues.append("run-plan:invalid skill hashes")
+
+    planned_rows = plan.get("runs", [])
+    if not isinstance(planned_rows, list):
+        return [*issues, "run-plan:runs is not a list"]
+    planned_counts = Counter(str(item.get("run_id")) for item in planned_rows)
+    duplicate_planned = sorted(run_id for run_id, count in planned_counts.items() if count != 1)
+    if duplicate_planned:
+        issues.append(f"run-plan:duplicate run ids {duplicate_planned}")
+    planned_by_id = {str(item.get("run_id")): item for item in planned_rows}
+    observed_counts = Counter(str(item.get("run_id")) for item in records)
+    duplicate_observed = sorted(run_id for run_id, count in observed_counts.items() if count != 1)
+    if duplicate_observed:
+        issues.append(f"runs:duplicate run ids {duplicate_observed}")
+    missing_runs = sorted(set(planned_by_id) - set(observed_counts))
+    extra_runs = sorted(set(observed_counts) - set(planned_by_id))
+    if missing_runs:
+        issues.append(f"runs:missing planned ids {missing_runs}")
+    if extra_runs:
+        issues.append(f"runs:unplanned ids {extra_runs}")
+
+    binding_fields = (
+        "pair_id",
+        "case_id",
+        "case_kind",
+        "skill",
+        "configuration",
+        "repetition",
+    )
+    for record in records:
+        run_id = str(record.get("run_id"))
+        if evidence_identity(record, f"task {run_id}", issues) != anchor:
+            issues.append(f"task {run_id}:evaluation identity mismatch")
+        planned = planned_by_id.get(run_id)
+        if planned and any(record.get(field) != planned.get(field) for field in binding_fields):
+            issues.append(f"task {run_id}:run-plan binding mismatch")
+        grader = record.get("grader_metadata")
+        if not isinstance(grader, dict):
+            issues.append(f"grader {run_id}:missing metadata")
+        else:
+            if evidence_identity(grader, f"grader {run_id}", issues) != anchor:
+                issues.append(f"grader {run_id}:evaluation identity mismatch")
+            if grader.get("returncode") != 0 or grader.get("validation_errors"):
+                issues.append(f"grader {run_id}:failed or invalid")
+
+    expected_pairs = {
+        str(item.get("pair_id"))
+        for item in planned_rows
+        if item.get("case_kind") == "primary"
+    }
+    comparison_counts = Counter(str(item.get("pair_id")) for item in comparisons)
+    duplicate_pairs = sorted(pair_id for pair_id, count in comparison_counts.items() if count != 1)
+    if duplicate_pairs:
+        issues.append(f"comparisons:duplicate pair ids {duplicate_pairs}")
+    missing_pairs = sorted(expected_pairs - set(comparison_counts))
+    extra_pairs = sorted(set(comparison_counts) - expected_pairs)
+    if missing_pairs:
+        issues.append(f"comparisons:missing pair ids {missing_pairs}")
+    if extra_pairs:
+        issues.append(f"comparisons:unplanned pair ids {extra_pairs}")
+    for comparison in comparisons:
+        pair_id = str(comparison.get("pair_id"))
+        if evidence_identity(comparison, f"comparison {pair_id}", issues) != anchor:
+            issues.append(f"comparison {pair_id}:evaluation identity mismatch")
+        if comparison.get("returncode") != 0:
+            issues.append(f"comparison {pair_id}:failed execution")
+        if comparison.get("validation_errors"):
+            issues.append(f"comparison {pair_id}:invalid output")
+
+    if trigger_results is None:
+        return issues
+    trigger_identity = evidence_identity(trigger_results, "trigger-results", issues)
+    if trigger_identity != anchor:
+        issues.append("trigger-results:evaluation identity mismatch")
+    if trigger_results.get("skill_hashes") != expected_skill_hashes:
+        issues.append("trigger-results:skill hashes do not match run-plan")
+    observations = trigger_results.get("observations", [])
+    if not isinstance(observations, list):
+        return [*issues, "trigger-results:observations is not a list"]
+    repetitions = int(trigger_suite.get("protocol", {}).get("repetitions_per_case", 3))
+    expected_observations = {
+        f"{case['case_id']}__r{repetition:02d}": {
+            "case_id": case["case_id"],
+            "candidate_skill": case["candidate_skill"],
+            "repetition": repetition,
+            "should_trigger": case["should_trigger"],
+        }
+        for case in trigger_suite.get("cases", [])
+        for repetition in range(1, repetitions + 1)
+    }
+    observation_counts = Counter(str(item.get("observation_id")) for item in observations)
+    duplicate_observations = sorted(
+        observation_id for observation_id, count in observation_counts.items() if count != 1
+    )
+    if duplicate_observations:
+        issues.append(f"triggers:duplicate observation ids {duplicate_observations}")
+    missing_observations = sorted(set(expected_observations) - set(observation_counts))
+    extra_observations = sorted(set(observation_counts) - set(expected_observations))
+    if missing_observations:
+        issues.append(f"triggers:missing observation ids {missing_observations}")
+    if extra_observations:
+        issues.append(f"triggers:unplanned observation ids {extra_observations}")
+    for observation in observations:
+        observation_id = str(observation.get("observation_id"))
+        if evidence_identity(observation, f"trigger {observation_id}", issues) != anchor:
+            issues.append(f"trigger {observation_id}:evaluation identity mismatch")
+        expected = expected_observations.get(observation_id)
+        if expected and any(observation.get(field) != value for field, value in expected.items()):
+            issues.append(f"trigger {observation_id}:suite binding mismatch")
+        if observation.get("returncode") != 0 or observation.get("validation_errors"):
+            issues.append(f"trigger {observation_id}:failed or invalid prediction")
+        if observation.get("correct") is not (
+            observation.get("triggered") == observation.get("should_trigger")
+        ):
+            issues.append(f"trigger {observation_id}:incorrect correctness flag")
+    if summarize(observations) != trigger_results.get("metrics"):
+        issues.append("trigger-results:stored metrics do not match observations")
+    if trigger_results.get("failed_observations"):
+        issues.append("trigger-results:failed observations")
+    return issues
 
 
 def evaluate_release(
@@ -187,6 +386,14 @@ def main() -> int:
         plan_path = run_dir / "run-plan.json"
         if plan_path.is_file():
             plan = load_json(plan_path)
+            current_repository = repository_receipt(require_clean=True)
+            require_matching_context(
+                plan.get("execution_profile", {}),
+                plan.get("repository", {}),
+                plan.get("execution_profile", {}),
+                current_repository,
+                "Aggregation",
+            )
             planned = plan.get("runs", [])
             planned_ids = {item["run_id"] for item in planned}
             observed_ids = {record.get("run_id") for record in records}
@@ -198,7 +405,14 @@ def main() -> int:
             expected_pairs = {
                 item["pair_id"] for item in planned if item.get("case_kind") == "primary"
             }
+            current_skill_hashes = {
+                skill: tracked_directory_sha256(REPO_ROOT / "skills" / skill)
+                for skill in sorted({item["skill"] for item in planned})
+            }
+            if plan.get("skill_hashes") != current_skill_hashes:
+                missing.append("run-plan:skill hashes do not match the candidate checkout")
         else:
+            plan = {}
             missing.append("run-plan.json")
             expected_skills = set()
             expected_pairs = set()
@@ -212,6 +426,12 @@ def main() -> int:
         trigger_suite = load_json(args.trigger_suite)
         trigger_repetitions = int(trigger_suite.get("protocol", {}).get("repetitions_per_case", 3))
         expected_trigger_observations = len(trigger_suite.get("cases", [])) * trigger_repetitions
+        missing.extend(
+            validate_evidence_invariants(plan, records, comparisons, triggers, trigger_suite)
+        )
+        missing.extend(
+            validate_release_eval_plan(plan, triggers, args.thresholds, args.trigger_suite)
+        )
         release = evaluate_release(
             records,
             comparisons,
@@ -293,6 +513,15 @@ def main() -> int:
             "run_count": len(records),
             "graded_run_count": sum(record.get("grade") is not None for record in records),
             "blind_comparison_count": len(comparisons),
+            "evaluation_receipt": {
+                "execution_profile": plan.get("execution_profile"),
+                "repository": plan.get("repository"),
+                "skill_hashes": plan.get("skill_hashes"),
+                "contract_hashes": {
+                    **(plan.get("contract_hashes") or {}),
+                    **((triggers or {}).get("contract_hashes") or {}),
+                },
+            },
             "variance": variance,
             "advisories": {"efficiency": efficiency},
             "release_verdict": release,
