@@ -12,6 +12,7 @@ All notable repository-level changes are documented here.
 - Add a defense-in-depth check that rejects named `SKILL.md` path references outside the injected candidate when they are visible in top-level command events, and record path-free local loader diagnostics.
 - Require metadata-policy-checked, body-proven skill activation and clarify adjacent skill boundaries found through repeated fresh-context trigger tests.
 - Store observations and blind-comparison bundles under compact physical directories while retaining canonical logical identities, and fail before model calls if a copied fixture or injected-skill input would exceed the safe Windows path budget.
+- Build both public archives from a clean-HEAD, regular-Git-blob allowlist; reject tracked raw evaluation trees and non-regular entries while excluding ignored or untracked local material.
 
 ## 0.1.0 — 2026-08-13
 

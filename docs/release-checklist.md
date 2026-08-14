@@ -29,6 +29,7 @@ The published `v0.1.0` tag is immutable. The next section applies to the `v0.2.0
 - [ ] `.codex-plugin/plugin.json` and `pyproject.toml` both declare `0.2.0`.
 - [ ] The aggregate record identifies the candidate commit, skill hashes, model and environment, repetitions, variance, and final gate decision.
 - [ ] Only sanitized aggregate evidence is proposed for publication; raw transcripts and workspaces remain local unless separately reviewed for public safety and rights.
+- [ ] Both release archives contain only their intended clean-HEAD regular Git blobs; tracked `evals/runs/` or `evals/review/` evidence and non-regular entries are rejected, while ignored or untracked local material is excluded.
 - [ ] The exact new version, tag, commit, assets, destination, and external actions receive explicit human approval.
 - [ ] The evaluated commit and tree are clean, and the PR base has not changed in a way that alters the merged tree.
 - [ ] Both deterministic `v0.2.0` ZIPs and their SHA-256 sidecars are built and recorded under exact tag authorization.

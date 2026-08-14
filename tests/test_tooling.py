@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +19,7 @@ BUILD_SCRIPT = REPO_ROOT / "scripts" / "build_skills.py"
 SCAN_SCRIPT = REPO_ROOT / "scripts" / "scan_public_content.py"
 RELEASE_SCRIPT = REPO_ROOT / "scripts" / "create_release_package.py"
 SOURCE_SNAPSHOT_SCRIPT = REPO_ROOT / "scripts" / "create_source_snapshot.py"
+RELEASE_INVENTORY_SCRIPT = REPO_ROOT / "scripts" / "release_inventory.py"
 EXPECTED_SKILLS = {
     "report-skills",
     "evidence-first-report",
@@ -31,6 +34,31 @@ EXPECTED_SKILLS = {
     "creative-artifact-provenance",
 }
 EXPLICIT_ONLY = {"report-skills", "sites-release-manager", "pencil-safe-editor"}
+
+
+def load_script_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def git(repo: Path, *arguments: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(repo), *arguments],
+        check=True,
+        capture_output=True,
+    )
+
+
+def initialize_git_repo(repo: Path) -> None:
+    repo.mkdir()
+    git(repo, "init", "--quiet")
+    git(repo, "config", "user.name", "Synthetic Release Test")
+    git(repo, "config", "user.email", "release-test@example.invalid")
 
 
 def tree_hashes(root: Path) -> dict[str, str]:
@@ -192,6 +220,204 @@ class ToolingTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0, script.name)
             self.assertIn("does not match plugin version", result.stdout + result.stderr)
+
+    def test_release_inventory_uses_clean_head_and_ignores_local_artifacts(self) -> None:
+        inventory_module = load_script_module(
+            RELEASE_INVENTORY_SCRIPT, "test_release_inventory_clean"
+        )
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            repo = root / "repo"
+            first = root / "first"
+            second = root / "second"
+            initialize_git_repo(repo)
+            (repo / ".gitignore").write_text(
+                "/.coverage\n/evals/runs/\n/evals/review/\n**/private.txt\n",
+                encoding="utf-8",
+            )
+            (repo / "README.md").write_text("tracked public source\n", encoding="utf-8")
+            git(repo, "add", ".gitignore", "README.md")
+            git(repo, "commit", "--quiet", "-m", "public source")
+
+            ignored_files = (
+                repo / ".coverage",
+                repo / "evals" / "runs" / "local" / "transcript.jsonl",
+                repo / "evals" / "review" / "local" / "notes.json",
+                repo / "skills" / "example" / "private.txt",
+            )
+            for path in ignored_files:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("private local material\n", encoding="utf-8")
+
+            inventory = inventory_module.tracked_head_inventory(repo)
+            self.assertEqual(
+                {item.path.as_posix() for item in inventory},
+                {".gitignore", "README.md"},
+            )
+            inventory_module.copy_inventory(repo, first, inventory)
+            inventory_module.copy_inventory(repo, second, inventory)
+            self.assertEqual(tree_hashes(first), tree_hashes(second))
+            self.assertEqual(set(tree_hashes(first)), {".gitignore", "README.md"})
+
+    def test_release_inventory_rejects_tracked_raw_evaluation_paths(self) -> None:
+        inventory_module = load_script_module(
+            RELEASE_INVENTORY_SCRIPT, "test_release_inventory_raw"
+        )
+        with tempfile.TemporaryDirectory() as temp_name:
+            repo = Path(temp_name) / "repo"
+            initialize_git_repo(repo)
+            (repo / ".gitignore").write_text(
+                "/EVALS/RUNS/\n/EVALS/REVIEW/\n", encoding="utf-8"
+            )
+            (repo / "README.md").write_text("public source\n", encoding="utf-8")
+            run_raw = repo / "EVALS" / "RUNS" / "local" / "transcript.jsonl"
+            review_raw = repo / "EVALS" / "REVIEW" / "local" / "notes.json"
+            run_raw.parent.mkdir(parents=True)
+            review_raw.parent.mkdir(parents=True)
+            run_raw.write_text("raw run evidence\n", encoding="utf-8")
+            review_raw.write_text("raw review evidence\n", encoding="utf-8")
+            git(repo, "add", ".gitignore", "README.md")
+            git(
+                repo,
+                "add",
+                "-f",
+                "EVALS/RUNS/local/transcript.jsonl",
+                "EVALS/REVIEW/local/notes.json",
+            )
+            git(repo, "commit", "--quiet", "-m", "unsafe source")
+
+            with self.assertRaisesRegex(SystemExit, "EVALS/REVIEW/local/notes.json"):
+                inventory_module.tracked_head_inventory(repo)
+
+    def test_release_inventory_rejects_nonregular_entries_and_allows_lookalikes(self) -> None:
+        inventory_module = load_script_module(
+            RELEASE_INVENTORY_SCRIPT, "test_release_inventory_modes"
+        )
+        object_id = b"0" * 40
+        allowed = inventory_module._parse_tree(
+            b"100644 blob " + object_id + b"\tevals/runs-public/result.json\0"
+        )
+        self.assertEqual(allowed[0].path.as_posix(), "evals/runs-public/result.json")
+        with self.assertRaisesRegex(SystemExit, "non-regular tracked release entry"):
+            inventory_module._parse_tree(
+                b"120000 blob " + object_id + b"\tdocs/symlink.md\0"
+            )
+        with self.assertRaisesRegex(SystemExit, "colliding tracked release paths"):
+            inventory_module._parse_tree(
+                b"100644 blob "
+                + object_id
+                + b"\tdocs/Foo.txt\0"
+                + b"100644 blob "
+                + (b"1" * 40)
+                + b"\tdocs/foo.txt\0"
+            )
+        for first_directory, second_directory in (
+            ("Foo", "foo"),
+            ("caf\u00e9", "cafe\u0301"),
+        ):
+            with self.subTest(
+                first_directory=first_directory,
+                second_directory=second_directory,
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit, "colliding tracked release directory paths"
+                ):
+                    inventory_module._parse_tree(
+                        (
+                            f"100644 blob {'0' * 40}\tdocs/{first_directory}/a.txt\0"
+                            f"100644 blob {'1' * 40}\tdocs/{second_directory}/b.txt\0"
+                        ).encode("utf-8")
+                    )
+        with self.assertRaisesRegex(SystemExit, "colliding tracked release paths"):
+            inventory_module._parse_tree(
+                b"100644 blob "
+                + object_id
+                + b"\tdocs/Foo\0"
+                + b"100644 blob "
+                + (b"1" * 40)
+                + b"\tdocs/foo/child.txt\0"
+            )
+        for unsafe_path in (
+            r"evals\runs\leak.json",
+            r"..\..\escape.txt",
+            r"C:\escape.txt",
+            r"\\server\share\escape.txt",
+            "docs/name:stream",
+            "docs/CON.txt",
+            "docs/CONIN$",
+            "docs/CONOUT$.txt",
+            "docs/CON .txt",
+            "docs/NUL .txt",
+            "docs/COM\u00b9.txt",
+            "docs/LPT\u00b3.txt",
+            "docs/trailing-dot.",
+        ):
+            with self.subTest(unsafe_path=unsafe_path):
+                with self.assertRaisesRegex(SystemExit, "tracked release path"):
+                    inventory_module._parse_tree(
+                        b"100644 blob "
+                        + object_id
+                        + b"\t"
+                        + unsafe_path.encode("utf-8")
+                        + b"\0"
+                    )
+
+    def test_release_inventory_rejects_dirty_worktree(self) -> None:
+        inventory_module = load_script_module(
+            RELEASE_INVENTORY_SCRIPT, "test_release_inventory_dirty"
+        )
+        with tempfile.TemporaryDirectory() as temp_name:
+            repo = Path(temp_name) / "repo"
+            initialize_git_repo(repo)
+            readme = repo / "README.md"
+            readme.write_text("committed\n", encoding="utf-8")
+            git(repo, "add", "README.md")
+            git(repo, "commit", "--quiet", "-m", "clean source")
+            readme.write_text("modified\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(SystemExit, "README.md"):
+                inventory_module.tracked_head_inventory(repo)
+
+    def test_plugin_inventory_uses_only_selected_tracked_blobs(self) -> None:
+        inventory_module = load_script_module(
+            RELEASE_INVENTORY_SCRIPT, "release_inventory"
+        )
+        with mock.patch.dict(sys.modules, {"release_inventory": inventory_module}):
+            release_module = load_script_module(
+                RELEASE_SCRIPT, "test_create_release_package"
+            )
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            repo = root / "repo"
+            stage = root / "stage"
+            initialize_git_repo(repo)
+            (repo / ".gitignore").write_text("**/private.txt\n", encoding="utf-8")
+            tracked = {
+                ".codex-plugin/plugin.json": "{}\n",
+                "skills/example/SKILL.md": "---\nname: example\n---\n",
+                **{path: "public\n" for path in release_module.ROOT_FILES},
+                **{path: "public\n" for path in release_module.DOC_FILES},
+            }
+            for relative, content in tracked.items():
+                path = repo / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            git(repo, "add", ".gitignore", *tracked)
+            git(repo, "commit", "--quiet", "-m", "plugin source")
+            for relative in (
+                ".codex-plugin/private.txt",
+                "skills/example/private.txt",
+            ):
+                path = repo / relative
+                path.write_text("private local material\n", encoding="utf-8")
+
+            with mock.patch.object(release_module, "REPO_ROOT", repo):
+                release_module.copy_candidate(stage)
+
+            self.assertEqual(
+                set(tree_hashes(stage)),
+                set(tracked),
+            )
 
     def test_evaluation_inventory_matches_skills(self) -> None:
         evaluations = json.loads((REPO_ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))

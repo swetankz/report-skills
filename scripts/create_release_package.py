@@ -6,12 +6,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+from release_inventory import copy_inventory, select_inventory, tracked_head_inventory
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,8 @@ DOC_FILES = [
     "docs/limitations.md",
     "docs/asset-license-ledger.csv",
 ]
+PUBLIC_FILES = {PurePosixPath(path) for path in ROOT_FILES + DOC_FILES}
+PLUGIN_PREFIXES = {".codex-plugin", "skills"}
 
 
 def sha256(path: Path) -> str:
@@ -41,14 +44,24 @@ def run_check(*arguments: str) -> None:
         raise SystemExit(result.returncode)
 
 
+def plugin_inventory():
+    inventory = tracked_head_inventory(REPO_ROOT)
+    selected = select_inventory(
+        inventory,
+        lambda path: path in PUBLIC_FILES or (path.parts and path.parts[0] in PLUGIN_PREFIXES),
+    )
+    selected_paths = {item.path for item in selected}
+    missing = sorted(path.as_posix() for path in PUBLIC_FILES - selected_paths)
+    if missing:
+        raise SystemExit(f"Required tracked plugin release files are missing: {missing}")
+    for prefix in sorted(PLUGIN_PREFIXES):
+        if not any(item.path.parts and item.path.parts[0] == prefix for item in selected):
+            raise SystemExit(f"Tracked plugin release tree is missing: {prefix}/")
+    return selected
+
+
 def copy_candidate(stage: Path) -> None:
-    shutil.copytree(REPO_ROOT / ".codex-plugin", stage / ".codex-plugin")
-    shutil.copytree(REPO_ROOT / "skills", stage / "skills")
-    for relative in ROOT_FILES + DOC_FILES:
-        source = REPO_ROOT / relative
-        target = stage / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+    copy_inventory(REPO_ROOT, stage, plugin_inventory())
 
 
 def write_release_manifest(stage: Path, version: str, authorized_tag: str | None) -> None:

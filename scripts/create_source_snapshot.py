@@ -6,47 +6,24 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
+from release_inventory import copy_inventory, tracked_head_inventory
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST = REPO_ROOT / "dist"
 PLUGIN_MANIFEST = REPO_ROOT / ".codex-plugin" / "plugin.json"
-EXCLUDED_DIRS = {
-    ".git",
-    ".build",
-    ".pytest_cache",
-    ".venv",
-    "__pycache__",
-    "dist",
-}
-EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
-
-
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def source_files() -> list[Path]:
-    files: list[Path] = []
-    for path in sorted(REPO_ROOT.rglob("*")):
-        relative = path.relative_to(REPO_ROOT)
-        if any(part in EXCLUDED_DIRS for part in relative.parts):
-            continue
-        if path.is_symlink():
-            raise SystemExit(f"Refusing to snapshot symlink: {relative.as_posix()}")
-        if path.is_file() and path.suffix.casefold() not in EXCLUDED_SUFFIXES:
-            files.append(path)
-    return files
 
 
 def run_check(*arguments: str) -> None:
@@ -56,11 +33,7 @@ def run_check(*arguments: str) -> None:
 
 
 def copy_source(stage: Path) -> None:
-    for source in source_files():
-        relative = source.relative_to(REPO_ROOT)
-        target = stage / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+    copy_inventory(REPO_ROOT, stage, tracked_head_inventory(REPO_ROOT))
 
 
 def write_manifest(stage: Path, version: str, authorized_tag: str | None) -> None:
