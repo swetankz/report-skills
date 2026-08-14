@@ -206,6 +206,8 @@ class EvaluationToolingTests(unittest.TestCase):
             command[command.index("--config") + 1], 'model_reasoning_effort="ultra"'
         )
         self.assertNotIn("--approve-for-me", command)
+        self.assertIn("--sandbox", command)
+        self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
 
     def test_workspace_write_command_uses_automatic_approval_review(self) -> None:
         command = codex_base_command(
@@ -218,6 +220,7 @@ class EvaluationToolingTests(unittest.TestCase):
             reasoning_effort="ultra",
         )
         self.assertIn("--approve-for-me", command)
+        self.assertNotIn("--sandbox", command)
 
     def test_live_profile_verifies_cli_catalog_and_records_provenance(self) -> None:
         model_entry = {

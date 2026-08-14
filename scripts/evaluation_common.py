@@ -486,17 +486,19 @@ def codex_base_command(
         "--ignore-rules",
         "--skip-git-repo-check",
         "--json",
-        "--sandbox",
-        sandbox,
+    ]
+    if sandbox == "workspace-write":
+        command.append("--approve-for-me")
+    else:
+        command.extend(["--sandbox", sandbox])
+    command.extend([
         "--cd",
         str(cwd),
         "--output-schema",
         str(output_schema.resolve()),
         "--output-last-message",
         str(output_message.resolve()),
-    ]
-    if sandbox == "workspace-write":
-        command.append("--approve-for-me")
+    ])
     if model:
         command.extend(["--model", model])
     if reasoning_effort:
