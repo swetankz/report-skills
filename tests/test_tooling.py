@@ -130,6 +130,16 @@ class ToolingTests(unittest.TestCase):
                 self.assertIn('short_description: "Explicit-only:', short_description, skill)
                 self.assertIn(f"${skill}", short_description, skill)
 
+    def test_evidence_report_records_a_disposition_for_every_review_pass(self) -> None:
+        required_instruction = (
+            "Create at least one `revision-log.md` entry linked to a finding from each "
+            "of the three passes. If a pass warrants no artifact change, record a "
+            "verified no-change disposition with its evidence instead of inventing a revision."
+        )
+        for tree in (REPO_ROOT / "source" / "skills", REPO_ROOT / "skills"):
+            text = (tree / "evidence-first-report" / "SKILL.md").read_text(encoding="utf-8")
+            self.assertIn(required_instruction, text)
+
     def test_scanner_detects_sensitive_content(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)
