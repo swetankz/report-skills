@@ -91,6 +91,16 @@ class ToolingTests(unittest.TestCase):
                     description,
                     skill,
                 )
+                metadata = (tree / skill / "agents" / "openai.yaml").read_text(
+                    encoding="utf-8"
+                )
+                short_description = next(
+                    line.strip()
+                    for line in metadata.splitlines()
+                    if line.strip().startswith("short_description:")
+                )
+                self.assertIn('short_description: "Explicit-only:', short_description, skill)
+                self.assertIn(f"${skill}", short_description, skill)
 
     def test_scanner_detects_sensitive_content(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

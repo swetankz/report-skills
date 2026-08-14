@@ -613,6 +613,9 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertIn("not an explicit invocation", prompt)
         self.assertIn("explicit-only or implicit-invocation policy", prompt)
         self.assertIn("Decide whether a skill applies before opening its body", prompt)
+        self.assertIn("directory or filename is never enough", prompt)
+        self.assertIn("agents/openai.yaml metadata and SKILL.md frontmatter", prompt)
+        self.assertIn("lacks its required exact invocation token", prompt)
         self.assertIn("read its SKILL.md completely", prompt)
         self.assertIn("follow its instructions", prompt)
         self.assertIn("merely to fill the response schema", prompt)
@@ -683,6 +686,30 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertFalse(
             body_proven_activation(
                 {"selected_skill": "report-visual-system", "rationale": marker}, candidate, marker
+            )
+        )
+        self.assertTrue(
+            body_proven_activation(
+                {"selected_skill": None, "rationale": "self-corrected"},
+                candidate,
+                marker,
+                f"command output exposed {marker} before the final response",
+            )
+        )
+        self.assertTrue(
+            body_proven_activation(
+                {"selected_skill": "report-visual-system", "rationale": "other"},
+                candidate,
+                marker,
+                f"completed body read: {marker}",
+            )
+        )
+        self.assertFalse(
+            body_proven_activation(
+                {"selected_skill": None, "rationale": "self-corrected"},
+                candidate,
+                marker,
+                "transcript without the unique body marker",
             )
         )
 

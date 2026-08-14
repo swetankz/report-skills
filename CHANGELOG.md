@@ -10,7 +10,7 @@ All notable repository-level changes are documented here.
 - Validate every model-facing object schema against the strict structured-output requirement before live evaluation.
 - Allow task agents to create local benchmark artifacts through automatic approval review constrained to the isolated `workspace-write` sandbox.
 - Add a defense-in-depth check that rejects named `SKILL.md` path references outside the injected candidate when they are visible in top-level command events, and record path-free local loader diagnostics.
-- Require body-proven skill activation and clarify adjacent skill boundaries found through repeated fresh-context trigger tests.
+- Require metadata-policy-checked, body-proven skill activation and clarify adjacent skill boundaries found through repeated fresh-context trigger tests.
 - Store observations and blind-comparison bundles under compact physical directories while retaining canonical logical identities, and fail before model calls if a copied fixture or injected-skill input would exceed the safe Windows path budget.
 
 ## 0.1.0 — 2026-08-13

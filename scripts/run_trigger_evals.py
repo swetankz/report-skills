@@ -106,7 +106,13 @@ def trigger_task_prompt(query: str) -> str:
         "Follow the platform's ordinary skill invocation rules. This generic instruction is "
         "not an explicit invocation of any skill and does not override a skill's explicit-only "
         "or implicit-invocation policy. Decide whether a skill applies before opening its body. "
-        "Do not inspect or invoke a skill merely to fill the response schema.\n\n"
+        "Use the declared description and invocation policy as the pre-activation evidence: a "
+        "skill directory or filename is never enough to infer applicability. If filesystem "
+        "discovery finds a skill whose policy is not already known, inspect only its "
+        "agents/openai.yaml metadata and SKILL.md frontmatter through the closing delimiter "
+        "before deciding; do not read the body. If the declared policy is explicit-only and "
+        "the request lacks its required exact invocation token, do not invoke that skill. Do "
+        "not inspect or invoke a skill merely to fill the response schema.\n\n"
         "If the request activates a skill under those ordinary rules, invoke it, read its "
         "SKILL.md completely, and follow its instructions before returning the structured "
         "response. Set selected_skill only "
@@ -116,14 +122,18 @@ def trigger_task_prompt(query: str) -> str:
     )
 
 
-def body_proven_activation(prediction: dict[str, Any], candidate_skill: str, marker: str) -> bool:
-    """Count activation only when the selected candidate returns its body-only marker."""
+def body_proven_activation(
+    prediction: dict[str, Any], candidate_skill: str, marker: str, transcript: str = ""
+) -> bool:
+    """Count any candidate-body marker exposure as activation, even after self-correction."""
     selected = prediction.get("selected_skill")
     selected_matches = selected in {
         candidate_skill,
         f"report-skills:{candidate_skill}",
     }
-    return selected_matches and prediction.get("rationale") == marker
+    return marker in transcript or (
+        selected_matches and prediction.get("rationale") == marker
+    )
 
 
 def run_trigger_prediction(command: list[str], query: str, timeout: int) -> Any:
@@ -237,7 +247,9 @@ def main() -> int:
             if not output_path.is_file():
                 validation_errors.append("prediction.json was not produced")
             prediction = load_json(output_path) if not validation_errors else {}
-            triggered = body_proven_activation(prediction, case["candidate_skill"], marker)
+            triggered = body_proven_activation(
+                prediction, case["candidate_skill"], marker, result.stdout
+            )
             observation = {
                 "observation_id": case["observation_id"],
                 "case_id": case["case_id"],

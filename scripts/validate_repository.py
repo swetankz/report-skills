@@ -159,6 +159,14 @@ def validate_skill(name: str, root: Path, errors: list[str], injected_targets: s
         implicit_false = bool(re.search(r"^\s*allow_implicit_invocation:\s*false\s*$", metadata, re.MULTILINE))
         if name in EXPLICIT_ONLY and not implicit_false:
             errors.append(f"{prefix}/agents/openai.yaml: sensitive skill must disable implicit invocation")
+        if name in EXPLICIT_ONLY and (
+            not short
+            or not short.group(1).startswith("Explicit-only:")
+            or f"${name}" not in short.group(1)
+        ):
+            errors.append(
+                f"{prefix}/agents/openai.yaml: explicit-only short_description must state exact ${name} invocation"
+            )
 
 
 def validate_repository_links(errors: list[str]) -> None:
