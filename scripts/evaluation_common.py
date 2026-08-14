@@ -495,6 +495,8 @@ def codex_base_command(
         "--output-last-message",
         str(output_message.resolve()),
     ]
+    if sandbox == "workspace-write":
+        command.append("--approve-for-me")
     if model:
         command.extend(["--model", model])
     if reasoning_effort:

@@ -50,13 +50,21 @@ def validate_model_output_schema(
     """Enforce the strict object shape required by Codex structured outputs."""
     if isinstance(value, dict):
         properties = value.get("properties")
-        if value.get("type") == "object" and value.get("additionalProperties") is False:
-            required = value.get("required", [])
-            if isinstance(properties, dict) and set(required) != set(properties):
+        if value.get("type") == "object":
+            if value.get("additionalProperties") is not False:
                 errors.append(
-                    f"{schema_name}{location}: every declared object property must be required; "
-                    f"required={sorted(required)}, properties={sorted(properties)}"
+                    f"{schema_name}{location}: object schemas must set additionalProperties to false"
                 )
+            if not isinstance(properties, dict):
+                errors.append(f"{schema_name}{location}: object schemas must declare properties")
+            else:
+                required = value.get("required", [])
+                if not isinstance(required, list) or set(required) != set(properties):
+                    errors.append(
+                        f"{schema_name}{location}: every declared object property must be required; "
+                        f"required={sorted(required) if isinstance(required, list) else required}, "
+                        f"properties={sorted(properties)}"
+                    )
         for key, child in value.items():
             validate_model_output_schema(child, schema_name, errors, f"{location}/{key}")
     elif isinstance(value, list):

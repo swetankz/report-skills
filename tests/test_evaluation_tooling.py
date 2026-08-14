@@ -48,6 +48,7 @@ from validate_release_eval_plan import (  # noqa: E402
     canonical_plan_rows,
     validate_release_eval_plan,
 )
+from validate_eval_suite import validate_model_output_schema  # noqa: E402
 import run_behavioral_benchmark  # noqa: E402
 import run_trigger_evals  # noqa: E402
 
@@ -156,28 +157,33 @@ class EvaluationToolingTests(unittest.TestCase):
             "trigger-output.schema.json",
         )
 
-        def inspect(value: object, location: str) -> list[str]:
-            errors: list[str] = []
-            if isinstance(value, dict):
-                properties = value.get("properties")
-                if value.get("type") == "object" and value.get("additionalProperties") is False:
-                    required = value.get("required", [])
-                    if isinstance(properties, dict) and set(required) != set(properties):
-                        errors.append(
-                            f"{location}: required={sorted(required)} properties={sorted(properties)}"
-                        )
-                for key, child in value.items():
-                    errors.extend(inspect(child, f"{location}/{key}"))
-            elif isinstance(value, list):
-                for index, child in enumerate(value):
-                    errors.extend(inspect(child, f"{location}/{index}"))
-            return errors
-
         errors: list[str] = []
         for name in schema_names:
             schema = json.loads((REPO_ROOT / "evals" / "schemas" / name).read_text(encoding="utf-8"))
-            errors.extend(inspect(schema, name))
+            validate_model_output_schema(schema, name, errors)
         self.assertEqual(errors, [])
+
+    def test_model_output_schema_validator_rejects_open_object_shapes(self) -> None:
+        invalid_schemas = (
+            {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+            {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {"x": {"type": "string"}},
+                "required": ["x"],
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"x": {"type": "string"}},
+                "required": [],
+            },
+        )
+        for schema in invalid_schemas:
+            with self.subTest(schema=schema):
+                errors: list[str] = []
+                validate_model_output_schema(schema, "synthetic.json", errors)
+                self.assertTrue(errors)
 
     def test_raw_output_refuses_tracked_results(self) -> None:
         with self.assertRaises(EvaluationError):
@@ -199,6 +205,19 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertEqual(
             command[command.index("--config") + 1], 'model_reasoning_effort="ultra"'
         )
+        self.assertNotIn("--approve-for-me", command)
+
+    def test_workspace_write_command_uses_automatic_approval_review(self) -> None:
+        command = codex_base_command(
+            "codex.cmd",
+            REPO_ROOT,
+            "workspace-write",
+            REPO_ROOT / "evals" / "schemas" / "task-run-output.schema.json",
+            REPO_ROOT / "evals" / "runs" / "output.json",
+            model="gpt-5.6-sol",
+            reasoning_effort="ultra",
+        )
+        self.assertIn("--approve-for-me", command)
 
     def test_live_profile_verifies_cli_catalog_and_records_provenance(self) -> None:
         model_entry = {
