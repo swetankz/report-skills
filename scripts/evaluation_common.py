@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from release_inventory import TrackedFile, validate_portable_collisions, validate_release_path
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EVAL_ROOT = REPO_ROOT / "evals"
@@ -71,44 +73,139 @@ def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def snapshot_manifest_files() -> dict[str, str]:
+    """Return a validated history-free source inventory when no exact Git root exists."""
+
+    manifest_path = REPO_ROOT / "SOURCE_SNAPSHOT_MANIFEST.json"
+    if (REPO_ROOT / ".git").exists():
+        raise EvaluationError(
+            "Refusing source snapshot fallback while repository Git metadata is present"
+        )
+    if not manifest_path.is_file():
+        raise EvaluationError(
+            f"No exact Git worktree or source snapshot manifest is available at {REPO_ROOT}"
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise EvaluationError(f"Cannot read source snapshot manifest: {error}") from error
+    files = manifest.get("files")
+    if (
+        manifest.get("schema_version") != 1
+        or manifest.get("project") != "report-skills"
+        or manifest.get("snapshot_type") != "intended-public-repository-tree"
+        or manifest.get("git_history_present") is not False
+        or not isinstance(files, dict)
+        or manifest.get("file_count") != len(files)
+    ):
+        raise EvaluationError("Source snapshot manifest metadata is invalid")
+    validated: dict[str, str] = {}
+    collision_inventory: list[TrackedFile] = []
+    for raw_path, digest in files.items():
+        if not isinstance(raw_path, str) or not isinstance(digest, str):
+            raise EvaluationError("Source snapshot manifest file entries are invalid")
+        try:
+            path = validate_release_path(raw_path)
+        except SystemExit as error:
+            raise EvaluationError(str(error)) from error
+        if path.as_posix() != raw_path or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise EvaluationError(f"Unsafe source snapshot manifest entry: {raw_path!r}")
+        parts = tuple(part.casefold() for part in path.parts)
+        if parts[:2] in {("evals", "review"), ("evals", "runs")}:
+            raise EvaluationError(f"Raw evaluation path in source snapshot: {raw_path}")
+        canonical = path.as_posix()
+        if canonical in validated:
+            raise EvaluationError(f"Duplicate source snapshot manifest entry: {canonical}")
+        validated[canonical] = digest
+        collision_inventory.append(TrackedFile(path, "100644", digest))
+    try:
+        validate_portable_collisions(collision_inventory)
+    except SystemExit as error:
+        raise EvaluationError(str(error)) from error
+    if len(validated) != len(files):
+        raise EvaluationError("Source snapshot manifest paths are not unique")
+    return validated
+
+
 def tracked_directory_sha256(root: Path) -> str:
-    """Hash only Git-tracked files under a release-evaluated directory."""
+    """Hash exact tracked files, with a verified history-free snapshot fallback."""
 
     relative_root = root.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
-    result = subprocess.run(
-        [
-            "git",
-            "-c",
-            f"safe.directory={REPO_ROOT}",
-            "-C",
-            str(REPO_ROOT),
-            "ls-files",
-            "--",
-            relative_root,
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="strict",
-        check=False,
-    )
-    if result.returncode != 0:
-        raise EvaluationError(
-            f"Cannot list tracked files for {root}: {result.stderr.strip() or result.stdout.strip()}"
+    try:
+        root_result = subprocess.run(
+            [
+                "git",
+                "-c",
+                f"safe.directory={REPO_ROOT}",
+                "-C",
+                str(REPO_ROOT),
+                "rev-parse",
+                "--show-toplevel",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            check=False,
         )
-    tracked = [line for line in result.stdout.splitlines() if line]
+    except OSError:
+        root_result = None
+    exact_git_root = (
+        root_result is not None
+        and root_result.returncode == 0
+        and Path(root_result.stdout.strip()).resolve() == REPO_ROOT.resolve()
+    )
+    manifest_hashes: dict[str, str] | None = None
+    if exact_git_root:
+        result = subprocess.run(
+            [
+                "git",
+                "-c",
+                f"safe.directory={REPO_ROOT}",
+                "-C",
+                str(REPO_ROOT),
+                "ls-files",
+                "--",
+                relative_root,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            check=False,
+        )
+        if result.returncode != 0:
+            raise EvaluationError(
+                f"Cannot list tracked files for {root}: "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            )
+        tracked = [line for line in result.stdout.splitlines() if line]
+    else:
+        manifest_hashes = snapshot_manifest_files()
+        prefix = f"{relative_root.rstrip('/')}/"
+        tracked = sorted(path for path in manifest_hashes if path.startswith(prefix))
     if not tracked:
-        raise EvaluationError(f"No Git-tracked files found under {root}")
+        raise EvaluationError(f"No tracked source files found under {root}")
     actual = [path for path in sorted(root.rglob("*")) if path.is_file()]
     tracked_paths = [(REPO_ROOT / path).resolve() for path in tracked]
+    missing = sorted(
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in tracked_paths
+        if not path.is_file()
+    )
+    if missing:
+        raise EvaluationError(f"Tracked source files are missing under {root}: {missing}")
     extras = sorted(path.relative_to(root).as_posix() for path in set(actual) - set(tracked_paths))
     if extras:
         raise EvaluationError(f"Untracked or ignored files affect evaluated directory {root}: {extras}")
     digest = hashlib.sha256()
     for relative, path in sorted(zip(tracked, tracked_paths, strict=True)):
+        content_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if manifest_hashes is not None and content_digest != manifest_hashes[relative]:
+            raise EvaluationError(f"Source snapshot file hash mismatch: {relative}")
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
+        digest.update(bytes.fromhex(content_digest))
     return digest.hexdigest()
 
 

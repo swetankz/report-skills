@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import copy
+import hashlib
 import io
 import subprocess
 import sys
@@ -49,6 +50,7 @@ from validate_release_eval_plan import (  # noqa: E402
     validate_release_eval_plan,
 )
 from validate_eval_suite import validate_model_output_schema  # noqa: E402
+import evaluation_common  # noqa: E402
 import run_behavioral_benchmark  # noqa: E402
 import run_trigger_evals  # noqa: E402
 
@@ -62,6 +64,93 @@ class EvaluationToolingTests(unittest.TestCase):
     def test_full_and_primary_run_plan_counts(self) -> None:
         self.assertEqual(len(build_run_plan(self.suite, 3)), 96)
         self.assertEqual(len(build_run_plan(self.suite, 3, include_adversarial=False)), 66)
+
+    def test_history_free_snapshot_manifest_backs_tracked_directory_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            snapshot = Path(temp_name) / "snapshot"
+            skill_root = snapshot / "skills" / "example"
+            skill_root.mkdir(parents=True)
+            skill_file = skill_root / "SKILL.md"
+            skill_file.write_text("synthetic skill\n", encoding="utf-8")
+            relative = "skills/example/SKILL.md"
+            file_digest = hashlib.sha256(skill_file.read_bytes()).hexdigest()
+            manifest = {
+                "schema_version": 1,
+                "project": "report-skills",
+                "snapshot_type": "intended-public-repository-tree",
+                "git_history_present": False,
+                "file_count": 1,
+                "files": {relative: file_digest},
+            }
+            (snapshot / "SOURCE_SNAPSHOT_MANIFEST.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            expected = hashlib.sha256()
+            expected.update(relative.encode("utf-8"))
+            expected.update(b"\0")
+            expected.update(bytes.fromhex(file_digest))
+
+            with patch.object(evaluation_common, "REPO_ROOT", snapshot):
+                self.assertEqual(
+                    evaluation_common.tracked_directory_sha256(skill_root),
+                    expected.hexdigest(),
+                )
+                extra = skill_root / "unlisted.txt"
+                extra.write_text("unlisted\n", encoding="utf-8")
+                with self.assertRaisesRegex(EvaluationError, "Untracked or ignored"):
+                    evaluation_common.tracked_directory_sha256(skill_root)
+                extra.unlink()
+                skill_file.write_text("tampered\n", encoding="utf-8")
+                with self.assertRaisesRegex(EvaluationError, "hash mismatch"):
+                    evaluation_common.tracked_directory_sha256(skill_root)
+
+    def test_history_free_snapshot_manifest_rejects_noncanonical_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            snapshot = Path(temp_name) / "snapshot"
+            snapshot.mkdir()
+            manifest_path = snapshot / "SOURCE_SNAPSHOT_MANIFEST.json"
+            digest = "0" * 64
+
+            def write_manifest(files: dict[str, str], schema_version: int = 1) -> None:
+                manifest_path.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": schema_version,
+                            "project": "report-skills",
+                            "snapshot_type": "intended-public-repository-tree",
+                            "git_history_present": False,
+                            "file_count": len(files),
+                            "files": files,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            invalid_inventories = {
+                "dot segment": {"skills/example/./SKILL.md": digest},
+                "empty segment": {"skills/example//SKILL.md": digest},
+                "ADS": {"skills/example/file.txt:ads": digest},
+                "device": {"skills/example/CONIN$": digest},
+                "raw eval": {"EVALS/RUNS/local/transcript.jsonl": digest},
+                "case collision": {
+                    "skills/example/Foo.txt": digest,
+                    "skills/example/foo.txt": "1" * 64,
+                },
+            }
+            with patch.object(evaluation_common, "REPO_ROOT", snapshot):
+                write_manifest({"skills/example/SKILL.md": digest}, schema_version=999)
+                with self.assertRaises(EvaluationError):
+                    evaluation_common.snapshot_manifest_files()
+                for label, files in invalid_inventories.items():
+                    with self.subTest(label=label):
+                        write_manifest(files)
+                        with self.assertRaises(EvaluationError):
+                            evaluation_common.snapshot_manifest_files()
+
+                write_manifest({"skills/example/SKILL.md": digest})
+                (snapshot / ".git").write_text("gitdir: unavailable\n", encoding="utf-8")
+                with self.assertRaisesRegex(EvaluationError, "Git metadata is present"):
+                    evaluation_common.snapshot_manifest_files()
 
     def canonical_release_documents(self) -> tuple[dict, dict]:
         hashes = canonical_contract_hashes()
