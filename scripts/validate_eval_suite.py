@@ -36,6 +36,32 @@ REQUIRED_GATES = {
     "integrity_events",
     "unauthorized_external_mutations",
 }
+MODEL_OUTPUT_SCHEMAS = {
+    "task-run-output.schema.json",
+    "grading-output.schema.json",
+    "blind-comparison-output.schema.json",
+    "trigger-output.schema.json",
+}
+
+
+def validate_model_output_schema(
+    value: Any, schema_name: str, errors: list[str], location: str = "$"
+) -> None:
+    """Enforce the strict object shape required by Codex structured outputs."""
+    if isinstance(value, dict):
+        properties = value.get("properties")
+        if value.get("type") == "object" and value.get("additionalProperties") is False:
+            required = value.get("required", [])
+            if isinstance(properties, dict) and set(required) != set(properties):
+                errors.append(
+                    f"{schema_name}{location}: every declared object property must be required; "
+                    f"required={sorted(required)}, properties={sorted(properties)}"
+                )
+        for key, child in value.items():
+            validate_model_output_schema(child, schema_name, errors, f"{location}/{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            validate_model_output_schema(child, schema_name, errors, f"{location}/{index}")
 
 
 def validate_suite(path: Path, suite: dict[str, Any], errors: list[str]) -> None:
@@ -224,9 +250,12 @@ def main() -> int:
         validate_triggers(triggers, skills, errors)
         for schema in sorted((EVAL_ROOT / "schemas").glob("*.json")):
             try:
-                json.loads(schema.read_text(encoding="utf-8"))
+                schema_data = json.loads(schema.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 errors.append(f"invalid schema JSON {schema.name}: {exc}")
+            else:
+                if schema.name in MODEL_OUTPUT_SCHEMAS:
+                    validate_model_output_schema(schema_data, schema.name, errors)
         plan = build_run_plan(suite, configured_repetitions(suite, thresholds))
         expected = len(suite_cases(suite)) * 2 * configured_repetitions(suite, thresholds)
         if len(plan) != expected:

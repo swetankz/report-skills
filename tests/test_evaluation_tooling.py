@@ -148,6 +148,37 @@ class EvaluationToolingTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_model_output_schemas_require_every_declared_object_property(self) -> None:
+        schema_names = (
+            "task-run-output.schema.json",
+            "grading-output.schema.json",
+            "blind-comparison-output.schema.json",
+            "trigger-output.schema.json",
+        )
+
+        def inspect(value: object, location: str) -> list[str]:
+            errors: list[str] = []
+            if isinstance(value, dict):
+                properties = value.get("properties")
+                if value.get("type") == "object" and value.get("additionalProperties") is False:
+                    required = value.get("required", [])
+                    if isinstance(properties, dict) and set(required) != set(properties):
+                        errors.append(
+                            f"{location}: required={sorted(required)} properties={sorted(properties)}"
+                        )
+                for key, child in value.items():
+                    errors.extend(inspect(child, f"{location}/{key}"))
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    errors.extend(inspect(child, f"{location}/{index}"))
+            return errors
+
+        errors: list[str] = []
+        for name in schema_names:
+            schema = json.loads((REPO_ROOT / "evals" / "schemas" / name).read_text(encoding="utf-8"))
+            errors.extend(inspect(schema, name))
+        self.assertEqual(errors, [])
+
     def test_raw_output_refuses_tracked_results(self) -> None:
         with self.assertRaises(EvaluationError):
             validate_output_root(REPO_ROOT / "evals" / "results" / "raw")

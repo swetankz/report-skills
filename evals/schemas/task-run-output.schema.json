@@ -11,7 +11,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["path", "status"],
+        "required": ["path", "status", "description"],
         "additionalProperties": false,
         "properties": {
           "path": {"type": "string"},
