@@ -73,6 +73,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "run_count": 96,
             "pair_count": 48,
             "configurations": ["with_skill", "without_skill"],
+            "baseline_contamination_risk": [],
             "contract_hashes": {
                 "benchmark_suite_sha256": hashes["benchmark_suite_sha256"],
                 "thresholds_sha256": hashes["thresholds_sha256"],
@@ -125,6 +126,17 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertTrue(any("trigger suite is not the tracked default" in issue for issue in issues))
         self.assertTrue(any("behavioral input receipts" in issue for issue in issues))
         self.assertTrue(any("trigger input receipt" in issue for issue in issues))
+
+    def test_release_contract_rejects_baseline_contamination(self) -> None:
+        plan, triggers = self.canonical_release_documents()
+        plan["baseline_contamination_risk"] = ["evidence-first-report"]
+        issues = validate_release_eval_plan(
+            plan,
+            triggers,
+            REPO_ROOT / "evals" / "release-thresholds.json",
+            REPO_ROOT / "evals" / "trigger-evals.json",
+        )
+        self.assertIn("release-contract:baseline contamination risk must be empty", issues)
 
     def test_dry_run_is_compact_by_default(self) -> None:
         result = subprocess.run(
@@ -221,6 +233,68 @@ class EvaluationToolingTests(unittest.TestCase):
         )
         self.assertIn("--approve-for-me", command)
         self.assertNotIn("--sandbox", command)
+
+    def test_behavioral_prompt_limits_skill_bodies_to_the_candidate(self) -> None:
+        with_skill = {"configuration": "with_skill", "skill": "evidence-first-report", "prompt": "Task"}
+        baseline = {"configuration": "without_skill", "skill": "evidence-first-report", "prompt": "Task"}
+        self.assertIn("only skill package you may read or use", run_behavioral_benchmark.task_prompt(with_skill))
+        self.assertIn("Do not read or invoke any other skill body", run_behavioral_benchmark.task_prompt(baseline))
+
+    def test_behavioral_trace_rejects_non_candidate_skill_body_reads(self) -> None:
+        run = {"configuration": "with_skill", "skill": "evidence-first-report"}
+
+        def transcript(command: str) -> str:
+            return json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"id": "cmd-1", "type": "command_execution", "command": command},
+                }
+            )
+
+        allowed = transcript(r"Get-Content .benchmark_skill\\evidence-first-report\\SKILL.md")
+        global_read = transcript(r"Get-Content Q:\\fixture\\.codex\\skills\\other\\SKILL.md")
+        wrong_candidate = transcript("Get-Content .benchmark_skill/report-skills/SKILL.md")
+        lookalike_candidate = transcript(
+            "Get-Content .benchmark_skill/evidence-first-report-evil/SKILL.md"
+        )
+        mixed_read = transcript(
+            "Get-Content .benchmark_skill/evidence-first-report/SKILL.md, "
+            "Q:/fixture/.codex/skills/other/SKILL.md"
+        )
+        plugin_read = transcript(
+            "Get-Content Q:/fixture/.codex/plugins/cache/vendor/package/skills/other/SKILL.md"
+        )
+        allowed_join_path = transcript(
+            r"Get-Content (Join-Path '.benchmark_skill\evidence-first-report' 'SKILL.md')"
+        )
+        global_join_path = transcript(
+            r"Get-Content (Join-Path 'Q:\fixture\.codex\skills\other' 'SKILL.md')"
+        )
+        self.assertEqual(run_behavioral_benchmark.skill_body_read_violations(allowed, run), [])
+        self.assertEqual(
+            run_behavioral_benchmark.skill_body_read_violations(allowed_join_path, run), []
+        )
+        self.assertTrue(run_behavioral_benchmark.skill_body_read_violations(global_read, run))
+        self.assertTrue(run_behavioral_benchmark.skill_body_read_violations(global_join_path, run))
+        self.assertTrue(run_behavioral_benchmark.skill_body_read_violations(wrong_candidate, run))
+        self.assertTrue(run_behavioral_benchmark.skill_body_read_violations(lookalike_candidate, run))
+        self.assertTrue(run_behavioral_benchmark.skill_body_read_violations(mixed_read, run))
+        self.assertTrue(run_behavioral_benchmark.skill_body_read_violations(plugin_read, run))
+        baseline = {"configuration": "without_skill", "skill": "evidence-first-report"}
+        self.assertTrue(run_behavioral_benchmark.skill_body_read_violations(allowed, baseline))
+
+    def test_behavioral_loader_diagnostics_are_path_free_counts(self) -> None:
+        stderr = "\n".join(
+            [
+                "WARN codex_skills_extension::loader::metadata: ignoring synthetic-openai-yaml",
+                "ERROR failed to load skill .codex/skills/synthetic/SKILL.md",
+            ]
+        )
+        diagnostics = run_behavioral_benchmark.skill_loader_diagnostics(stderr)
+        self.assertEqual(diagnostics["ignore_user_config_scope"], "config.toml_only")
+        self.assertEqual(diagnostics["metadata_warning_count"], 1)
+        self.assertEqual(diagnostics["failed_skill_load_count"], 1)
+        self.assertNotIn("synthetic-openai-yaml", json.dumps(diagnostics))
 
     def test_live_profile_verifies_cli_catalog_and_records_provenance(self) -> None:
         model_entry = {
@@ -675,7 +749,33 @@ class EvaluationToolingTests(unittest.TestCase):
             "runs": [row],
         }
         grader = {"execution_profile": profile, "repository": repository, "returncode": 0, "validation_errors": []}
-        records = [{**row, "execution_profile": profile, "repository": repository, "grader_metadata": grader}]
+        task_method = {
+            "started_at": "2026-08-14T00:00:00Z",
+            "completed_at": "2026-08-14T00:00:01Z",
+            "skill_loading": "explicit_workspace_copy",
+            "codex_isolation": {
+                "ephemeral": True,
+                "ignore_user_config": True,
+                "ignore_user_config_scope": "config.toml_only",
+                "ignore_rules": True,
+                "sandbox": "workspace-write",
+                "skill_body_read_guard": "named-skill-path-command-events-v1",
+            },
+            "skill_loader_diagnostics": {
+                "ignore_user_config_scope": "config.toml_only",
+                "metadata_warning_count": 0,
+                "failed_skill_load_count": 0,
+            },
+        }
+        records = [
+            {
+                **row,
+                **task_method,
+                "execution_profile": profile,
+                "repository": repository,
+                "grader_metadata": grader,
+            }
+        ]
         comparison = {"pair_id": "case__r01", "execution_profile": profile, "repository": repository, "returncode": 0}
         trigger_suite = {
             "protocol": {"repetitions_per_case": 1},
@@ -717,6 +817,13 @@ class EvaluationToolingTests(unittest.TestCase):
             plan, records, [comparison], bad_triggers, trigger_suite
         )
         self.assertIn("trigger-results:stored metrics do not match observations", issues)
+
+        bad_method_records = copy.deepcopy(records)
+        bad_method_records[0]["codex_isolation"]["skill_body_read_guard"] = "legacy-guard"
+        issues = validate_evidence_invariants(
+            plan, bad_method_records, [comparison], triggers, trigger_suite
+        )
+        self.assertTrue(any("task isolation receipt" in issue for issue in issues))
 
     def test_release_requires_every_hard_gate(self) -> None:
         skills = [case["skill"] for case in self.suite["primary_cases"]]

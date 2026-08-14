@@ -18,6 +18,8 @@ from evaluation_common import (
     PROFILE_IDENTITY_KEYS,
     REPOSITORY_IDENTITY_KEYS,
     REPO_ROOT,
+    TASK_IGNORE_USER_CONFIG_SCOPE,
+    TASK_SKILL_BODY_READ_GUARD,
     compare,
     tracked_directory_sha256,
     load_json,
@@ -29,6 +31,51 @@ from evaluation_common import (
 )
 from run_trigger_evals import summarize
 from validate_release_eval_plan import validate_release_eval_plan
+
+
+def validate_task_method_receipt(
+    record: dict[str, Any], label: str, issues: list[str]
+) -> None:
+    """Require the exact release-eligible task isolation and diagnostic receipt."""
+
+    isolation = record.get("codex_isolation")
+    expected_isolation = {
+        "ephemeral": True,
+        "ignore_user_config": True,
+        "ignore_user_config_scope": TASK_IGNORE_USER_CONFIG_SCOPE,
+        "ignore_rules": True,
+        "sandbox": "workspace-write",
+        "skill_body_read_guard": TASK_SKILL_BODY_READ_GUARD,
+    }
+    if not isinstance(isolation, dict) or any(
+        isolation.get(key) != value for key, value in expected_isolation.items()
+    ):
+        issues.append(f"{label}:missing or unsupported task isolation receipt")
+
+    expected_loading = (
+        "explicit_workspace_copy" if record.get("configuration") == "with_skill" else "none"
+    )
+    if record.get("skill_loading") != expected_loading:
+        issues.append(f"{label}:skill-loading receipt does not match configuration")
+    for key in ("started_at", "completed_at"):
+        if not isinstance(record.get(key), str) or not record[key].strip():
+            issues.append(f"{label}:missing {key}")
+
+    diagnostics = record.get("skill_loader_diagnostics")
+    expected_diagnostic_keys = {
+        "ignore_user_config_scope",
+        "metadata_warning_count",
+        "failed_skill_load_count",
+    }
+    if not isinstance(diagnostics, dict) or set(diagnostics) != expected_diagnostic_keys:
+        issues.append(f"{label}:missing or malformed skill-loader diagnostics")
+        return
+    if diagnostics.get("ignore_user_config_scope") != TASK_IGNORE_USER_CONFIG_SCOPE:
+        issues.append(f"{label}:skill-loader diagnostic scope mismatch")
+    for key in ("metadata_warning_count", "failed_skill_load_count"):
+        value = diagnostics.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            issues.append(f"{label}:invalid {key}")
 
 
 def collect_runs(run_dir: Path) -> tuple[list[dict[str, Any]], list[str]]:
@@ -180,6 +227,7 @@ def validate_evidence_invariants(
         run_id = str(record.get("run_id"))
         if evidence_identity(record, f"task {run_id}", issues) != anchor:
             issues.append(f"task {run_id}:evaluation identity mismatch")
+        validate_task_method_receipt(record, f"task {run_id}", issues)
         planned = planned_by_id.get(run_id)
         if planned and any(record.get(field) != planned.get(field) for field in binding_fields):
             issues.append(f"task {run_id}:run-plan binding mismatch")
@@ -513,6 +561,11 @@ def main() -> int:
                 "execution_profile": plan.get("execution_profile"),
                 "repository": plan.get("repository"),
                 "skill_hashes": plan.get("skill_hashes"),
+                "repetitions": plan.get("repetitions"),
+                "behavioral_method": {
+                    "skill_body_read_guard": TASK_SKILL_BODY_READ_GUARD,
+                    "ignore_user_config_scope": TASK_IGNORE_USER_CONFIG_SCOPE,
+                },
                 "contract_hashes": {
                     **(plan.get("contract_hashes") or {}),
                     **((triggers or {}).get("contract_hashes") or {}),

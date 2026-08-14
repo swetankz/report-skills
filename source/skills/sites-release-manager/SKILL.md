@@ -1,6 +1,6 @@
 ---
 name: sites-release-manager
-description: "Prepare, compare, package, and, only with exact explicit authorization, deploy a validated artifact through Sites while preserving access controls and verifying routes. Use for Sites-specific dry runs, stale-source detection, release preparation, or explicitly approved deployment of a known revision; do not use for generic hosting or inferred publication."
+description: "Explicit invocation only: activate this skill only when the user's request contains the exact token `$sites-release-manager`; topical requests without that token must not activate it. Prepare, compare, package, and, only with exact explicit authorization, deploy a validated artifact through Sites while preserving access controls and verifying routes. Use for Sites-specific dry runs, stale-source detection, release preparation, or explicitly approved deployment of a known revision; do not use for generic hosting or inferred publication."
 ---
 
 # Sites Release Manager

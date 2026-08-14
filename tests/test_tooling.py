@@ -30,6 +30,7 @@ EXPECTED_SKILLS = {
     "pencil-safe-editor",
     "creative-artifact-provenance",
 }
+EXPLICIT_ONLY = {"report-skills", "sites-release-manager", "pencil-safe-editor"}
 
 
 def tree_hashes(root: Path) -> dict[str, str]:
@@ -73,6 +74,23 @@ class ToolingTests(unittest.TestCase):
             for path in root.rglob("*"):
                 if path.is_file() and path.suffix.casefold() in {".md", ".yaml", ".yml", ".json", ".py"}:
                     self.assertNotIn("../", path.read_text(encoding="utf-8"), path.as_posix())
+
+    def test_explicit_only_skills_publish_activation_boundary(self) -> None:
+        for tree in (REPO_ROOT / "source" / "skills", REPO_ROOT / "skills"):
+            for skill in sorted(EXPLICIT_ONLY):
+                text = (tree / skill / "SKILL.md").read_text(encoding="utf-8")
+                description = next(
+                    line for line in text.splitlines() if line.startswith("description:")
+                )
+                self.assertTrue(description.startswith('description: "'), skill)
+                self.assertTrue(description.endswith('"'), skill)
+                self.assertIn("Explicit invocation only:", description, skill)
+                self.assertIn(f"${skill}", description, skill)
+                self.assertIn(
+                    "topical requests without that token must not activate it",
+                    description,
+                    skill,
+                )
 
     def test_scanner_detects_sensitive_content(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

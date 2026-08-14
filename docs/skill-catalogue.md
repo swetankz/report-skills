@@ -18,3 +18,4 @@ Reader responsibility is intentionally split: `evidence-first-report` reviews ar
 
 Provenance is also split: `editorial-data-storytelling` records data source, unit, population, period, and transformation; `creative-artifact-provenance` records generated and exported file lineage.
 
+Invocation policy is part of the boundary: `report-skills`, `sites-release-manager`, and `pencil-safe-editor` activate only for the exact tokens `$report-skills`, `$sites-release-manager`, and `$pencil-safe-editor`. Topical requests without the corresponding token must not activate them.

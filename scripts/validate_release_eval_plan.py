@@ -118,6 +118,8 @@ def validate_release_eval_plan(
         or plan.get("runs") != expected_rows
     ):
         issues.append("release-contract:behavioral plan is not the exact canonical 96-run plan")
+    if plan.get("baseline_contamination_risk") != []:
+        issues.append("release-contract:baseline contamination risk must be empty")
 
     if trigger_results is not None:
         if not _same_resolved_path(trigger_results.get("suite"), DEFAULT_TRIGGERS):

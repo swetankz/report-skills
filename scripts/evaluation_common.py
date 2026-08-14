@@ -29,6 +29,8 @@ DEFAULT_RUNS_ROOT = EVAL_ROOT / "runs"
 DEFAULT_REVIEW_ROOT = EVAL_ROOT / "review"
 RESULTS_ROOT = (EVAL_ROOT / "results").resolve()
 REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
+TASK_IGNORE_USER_CONFIG_SCOPE = "config.toml_only"
+TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v1"
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",

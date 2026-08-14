@@ -16,6 +16,8 @@ Report Skills is a modular, evidence-led research-to-publication system for Code
 - `pencil-safe-editor` — verify and preserve the active Pencil document before edits.
 - `creative-artifact-provenance` — record creative artifact origin, status, and lineage.
 
+`report-skills`, `sites-release-manager`, and `pencil-safe-editor` are explicit-only. Invoke them with the exact tokens `$report-skills`, `$sites-release-manager`, and `$pencil-safe-editor`; a topical request without the corresponding token does not activate the skill.
+
 ## Architecture
 
 `source/` is the maintained authoring source. `scripts/build_skills.py` generates complete packages under `skills/`. Generated packages are committed so each GitHub subpath is self-contained.

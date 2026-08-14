@@ -125,6 +125,12 @@ def validate_skill(name: str, root: Path, errors: list[str], injected_targets: s
     description = frontmatter.get("description", "")
     if not description or len(description) > 1024 or "<" in description or ">" in description:
         errors.append(f"{prefix}/SKILL.md: invalid description")
+    if name in EXPLICIT_ONLY and (
+        not description.startswith("Explicit invocation only:") or f"${name}" not in description
+    ):
+        errors.append(
+            f"{prefix}/SKILL.md: explicit-only description must state the activation boundary and exact ${name} token"
+        )
     if len(text.splitlines()) > 500:
         errors.append(f"{prefix}/SKILL.md: exceeds 500 lines")
     for target in local_markdown_targets(text):

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -24,6 +25,8 @@ from evaluation_common import (
     EvaluationError,
     REPO_ROOT,
     REASONING_EFFORTS,
+    TASK_IGNORE_USER_CONFIG_SCOPE,
+    TASK_SKILL_BODY_READ_GUARD,
     baseline_contamination_paths,
     build_run_plan,
     codex_execution_profile,
@@ -64,6 +67,7 @@ Safety and evaluation constraints:
 - Do not invent evidence, approvals, runtime observations, provenance, or tool state.
 - Use `not-verified` whenever direct verification is unavailable.
 - Save useful task artifacts under `artifacts/` in this workspace.
+- Do not inspect, read, or invoke any user-level or global skill body.
 - Your final response must match the supplied JSON schema.
 
 Task prompt (kept identical across the paired configurations):
@@ -75,7 +79,7 @@ Task prompt (kept identical across the paired configurations):
 Configuration instruction:
 Read `.benchmark_skill/{run['skill']}/SKILL.md` completely, follow its linked
 local instructions as needed, and use that skill to perform the task. This
-explicit repository copy is the only Report Skills package you may use.
+explicit repository copy is the only skill package you may read or use.
 """
     return common + f"""
 
@@ -83,8 +87,64 @@ Configuration instruction:
 This is the baseline arm. Do not load, read, invoke, reconstruct, or rely on
 `{run['skill']}`, `report-skills`, or any other Report Skills package, even if
 one is installed globally. Treat the `$...` name in the unchanged task prompt
-as a task label only. Solve the task from the fixture and general reasoning.
+as a task label only. Do not read or invoke any other skill body. Solve the task
+from the fixture and general reasoning.
 """
+
+
+def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str]:
+    """Flag named SKILL.md command references outside the allowed injected copy."""
+
+    allowed_directory = f".benchmark_skill/{run['skill']}".casefold()
+    allowed_pattern = re.compile(
+        rf"(?<![a-z0-9_.-]){re.escape(allowed_directory)}(?=/|['\"\s,)])"
+    )
+    disallowed_roots = (
+        ".benchmark_skill/",
+        ".codex/skills/",
+        ".agents/skills/",
+        ".codex/plugins/",
+        "/skills/",
+    )
+    violations: set[str] = set()
+    for line_number, line in enumerate(transcript.splitlines(), 1):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item", {}) if isinstance(event, dict) else {}
+        if item.get("type") != "command_execution":
+            continue
+        command = str(item.get("command", ""))
+        normalized = re.sub(r"/+", "/", command.replace("\\", "/")).casefold()
+        if "skill.md" not in normalized:
+            continue
+        allowed_reference = allowed_pattern.search(normalized) is not None
+        remaining = allowed_pattern.sub("", normalized)
+        disallowed_reference = (
+            run["configuration"] != "with_skill"
+            or not allowed_reference
+            or any(root in remaining for root in disallowed_roots)
+        )
+        if disallowed_reference:
+            event_id = str(item.get("id") or f"line-{line_number}")
+            violations.add(
+                f"non-candidate named SKILL.md reference detected in command event {event_id}"
+            )
+    return sorted(violations)
+
+
+def skill_loader_diagnostics(stderr: str) -> dict[str, Any]:
+    """Summarize local loader noise without publishing user-specific paths."""
+
+    lines = stderr.splitlines()
+    metadata_warnings = sum("codex_skills_extension::loader::metadata" in line for line in lines)
+    failed_loads = sum("failed to load skill" in line.casefold() for line in lines)
+    return {
+        "ignore_user_config_scope": TASK_IGNORE_USER_CONFIG_SCOPE,
+        "metadata_warning_count": metadata_warnings,
+        "failed_skill_load_count": failed_loads,
+    }
 
 
 def physical_run_id(index: int, total: int) -> str:
@@ -180,7 +240,9 @@ def run_one(
         model=execution_profile["model"],
         reasoning_effort=execution_profile["reasoning_effort"],
     )
+    started_at = utc_now()
     result = run_codex(command, prompt, timeout=timeout)
+    completed_at = utc_now()
     require_unchanged_repository(repo_receipt)
     transcript_path.write_text(result.stdout, encoding="utf-8", newline="\n")
     stderr_path.write_text(result.stderr, encoding="utf-8", newline="\n")
@@ -189,9 +251,11 @@ def run_one(
         validation_errors.append(f"task exited {result.returncode}")
     if not output_path.is_file():
         validation_errors.append("task-output.json was not produced")
+    validation_errors.extend(skill_body_read_violations(result.stdout, run))
     metadata = {
         **{key: value for key, value in run.items() if key not in {"prompt", "assertions"}},
-        "started_and_completed_at": utc_now(),
+        "started_at": started_at,
+        "completed_at": completed_at,
         "returncode": result.returncode,
         "validation_errors": validation_errors,
         "wall_clock_seconds": result.wall_clock_seconds,
@@ -206,9 +270,12 @@ def run_one(
         "codex_isolation": {
             "ephemeral": True,
             "ignore_user_config": True,
+            "ignore_user_config_scope": TASK_IGNORE_USER_CONFIG_SCOPE,
             "ignore_rules": True,
             "sandbox": "workspace-write",
+            "skill_body_read_guard": TASK_SKILL_BODY_READ_GUARD,
         },
+        "skill_loader_diagnostics": skill_loader_diagnostics(result.stderr),
     }
     write_json(run_dir / "run_metadata.json", metadata)
     write_json(run_dir / "case_contract.json", {"prompt": run["prompt"], "assertions": run["assertions"]})
