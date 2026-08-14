@@ -157,6 +157,59 @@ class ToolingTests(unittest.TestCase):
             for instruction in required_instructions:
                 self.assertIn(instruction, text)
 
+    def test_evidence_report_requires_csv_round_trip_validation(self) -> None:
+        required_instructions = (
+            "Write every register with a CSV serializer or equivalent standards-compliant escaping",
+            "Quote fields containing a comma, double quote, carriage return, or line break",
+            "Re-open each written CSV with a parser",
+            "require every data row to have exactly the header's column count",
+            "Treat any mismatch as a blocking artifact error",
+        )
+        for path in (
+            REPO_ROOT / "source" / "skills" / "evidence-first-report" / "references" / "evidence-model.md",
+            REPO_ROOT / "skills" / "evidence-first-report" / "references" / "evidence-model.md",
+        ):
+            text = path.read_text(encoding="utf-8")
+            for instruction in required_instructions:
+                self.assertIn(instruction, text)
+        expected_header = (
+            "claim_id,claim_text,claim_type,importance,status,source_ids,evidence_ids,"
+            "location,quantitative,cutoff_status,conflict_status,confidence,review_notes"
+        )
+        for path in (
+            REPO_ROOT / "templates" / "claim-ledger.csv",
+            REPO_ROOT / "skills" / "evidence-first-report" / "assets" / "templates" / "claim-ledger.csv",
+        ):
+            self.assertEqual(path.read_text(encoding="utf-8").strip(), expected_header)
+
+    def test_benchmark_schema_declares_contract_bound_artifact_checks(self) -> None:
+        schema = json.loads(
+            (REPO_ROOT / "evals" / "schemas" / "benchmark-suite.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        artifact_schema = schema["$defs"]["artifactCheck"]
+        self.assertFalse(artifact_schema["additionalProperties"])
+        self.assertEqual(artifact_schema["properties"]["type"]["const"], "csv_rectangular")
+        for case_type in ("primaryCase", "adversarialCase"):
+            self.assertEqual(
+                schema["$defs"][case_type]["properties"]["artifact_checks"]["items"]["$ref"],
+                "#/$defs/artifactCheck",
+            )
+        suite = json.loads(
+            (REPO_ROOT / "evals" / "benchmark-suite.json").read_text(encoding="utf-8")
+        )
+        evidence_case = next(
+            case for case in suite["primary_cases"] if case["case_id"] == "evidence-report"
+        )
+        self.assertEqual(len(evidence_case["artifact_checks"]), 3)
+        self.assertTrue(
+            all(
+                check["configurations"] == ["with_skill"]
+                for check in evidence_case["artifact_checks"]
+            )
+        )
+
     def test_evidence_report_reviewer_identity_requires_execution_evidence(self) -> None:
         required_instructions = (
             "reviewer` must name only an actor evidenced by the execution record",

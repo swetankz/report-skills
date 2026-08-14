@@ -36,6 +36,8 @@ evidence_id,source_id,locator,evidence_kind,observation,method,population,geogra
 Keep `observation` concise and faithful. Use `locator` to let a reviewer reopen the exact support. Record `not stated` when the source omits a material field; do not infer it.
 Where a supplied source- or dataset-level period demonstrably applies to row-level, subgroup, aggregate, or derived evidence, carry it into every affected evidence record and separately state any missing finer-grained dates. Never substitute the report window, cutoff, publication date, or retrieval date. If no defensible evidence period exists, treat the quantitative support as incomplete and withhold the quantitative claim from the draft or record it only as an unresolved blocker without asserting the value.
 
+Write every register with a CSV serializer or equivalent standards-compliant escaping. Quote fields containing a comma, double quote, carriage return, or line break, and double embedded quotes. Re-open each written CSV with a parser and require every data row to have exactly the header's column count. Treat any mismatch as a blocking artifact error: do not draft from the malformed register or mark the package ready.
+
 ## Claim ledger
 
 Use these columns:

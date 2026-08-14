@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import platform
@@ -16,6 +18,7 @@ import sys
 import tempfile
 import time
 import hashlib
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -105,8 +108,244 @@ def canonical_json_sha256(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def artifact_check_definition_errors(checks: Any) -> list[str]:
+    """Validate optional machine-checkable artifact requirements in a case contract."""
+
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
+        return ["artifact_checks must be a list"]
+    errors: list[str] = []
+    for index, check in enumerate(checks, start=1):
+        label = f"artifact_checks[{index}]"
+        if not isinstance(check, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        unexpected = set(check) - {
+            "type",
+            "path",
+            "header",
+            "min_rows",
+            "unique_key",
+            "configurations",
+        }
+        if unexpected:
+            errors.append(
+                f"{label} has unexpected properties: "
+                f"{sorted(str(value) for value in unexpected)}"
+            )
+        if check.get("type") != "csv_rectangular":
+            errors.append(f"{label} has unsupported type")
+        raw_path = check.get("path")
+        try:
+            relative = validate_release_path(raw_path) if isinstance(raw_path, str) else None
+        except SystemExit:
+            relative = None
+        if relative is None or not relative.parts or relative.parts[0] != "artifacts":
+            errors.append(f"{label} path must be a safe relative artifacts path")
+        header = check.get("header")
+        if (
+            not isinstance(header, list)
+            or not header
+            or any(
+                not isinstance(value, str) or not value.strip() or value != value.strip()
+                for value in header
+            )
+            or len(header) != len(set(header))
+        ):
+            errors.append(f"{label} header must contain unique nonblank strings")
+        min_rows = check.get("min_rows", 0)
+        if not isinstance(min_rows, int) or isinstance(min_rows, bool) or min_rows < 0:
+            errors.append(f"{label} min_rows must be a nonnegative integer")
+        configurations = check.get("configurations")
+        if configurations is not None and (
+            not isinstance(configurations, list)
+            or not configurations
+            or any(
+                not isinstance(value, str)
+                or value not in {"with_skill", "without_skill"}
+                for value in configurations
+            )
+            or len(configurations) != len(set(configurations))
+        ):
+            errors.append(
+                f"{label} configurations must contain unique supported configuration IDs"
+            )
+        unique_key = check.get("unique_key")
+        if unique_key is not None and (
+            not isinstance(unique_key, str)
+            or not isinstance(header, list)
+            or unique_key not in header
+        ):
+            errors.append(f"{label} unique_key must name a declared header")
+    return errors
+
+
+def _csv_quote_error(payload: str) -> str | None:
+    """Reject quote forms that Python's permissive CSV reader accepts outside RFC fields."""
+
+    state = "start"
+    line = 1
+    column = 0
+    for character in payload:
+        column += 1
+        if state == "start":
+            if character == '"':
+                state = "quoted"
+            elif character == ",":
+                pass
+            elif character in "\r\n":
+                pass
+            else:
+                state = "unquoted"
+        elif state == "unquoted":
+            if character == '"':
+                return f"invalid quote in an unquoted field at line {line}, column {column}"
+            if character == ",":
+                state = "start"
+            elif character in "\r\n":
+                state = "start"
+        elif state == "quoted":
+            if character == '"':
+                state = "after_quote"
+        else:
+            if character == '"':
+                state = "quoted"
+            elif character == ",":
+                state = "start"
+            elif character in "\r\n":
+                state = "start"
+            else:
+                return f"invalid text after a closing quote at line {line}, column {column}"
+        if character == "\n":
+            line += 1
+            column = 0
+    if state == "quoted":
+        return "unterminated quoted field"
+    return None
+
+
+def _validate_csv_artifact(
+    path: Path,
+    label: str,
+    expected_header: list[str] | None = None,
+    min_rows: int = 0,
+    unique_key: str | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    if path.is_symlink() or not path.is_file() or not stat.S_ISREG(path.lstat().st_mode):
+        return [f"artifact CSV {label} must be a regular file"]
+    try:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            payload = handle.read()
+            quote_error = _csv_quote_error(payload)
+            if quote_error:
+                return [f"artifact CSV {label} cannot be parsed: {quote_error}"]
+            rows = csv.reader(io.StringIO(payload, newline=""), strict=True)
+            header = next(rows, None)
+            if not header:
+                return [f"artifact CSV {label} has no header row"]
+            normalized_headers = [
+                unicodedata.normalize("NFC", value).casefold() for value in header
+            ]
+            if (
+                any(not value.strip() or value != value.strip() for value in header)
+                or len(normalized_headers) != len(set(normalized_headers))
+            ):
+                errors.append(f"artifact CSV {label} has blank or duplicate headers")
+            if expected_header is not None and header != expected_header:
+                errors.append(f"artifact CSV {label} header does not match its case contract")
+            expected_width = len(header)
+            key_index = header.index(unique_key) if unique_key in header else None
+            seen_keys: set[str] = set()
+            data_rows = 0
+            for row_number, row in enumerate(rows, start=2):
+                data_rows += 1
+                if len(row) != expected_width:
+                    errors.append(
+                        f"artifact CSV {label} row {row_number} has "
+                        f"{len(row)} fields; expected {expected_width}"
+                    )
+                    continue
+                if key_index is not None:
+                    key = row[key_index]
+                    normalized_key = unicodedata.normalize("NFC", key.strip()).casefold()
+                    if not normalized_key or key != key.strip() or normalized_key in seen_keys:
+                        errors.append(
+                            f"artifact CSV {label} row {row_number} has a blank, padded, "
+                            f"or duplicate {unique_key}"
+                        )
+                    seen_keys.add(normalized_key)
+            if data_rows < min_rows:
+                errors.append(
+                    f"artifact CSV {label} has {data_rows} data rows; expected at least {min_rows}"
+                )
+    except (OSError, UnicodeDecodeError, csv.Error) as error:
+        errors.append(f"artifact CSV {label} cannot be parsed: {error}")
+    return errors
+
+
+def task_artifact_validation_errors(
+    workspace: Path,
+    contract: dict[str, Any] | None = None,
+    configuration: str | None = None,
+) -> list[str]:
+    """Return deterministic structural errors for persisted task artifacts."""
+
+    artifacts = workspace / "artifacts"
+    if not artifacts.is_dir():
+        return ["task artifacts directory is missing"]
+    checks = (contract or {}).get("artifact_checks", [])
+    errors = artifact_check_definition_errors(checks)
+    checked: set[Path] = set()
+    if not errors:
+        for check in checks:
+            scoped_configurations = check.get("configurations")
+            if scoped_configurations is not None:
+                if configuration is None:
+                    errors.append("task configuration is missing for scoped artifact checks")
+                    continue
+                if configuration not in scoped_configurations:
+                    continue
+            relative = validate_release_path(check["path"])
+            path = workspace.joinpath(*relative.parts)
+            try:
+                path.resolve().relative_to(workspace.resolve())
+            except ValueError:
+                errors.append(f"artifact CSV {relative.as_posix()} escapes the task workspace")
+                continue
+            checked.add(path)
+            errors.extend(
+                _validate_csv_artifact(
+                    path,
+                    relative.as_posix(),
+                    expected_header=check["header"],
+                    min_rows=check.get("min_rows", 0),
+                    unique_key=check.get("unique_key"),
+                )
+            )
+    for path in sorted(
+        (
+            candidate
+            for candidate in artifacts.rglob("*")
+            if candidate.is_file()
+            and candidate.suffix.casefold() == ".csv"
+            and candidate not in checked
+        ),
+        key=lambda candidate: candidate.relative_to(artifacts).as_posix(),
+    ):
+        errors.extend(
+            _validate_csv_artifact(path, path.relative_to(workspace).as_posix())
+        )
+    return errors
+
+
 def case_contract_document(run: dict[str, Any]) -> dict[str, Any]:
-    return {"prompt": run.get("prompt"), "assertions": run.get("assertions", [])}
+    return {
+        "prompt": run.get("prompt"),
+        "assertions": run.get("assertions", []),
+        "artifact_checks": run.get("artifact_checks", []),
+    }
 
 
 def task_evidence_receipt(run_dir: Path) -> dict[str, Any]:
@@ -147,12 +386,24 @@ def validate_task_evidence_binding(
     actual = task_evidence_receipt(run_dir)
     if recorded != actual:
         errors.append("task-evidence receipt does not match persisted files")
+    contract: dict[str, Any] | None = None
+    try:
+        contract = load_json(run_dir / "case_contract.json")
+    except EvaluationError as error:
+        errors.append(str(error))
+    errors.extend(
+        task_artifact_validation_errors(
+            run_dir / "workspace", contract, metadata.get("configuration")
+        )
+    )
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in actual.values()):
         errors.append("task-evidence receipt is incomplete")
     if (
         expected_case_contract_sha256 is not None
-        and canonical_json_sha256(load_json(run_dir / "case_contract.json"))
-        != expected_case_contract_sha256
+        and (
+            contract is None
+            or canonical_json_sha256(contract) != expected_case_contract_sha256
+        )
     ):
         errors.append("case contract does not match the run plan")
     return errors
@@ -915,9 +1166,20 @@ def build_run_plan(
                         "prompt": case["prompt"],
                         "required_result": case.get("required_result"),
                         "assertions": case.get("assertions", []),
+                        "artifact_checks": case.get("artifact_checks", []),
                     }
                 )
     return plan
+
+
+def persisted_run_plan_row(run: dict[str, Any]) -> dict[str, Any]:
+    """Return the public logical row while keeping full case contracts hash-bound."""
+
+    return {
+        key: value
+        for key, value in run.items()
+        if key not in {"prompt", "assertions", "artifact_checks"}
+    }
 
 
 def is_relative_to(path: Path, parent: Path) -> bool:

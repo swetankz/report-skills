@@ -102,6 +102,32 @@
       "case_id": "evidence-report",
       "skill": "evidence-first-report",
       "prompt": "Use $evidence-first-report to produce the analytical report from the supplied synthetic brief and evidence as of its cutoff.",
+      "artifact_checks": [
+        {
+          "type": "csv_rectangular",
+          "path": "artifacts/source-register.csv",
+          "header": ["source_id", "title", "author_or_publisher", "publication_date", "retrieval_date", "url_or_identifier", "source_type", "evidence_tier", "cutoff_status", "access_status", "rights_status", "notes"],
+          "min_rows": 1,
+          "unique_key": "source_id",
+          "configurations": ["with_skill"]
+        },
+        {
+          "type": "csv_rectangular",
+          "path": "artifacts/evidence-register.csv",
+          "header": ["evidence_id", "source_id", "locator", "evidence_kind", "observation", "method", "population", "geography", "period", "unit", "denominator", "limitations", "access_verified", "notes"],
+          "min_rows": 1,
+          "unique_key": "evidence_id",
+          "configurations": ["with_skill"]
+        },
+        {
+          "type": "csv_rectangular",
+          "path": "artifacts/claim-ledger.csv",
+          "header": ["claim_id", "claim_text", "claim_type", "importance", "status", "source_ids", "evidence_ids", "location", "quantitative", "cutoff_status", "conflict_status", "confidence", "review_notes"],
+          "min_rows": 1,
+          "unique_key": "claim_id",
+          "configurations": ["with_skill"]
+        }
+      ],
       "assertions": [
         {
           "assertion_id": "evidence-report.a01",

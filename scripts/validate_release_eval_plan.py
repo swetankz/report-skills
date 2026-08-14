@@ -23,6 +23,7 @@ from evaluation_common import (
     file_sha256,
     load_json,
     normalize_suite,
+    persisted_run_plan_row,
     suite_fixture,
     tracked_directory_sha256,
 )
@@ -70,10 +71,7 @@ def canonical_plan_rows() -> list[dict[str, Any]]:
         raise EvaluationError(
             f"Canonical evaluation plan must contain {CANONICAL_RUN_COUNT} runs, got {len(rows)}"
         )
-    return [
-        {key: value for key, value in row.items() if key not in {"prompt", "assertions"}}
-        for row in rows
-    ]
+    return [persisted_run_plan_row(row) for row in rows]
 
 
 def canonical_case_contract_hashes() -> dict[str, str]:

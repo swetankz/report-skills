@@ -43,6 +43,7 @@ from evaluation_common import (
     find_codex_command,
     load_json,
     normalize_suite,
+    persisted_run_plan_row,
     repository_receipt,
     require_pinned_profile,
     require_unchanged_repository,
@@ -50,6 +51,7 @@ from evaluation_common import (
     run_codex,
     safe_copy_fixture,
     suite_fixture,
+    task_artifact_validation_errors,
     task_evidence_receipt,
     timestamp_id,
     token_usage_from_jsonl,
@@ -237,7 +239,8 @@ def run_one(
     transcript_path = run_dir / "transcript.jsonl"
     stderr_path = run_dir / "stderr.txt"
     contract_path = run_dir / "case_contract.json"
-    write_json(contract_path, case_contract_document(run))
+    contract = case_contract_document(run)
+    write_json(contract_path, contract)
     prompt = task_prompt(run)
     command = codex_base_command(
         codex_runtime_command(execution_profile),
@@ -263,9 +266,16 @@ def run_one(
     if not output_path.is_file():
         validation_errors.append("task-output.json was not produced")
     validation_errors.extend(skill_body_read_violations(result.stdout, run))
+    validation_errors.extend(
+        task_artifact_validation_errors(workspace, contract, run["configuration"])
+    )
     task_evidence = task_evidence_receipt(run_dir)
     metadata = {
-        **{key: value for key, value in run.items() if key not in {"prompt", "assertions"}},
+        **{
+            key: value
+            for key, value in run.items()
+            if key not in {"prompt", "assertions", "artifact_checks"}
+        },
         "started_at": started_at,
         "completed_at": completed_at,
         "returncode": result.returncode,
@@ -388,8 +398,7 @@ def main() -> int:
             printable = dict(plan_document)
             if args.show_plan:
                 printable["runs"] = [
-                    {key: value for key, value in run.items() if key not in {"prompt", "assertions"}}
-                    for run in plan
+                    persisted_run_plan_row(run) for run in plan
                 ]
             else:
                 printable["case_contract_hash_count"] = len(
@@ -421,8 +430,7 @@ def main() -> int:
             {
                 **plan_document,
                 "runs": [
-                    {key: value for key, value in run.items() if key not in {"prompt", "assertions"}}
-                    for run in plan
+                    persisted_run_plan_row(run) for run in plan
                 ],
             },
         )

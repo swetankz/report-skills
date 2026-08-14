@@ -16,6 +16,7 @@ from evaluation_common import (
     EvaluationError,
     REPO_ROOT,
     build_run_plan,
+    artifact_check_definition_errors,
     configuration_ids,
     configured_repetitions,
     load_json,
@@ -108,6 +109,10 @@ def validate_suite(path: Path, suite: dict[str, Any], errors: list[str]) -> None
             errors.append(f"{prefix}: skill package does not exist: {skill}")
         if not str(case.get("prompt", "")).strip():
             errors.append(f"{prefix}: prompt is required")
+        errors.extend(
+            f"{prefix}: {error}"
+            for error in artifact_check_definition_errors(case.get("artifact_checks", []))
+        )
         assertions = case.get("assertions", [])
         if not isinstance(assertions, list) or not assertions:
             errors.append(f"{prefix}: at least one assertion is required")

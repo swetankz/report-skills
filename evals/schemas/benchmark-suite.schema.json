@@ -185,6 +185,29 @@
         "blocking": { "type": "boolean" }
       }
     },
+    "artifactCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path", "header"],
+      "properties": {
+        "type": { "const": "csv_rectangular" },
+        "path": { "type": "string", "pattern": "^artifacts/[A-Za-z0-9._/-]+\\.csv$" },
+        "header": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "min_rows": { "type": "integer", "minimum": 0 },
+        "unique_key": { "type": "string", "minLength": 1 },
+        "configurations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["with_skill", "without_skill"] }
+        }
+      }
+    },
     "primaryCase": {
       "type": "object",
       "additionalProperties": false,
@@ -193,6 +216,10 @@
         "case_id": { "type": "string", "minLength": 1 },
         "skill": { "type": "string", "minLength": 1 },
         "prompt": { "type": "string", "minLength": 20 },
+        "artifact_checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifactCheck" }
+        },
         "assertions": {
           "type": "array",
           "minItems": 2,
@@ -209,6 +236,10 @@
         "skill": { "type": "string", "minLength": 1 },
         "prompt": { "type": "string", "minLength": 20 },
         "required_result": { "type": "string", "minLength": 20 },
+        "artifact_checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifactCheck" }
+        },
         "assertions": {
           "type": "array",
           "minItems": 1,

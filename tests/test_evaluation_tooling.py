@@ -35,6 +35,7 @@ from evaluation_common import (  # noqa: E402
     EvaluationError,
     build_run_plan,
     canonical_json_sha256,
+    case_contract_document,
     codex_execution_profile,
     codex_base_command,
     codex_runtime_command,
@@ -43,11 +44,13 @@ from evaluation_common import (  # noqa: E402
     file_sha256,
     load_json,
     normalize_suite,
+    persisted_run_plan_row,
     require_matching_context,
     require_clean_task_execution,
     require_complete_task_evidence,
     run_codex,
     task_evidence_receipt,
+    task_artifact_validation_errors,
     validate_task_evidence_binding,
     validate_output_root,
 )
@@ -807,6 +810,229 @@ class EvaluationToolingTests(unittest.TestCase):
                 "changed", encoding="utf-8"
             )
             self.assertTrue(validate_task_evidence_binding(metadata, run_dir, expected_contract))
+
+    def test_task_artifact_csv_validation_fails_closed_on_shifted_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            workspace = Path(temp_name) / "workspace"
+            artifacts = workspace / "artifacts"
+            artifacts.mkdir(parents=True)
+            register = artifacts / "evidence-register.csv"
+            header = (
+                "evidence_id,source_id,locator,evidence_kind,observation,method,population,"
+                "geography,period,unit,denominator,limitations,access_verified,notes\n"
+            )
+            register.write_text(
+                header
+                + "E-S2-002,SYN-S2,operations.csv rows 2-7,calculation,Completion ratio,"
+                + 'Sum completed / scheduled,"5,090 scheduled entries",not stated,'
+                + "2030-01 to 2030-06,percent,5090,Exact June date not stated,true,Reproduced\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(task_artifact_validation_errors(workspace), [])
+            register.write_text(
+                header
+                + "E-S2-002,SYN-S2,operations.csv rows 2-7,calculation,Completion ratio,"
+                + "Sum completed / scheduled,5,090 scheduled entries,not stated,"
+                + "2030-01 to 2030-06,percent,5090,Exact June date not stated,true,Reproduced\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                task_artifact_validation_errors(workspace),
+                ["artifact CSV artifacts/evidence-register.csv row 2 has 15 fields; expected 14"],
+            )
+
+    def test_task_artifact_contract_binds_header_rows_and_unique_key(self) -> None:
+        contract = {
+            "artifact_checks": [
+                {
+                    "type": "csv_rectangular",
+                    "path": "artifacts/evidence-register.csv",
+                    "header": ["evidence_id", "population", "period", "unit"],
+                    "min_rows": 2,
+                    "unique_key": "evidence_id",
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            workspace = Path(temp_name) / "workspace"
+            artifacts = workspace / "artifacts"
+            artifacts.mkdir(parents=True)
+            register = artifacts / "evidence-register.csv"
+            register.write_text(
+                "evidence_id,population,period,unit\n"
+                'E-001,"5,090 scheduled entries",2030-01 to 2030-06,count\n'
+                "E-002,500 respondents,2030-06,percent\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                task_artifact_validation_errors(workspace, contract, "with_skill"), []
+            )
+            register.write_text(
+                "population,evidence_id,period,unit\n"
+                "500 respondents,E-001,2030-06,percent\n"
+                "500 respondents,E-001,2030-06,percent\n",
+                encoding="utf-8",
+            )
+            errors = task_artifact_validation_errors(workspace, contract, "with_skill")
+            self.assertIn(
+                "artifact CSV artifacts/evidence-register.csv header does not match its case contract",
+                errors,
+            )
+            self.assertIn(
+                "artifact CSV artifacts/evidence-register.csv row 3 has a blank, padded, or duplicate evidence_id",
+                errors,
+            )
+            register.write_text(
+                "evidence_id,population,period,unit\n"
+                " E-001,500 respondents,2030-06,percent\n"
+                "E-002,500 respondents,2030-06,percent\n",
+                encoding="utf-8",
+            )
+            self.assertIn(
+                "artifact CSV artifacts/evidence-register.csv row 2 has a blank, padded, or duplicate evidence_id",
+                task_artifact_validation_errors(workspace, contract, "with_skill"),
+            )
+
+    def test_task_artifact_contract_rejects_unsafe_or_missing_csv(self) -> None:
+        unsafe_contract = {
+            "artifact_checks": [
+                {
+                    "type": "csv_rectangular",
+                    "path": "../outside.csv",
+                    "header": ["id"],
+                    "min_rows": 1,
+                    "unexpected": True,
+                }
+            ]
+        }
+        missing_contract = {
+            "artifact_checks": [
+                {
+                    "type": "csv_rectangular",
+                    "path": "artifacts/evidence-register.csv",
+                    "header": ["evidence_id"],
+                    "min_rows": 1,
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            workspace = Path(temp_name) / "workspace"
+            (workspace / "artifacts").mkdir(parents=True)
+            self.assertIn(
+                "artifact_checks[1] path must be a safe relative artifacts path",
+                task_artifact_validation_errors(workspace, unsafe_contract),
+            )
+            self.assertIn(
+                "artifact_checks[1] has unexpected properties: ['unexpected']",
+                task_artifact_validation_errors(workspace, unsafe_contract),
+            )
+            self.assertEqual(
+                task_artifact_validation_errors(workspace, missing_contract),
+                ["artifact CSV artifacts/evidence-register.csv must be a regular file"],
+            )
+
+    def test_scoped_artifact_contract_does_not_require_candidate_files_in_baseline(self) -> None:
+        contract = {
+            "artifact_checks": [
+                {
+                    "type": "csv_rectangular",
+                    "path": "artifacts/evidence-register.csv",
+                    "header": ["evidence_id"],
+                    "min_rows": 1,
+                    "configurations": ["with_skill"],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            workspace = Path(temp_name) / "workspace"
+            (workspace / "artifacts").mkdir(parents=True)
+            self.assertEqual(
+                task_artifact_validation_errors(workspace, contract, "without_skill"), []
+            )
+            self.assertEqual(
+                task_artifact_validation_errors(workspace, contract, "with_skill"),
+                ["artifact CSV artifacts/evidence-register.csv must be a regular file"],
+            )
+
+    def test_persisted_run_plan_row_keeps_artifact_checks_only_in_contract_hash(self) -> None:
+        row = {
+            "run_id": "case__with_skill__r01",
+            "prompt": "Do work",
+            "assertions": [],
+            "artifact_checks": [{"type": "csv_rectangular"}],
+            "configuration": "with_skill",
+        }
+        persisted = persisted_run_plan_row(row)
+        self.assertEqual(
+            persisted,
+            {"run_id": "case__with_skill__r01", "configuration": "with_skill"},
+        )
+        self.assertIn("artifact_checks", case_contract_document(row))
+
+    def test_task_artifact_csv_validation_rejects_bad_encoding_and_quoting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            workspace = Path(temp_name) / "workspace"
+            artifacts = workspace / "artifacts"
+            artifacts.mkdir(parents=True)
+            register = artifacts / "evidence-register.csv"
+            register.write_bytes(b"id,value\nE-001,\xff\n")
+            self.assertTrue(
+                any(
+                    "cannot be parsed" in error
+                    for error in task_artifact_validation_errors(workspace)
+                )
+            )
+            register.write_text(
+                'id,value\nE-001,bad"quote\n',
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                any(
+                    "invalid quote in an unquoted field" in error
+                    for error in task_artifact_validation_errors(workspace)
+                )
+            )
+            register.write_text(
+                'id,value\nE-001,"bad""quote"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(task_artifact_validation_errors(workspace), [])
+            register.write_text(
+                'id,value\nE-001,"unterminated\n',
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                any(
+                    "cannot be parsed" in error
+                    for error in task_artifact_validation_errors(workspace)
+                )
+            )
+
+    def test_task_evidence_binding_rejects_malformed_csv_even_when_hashes_match(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            run_dir = Path(temp_name)
+            artifacts = run_dir / "workspace" / "artifacts"
+            artifacts.mkdir(parents=True)
+            (artifacts / "evidence-register.csv").write_text(
+                "evidence_id,population,period,unit\n"
+                "E-001,5,090 scheduled entries,2030-01 to 2030-06,count\n",
+                encoding="utf-8",
+            )
+            (run_dir / "task-output.json").write_text("{}\n", encoding="utf-8")
+            (run_dir / "transcript.jsonl").write_text("{}\n", encoding="utf-8")
+            (run_dir / "stderr.txt").write_text("", encoding="utf-8")
+            contract = {"prompt": "Do work", "assertions": []}
+            (run_dir / "case_contract.json").write_text(
+                json.dumps(contract) + "\n", encoding="utf-8"
+            )
+            metadata = {"task_evidence": task_evidence_receipt(run_dir)}
+            errors = validate_task_evidence_binding(
+                metadata, run_dir, canonical_json_sha256(contract)
+            )
+            self.assertIn(
+                "artifact CSV artifacts/evidence-register.csv row 2 has 5 fields; expected 4",
+                errors,
+            )
 
     def test_grader_partial_attempt_and_overwrite_refuse_without_model_call(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
