@@ -34,6 +34,7 @@ evidence_id,source_id,locator,evidence_kind,observation,method,population,geogra
 ```
 
 Keep `observation` concise and faithful. Use `locator` to let a reviewer reopen the exact support. Record `not stated` when the source omits a material field; do not infer it.
+Where a supplied source- or dataset-level period demonstrably applies to row-level, subgroup, aggregate, or derived evidence, carry it into every affected evidence record and separately state any missing finer-grained dates. Never substitute the report window, cutoff, publication date, or retrieval date. If no defensible evidence period exists, treat the quantitative support as incomplete and withhold the quantitative claim from the draft or record it only as an unresolved blocker without asserting the value.
 
 ## Claim ledger
 
@@ -71,4 +72,3 @@ Set `conflict_status` to `none`, `resolved`, or `unresolved`. Record all affecte
 ## Cutoff handling
 
 Use publication date for cutoff eligibility unless the research design establishes a different explicit rule. Record undated sources as uncertain rather than silently placing them inside the cutoff. Never let later knowledge rewrite an as-of-date conclusion without a disclosed exception.
-

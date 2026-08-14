@@ -60,6 +60,8 @@ Record:
 review_id,pass,reviewed_artifact,artifact_version,location,severity,finding,evidence,required_action,status,reviewer,reviewed_at
 ```
 
+`reviewer` must name only an actor evidenced by the execution record. Do not claim a sub-agent, independent reviewer, human, peer, or external reviewer unless that review actually ran and its contribution is inspectable. When the executing agent performs a pass itself, identify it as self-review and disclose that the pass was not independent; use `not-verified` if actor provenance cannot be established.
+
 ## Revision log fields
 
 Record:

@@ -140,6 +140,45 @@ class ToolingTests(unittest.TestCase):
             text = (tree / "evidence-first-report" / "SKILL.md").read_text(encoding="utf-8")
             self.assertIn(required_instruction, text)
 
+    def test_evidence_report_withholds_incomplete_quantitative_claims(self) -> None:
+        required_instructions = (
+            "Where a supplied source- or dataset-level period demonstrably applies",
+            "Never substitute the report window, cutoff, publication date, or retrieval date",
+            (
+                "If no defensible evidence period exists, treat the quantitative support as "
+                "incomplete and withhold the quantitative claim from the draft"
+            ),
+        )
+        for path in (
+            REPO_ROOT / "source" / "skills" / "evidence-first-report" / "references" / "evidence-model.md",
+            REPO_ROOT / "skills" / "evidence-first-report" / "references" / "evidence-model.md",
+        ):
+            text = path.read_text(encoding="utf-8")
+            for instruction in required_instructions:
+                self.assertIn(instruction, text)
+
+    def test_evidence_report_reviewer_identity_requires_execution_evidence(self) -> None:
+        required_instructions = (
+            "reviewer` must name only an actor evidenced by the execution record",
+            "Do not claim a sub-agent, independent reviewer, human, peer, or external reviewer",
+            "identify it as self-review and disclose that the pass was not independent",
+            "use `not-verified` if actor provenance cannot be established",
+        )
+        for path in (
+            REPO_ROOT / "source" / "skills" / "evidence-first-report" / "references" / "review-and-release-protocol.md",
+            REPO_ROOT / "skills" / "evidence-first-report" / "references" / "review-and-release-protocol.md",
+        ):
+            text = path.read_text(encoding="utf-8")
+            for instruction in required_instructions:
+                self.assertIn(instruction, text)
+        for path in (
+            REPO_ROOT / "templates" / "review-log.md",
+            REPO_ROOT / "skills" / "evidence-first-report" / "assets" / "templates" / "review-log.md",
+        ):
+            template = path.read_text(encoding="utf-8")
+            self.assertIn("Reviewer provenance: `not-verified`", template)
+            self.assertIn("disclose self-review rather than claiming independence", template)
+
     def test_scanner_detects_sensitive_content(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)
