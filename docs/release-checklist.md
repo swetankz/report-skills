@@ -1,8 +1,8 @@
 # Release checklist
 
-The published `v0.1.0` tag is immutable. The next section applies to a later release candidate and does not retroactively alter the original release evidence or tag.
+The published `v0.1.0` tag is immutable. The next section applies to the `v0.2.0` release candidate and does not retroactively alter the original release evidence or tag.
 
-## Next release candidate: evaluation gates
+## `v0.2.0` release candidate: evaluation gates
 
 ### Offline contract checks
 
@@ -26,9 +26,15 @@ The published `v0.1.0` tag is immutable. The next section applies to a later rel
 
 ### Evidence and approval
 
+- [ ] `.codex-plugin/plugin.json` and `pyproject.toml` both declare `0.2.0`.
 - [ ] The aggregate record identifies the candidate commit, skill hashes, model and environment, repetitions, variance, and final gate decision.
 - [ ] Only sanitized aggregate evidence is proposed for publication; raw transcripts and workspaces remain local unless separately reviewed for public safety and rights.
 - [ ] The exact new version, tag, commit, assets, destination, and external actions receive explicit human approval.
+- [ ] The evaluated commit and tree are clean, and the PR base has not changed in a way that alters the merged tree.
+- [ ] Both deterministic `v0.2.0` ZIPs and their SHA-256 sidecars are built and recorded under exact tag authorization.
+- [ ] The remote `v0.2.0` tag resolves to the approved release identity.
+- [ ] Uploaded asset sizes and digests match the verified local artifacts and sidecars.
+- [ ] The complete plugin and tag-pinned representative standalone skills pass installation and smoke checks.
 
 See [Evaluation](evaluation.md) for the protocol and definitions.
 

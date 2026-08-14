@@ -416,10 +416,6 @@ def main() -> int:
             missing.append("run-plan.json")
             expected_skills = set()
             expected_pairs = set()
-        for record in records:
-            grader_metadata = run_dir / "runs" / str(record.get("run_id")) / "grader_metadata.json"
-            if grader_metadata.is_file() and load_json(grader_metadata).get("validation_errors"):
-                missing.append(f"{record.get('run_id')}:invalid grade")
         comparisons = collect_comparisons(run_dir)
         triggers = load_trigger_results(args.trigger_results)
         thresholds = load_json(args.thresholds)

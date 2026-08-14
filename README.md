@@ -41,13 +41,13 @@ Also validate every `skills/*` folder with the current Codex skill validator and
 
 ## Evaluation
 
-Repository CI validates the evaluation contracts and expands the complete benchmark plan without starting a model. A later release candidate must also pass three fresh paired runs per case (`with_skill` versus `without_skill`), blind comparison, adversarial safety checks, and trigger tests. Live model evaluation stays outside public CI because it requires authentication and incurs usage. See the [evaluation protocol and release thresholds](docs/evaluation.md).
+Repository CI validates the evaluation contracts and expands the complete benchmark plan without starting a model. The `v0.2.0` release candidate must also pass three fresh paired runs per case (`with_skill` versus `without_skill`), blind comparison, adversarial safety checks, and trigger tests. Live model evaluation stays outside public CI because it requires authentication and incurs usage. See the [evaluation protocol and release thresholds](docs/evaluation.md).
 
 ## Installation
 
-The canonical repository is [swetankz/report-skills](https://github.com/swetankz/report-skills). Pin installations to the immutable [`v0.1.0`](https://github.com/swetankz/report-skills/releases/tag/v0.1.0) release rather than the moving `main` development branch.
+The canonical repository is [swetankz/report-skills](https://github.com/swetankz/report-skills). Use `v0.2.0` only after its [GitHub release](https://github.com/swetankz/report-skills/releases/tag/v0.2.0) and assets are published; until then, use the latest published release rather than the moving `main` development branch.
 
-For the complete suite, download `report-skills-0.1.0.zip` and its checksum from the release, verify the SHA-256 value, extract it, and use the extracted root as the Codex plugin source. For one specialist, give Codex's skill installer the repository `swetankz/report-skills`, ref `v0.1.0`, and path `skills/<skill-name>`. See the [installation guide](docs/installation.md).
+For the complete suite, download `report-skills-0.2.0.zip` and its checksum from the release, verify the SHA-256 value, extract it, and use the extracted root as the Codex plugin source. For one specialist, give Codex's skill installer the repository `swetankz/report-skills`, ref `v0.2.0`, and path `skills/<skill-name>`. See the [installation guide](docs/installation.md).
 
 ## Safety boundary
 
@@ -57,6 +57,6 @@ No skill treats drafting, design, testing, or packaging approval as authorizatio
 
 ## Project status
 
-Version `0.1.0` is the initial public MIT-licensed release by Swetank Gawde. The immutable release tag is `v0.1.0`. Public contact details are intentionally omitted; see [Security](SECURITY.md) for responsible reporting guidance.
+This tree identifies the MIT-licensed `0.2.0` release candidate by Swetank Gawde; release availability is authoritative on [GitHub Releases](https://github.com/swetankz/report-skills/releases), and the initial `v0.1.0` release remains immutable. Public contact details are intentionally omitted; see [Security](SECURITY.md) for responsible reporting guidance.
 
-Maintainers can reproduce two deterministic artifacts after validation: `scripts/create_release_package.py` builds the installable plugin package, and `scripts/create_source_snapshot.py` builds a history-free snapshot of the public repository tree. The `v0.1.0` release publishes both ZIPs with SHA-256 sidecars.
+Maintainers can reproduce two deterministic artifacts after validation: `scripts/create_release_package.py` builds the installable plugin package, and `scripts/create_source_snapshot.py` builds a history-free snapshot of the public repository tree. A published `v0.2.0` release consists of both ZIPs with their SHA-256 sidecars.

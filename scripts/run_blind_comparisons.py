@@ -35,6 +35,13 @@ from evaluation_common import (
 COMPARISON_SCHEMA = EVAL_ROOT / "schemas" / "blind-comparison-output.schema.json"
 
 
+def physical_comparison_id(index: int, total: int) -> str:
+    """Return a stable compact folder id derived from the complete pair list."""
+    if index < 1 or total < index:
+        raise EvaluationError(f"Invalid comparison index {index} of {total}")
+    return f"{index:0{max(3, len(str(total)))}d}"
+
+
 def discover_pairs(suite_run_dir: Path) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     runs_root = suite_run_dir / "runs"
@@ -191,7 +198,18 @@ def main() -> int:
         if not pairs:
             raise EvaluationError("No complete primary with_skill/without_skill pairs found")
         comparison_root = suite_run_dir / "comparisons"
-        pending = [pair for pair in pairs if args.overwrite or not (comparison_root / pair["pair_id"] / "comparison.json").is_file()]
+        storage_ids = {
+            str(pair["pair_id"]): physical_comparison_id(index, len(pairs))
+            for index, pair in enumerate(pairs, 1)
+        }
+        pending = [
+            pair
+            for pair in pairs
+            if args.overwrite
+            or not (
+                comparison_root / storage_ids[str(pair["pair_id"])] / "comparison.json"
+            ).is_file()
+        ]
         plan = {
             "suite_run_dir": str(suite_run_dir),
             "mode": "execute" if args.execute else "dry-run",
@@ -215,6 +233,20 @@ def main() -> int:
             repo_receipt,
             "Blind comparison",
         )
+        comparison_root.mkdir(parents=True, exist_ok=True)
+        write_json(
+            comparison_root / "storage-map.json",
+            {
+                "schema_version": "1.0",
+                "pairs": [
+                    {
+                        "storage_id": storage_ids[str(pair["pair_id"])],
+                        "pair_id": pair["pair_id"],
+                    }
+                    for pair in pairs
+                ],
+            },
+        )
         failed: list[str] = []
         for index, pair in enumerate(pending, 1):
             print(f"[{index}/{len(pending)}] compare {pair['pair_id']}", flush=True)
@@ -228,7 +260,8 @@ def main() -> int:
                     metadata.get("repository", {}),
                     f"Task {pair['pair_id']} {configuration}",
                 )
-            target = comparison_root / pair["pair_id"]
+            storage_id = storage_ids[str(pair["pair_id"])]
+            target = comparison_root / storage_id
             if target.exists() and args.overwrite:
                 shutil.rmtree(target)
             target.mkdir(parents=True, exist_ok=True)
@@ -269,6 +302,7 @@ def main() -> int:
             resolved = mapping.get(comparison_winner) if comparison_winner in {"A", "B"} else "tie"
             metadata = {
                 "pair_id": pair["pair_id"],
+                "storage_id": storage_id,
                 "case_id": pair["case_id"],
                 "compared_at": utc_now(),
                 "returncode": result.returncode,

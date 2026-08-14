@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -40,6 +41,13 @@ def tree_hashes(root: Path) -> dict[str, str]:
 
 
 class ToolingTests(unittest.TestCase):
+    def test_plugin_and_tooling_versions_match(self) -> None:
+        plugin = json.loads(
+            (REPO_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(plugin["version"], project["project"]["version"])
+
     def test_skill_map_has_exact_inventory(self) -> None:
         mapping = json.loads((REPO_ROOT / "source" / "skill-map.yaml").read_text(encoding="utf-8"))
         self.assertEqual(set(mapping["skills"]), EXPECTED_SKILLS)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -86,6 +87,54 @@ as a task label only. Solve the task from the fixture and general reasoning.
 """
 
 
+def physical_run_id(index: int, total: int) -> str:
+    """Return a compact, stable storage id without changing the logical run id."""
+    if index < 1 or total < index:
+        raise EvaluationError(f"Invalid physical run index {index} of {total}")
+    return f"{index:0{max(3, len(str(total)))}d}"
+
+
+def validate_workspace_path_budget(
+    suite_run_dir: Path,
+    plan: list[dict[str, Any]],
+    fixture: Path,
+    *,
+    path_limit: int | None = None,
+) -> None:
+    """Fail before model calls if planned copied inputs exceed a Windows path limit."""
+    limit = path_limit if path_limit is not None else (260 if os.name == "nt" else None)
+    if limit is None:
+        return
+    longest: Path | None = None
+    total = len(plan)
+    for index, run in enumerate(plan, 1):
+        workspace = suite_run_dir / "runs" / physical_run_id(index, total) / "workspace"
+        candidates = [
+            workspace / "fixture" / path.relative_to(fixture)
+            for path in fixture.rglob("*")
+            if path.is_file()
+        ]
+        if run["configuration"] == "with_skill":
+            source = REPO_ROOT / "skills" / run["skill"]
+            candidates.extend(
+                workspace
+                / ".benchmark_skill"
+                / run["skill"]
+                / path.relative_to(source)
+                for path in source.rglob("*")
+                if path.is_file()
+            )
+        for candidate in candidates:
+            if longest is None or len(str(candidate.resolve())) > len(str(longest.resolve())):
+                longest = candidate
+    if longest is not None and len(str(longest.resolve())) >= limit:
+        raise EvaluationError(
+            f"Planned workspace path is {len(str(longest.resolve()))} characters, "
+            f"exceeding the safe Windows limit of {limit - 1}: {longest}. "
+            "Use a shorter --run-id or --output-root before executing."
+        )
+
+
 def prepare_workspace(run_dir: Path, run: dict[str, Any], fixture: Path) -> Path:
     workspace = run_dir / "workspace"
     workspace.mkdir(parents=True, exist_ok=False)
@@ -109,9 +158,10 @@ def run_one(
     execution_profile: dict[str, Any],
     repo_receipt: dict[str, Any],
     timeout: int,
+    storage_id: str,
 ) -> dict[str, Any]:
     require_unchanged_repository(repo_receipt)
-    run_dir = suite_run_dir / "runs" / run["run_id"]
+    run_dir = suite_run_dir / "runs" / storage_id
     if run_dir.exists():
         raise EvaluationError(f"Refusing to overwrite existing run: {run_dir}")
     run_dir.mkdir(parents=True)
@@ -146,6 +196,7 @@ def run_one(
         "validation_errors": validation_errors,
         "wall_clock_seconds": result.wall_clock_seconds,
         "token_usage": token_usage_from_jsonl(result.stdout),
+        "storage_id": storage_id,
         "execution_profile": execution_profile,
         "repository": repo_receipt,
         "workspace": "workspace",
@@ -255,6 +306,7 @@ def main() -> int:
         suite_run_dir = output_root / run_id
         if suite_run_dir.exists():
             raise EvaluationError(f"Refusing to overwrite suite run: {suite_run_dir}")
+        validate_workspace_path_budget(suite_run_dir, plan, fixture)
         codex_command = find_codex_command(args.codex_command)
         execution_profile = codex_execution_profile(
             codex_command, str(args.model), str(args.reasoning_effort)
@@ -273,6 +325,19 @@ def main() -> int:
                 ],
             },
         )
+        write_json(
+            suite_run_dir / "storage-map.json",
+            {
+                "schema_version": "1.0",
+                "runs": [
+                    {
+                        "storage_id": physical_run_id(index, len(plan)),
+                        "run_id": run["run_id"],
+                    }
+                    for index, run in enumerate(plan, 1)
+                ],
+            },
+        )
         completed = []
         for index, run in enumerate(plan, 1):
             print(f"[{index}/{len(plan)}] {run['run_id']}", flush=True)
@@ -285,6 +350,7 @@ def main() -> int:
                     execution_profile,
                     repo_receipt,
                     args.timeout,
+                    physical_run_id(index, len(plan)),
                 )
             )
         require_unchanged_repository(repo_receipt)

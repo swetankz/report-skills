@@ -7,6 +7,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 
@@ -72,6 +73,18 @@ def validate_plugin(errors: list[str]) -> None:
         errors.append("plugin name must be report-skills")
     if not re.fullmatch(r"\d+\.\d+\.\d+", str(data.get("version", ""))):
         errors.append("plugin version must use strict semantic versioning")
+    project_path = REPO_ROOT / "pyproject.toml"
+    try:
+        project = tomllib.loads(project_path.read_text(encoding="utf-8"))
+        project_version = str(project.get("project", {}).get("version", ""))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        errors.append(f"pyproject.toml cannot be read: {exc}")
+    else:
+        if project_version != str(data.get("version", "")):
+            errors.append(
+                "plugin and pyproject versions must match: "
+                f"{data.get('version')!r} != {project_version!r}"
+            )
     for key in ("description",):
         if not str(data.get(key, "")).strip():
             errors.append(f"plugin {key} is required")

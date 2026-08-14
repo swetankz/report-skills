@@ -10,7 +10,7 @@ Report Skills uses two complementary evaluation layers. Offline checks protect t
 - `evals/trigger-evals.json` contains realistic should-trigger and should-not-trigger queries.
 - `evals/schemas/` defines the machine-readable contracts used by offline validation.
 - `evals/rubric.md` explains the scored dimensions.
-- `evals/results/` contains sanitized, publishable result summaries. Raw transcripts, temporary workspaces, credentials, and private artifacts must not be committed.
+- `evals/results/` contains sanitized, publishable result summaries. Raw transcripts, raw run workspaces, credentials, and private artifacts must not be committed.
 
 ## Offline checks
 
@@ -40,7 +40,7 @@ python scripts/aggregate_benchmark.py evals/runs/<benchmark-id> --trigger-result
 
 Every command with `--execute` invokes Codex and can incur usage. Under the default protocol, a complete evaluation can make up to 300 model-backed invocations: 96 task runs, 96 grading runs, 33 blind comparisons, and 75 trigger observations. Live execution requires an explicit model and reasoning effort, records the CLI/model/catalog identity plus the candidate Git commit/tree, and refuses a dirty repository. Use the same profile for every stage.
 
-The behavioral plan contains 96 task runs: 66 paired primary runs and 30 paired adversarial runs. Use `--primary-only` only for development diagnostics; it is not sufficient for a release decision. Raw output is written under `evals/runs/<id>/` and must remain uncommitted. The aggregator writes `benchmark.json` in the benchmark run directory and returns `release`, `hold`, or `incomplete` from the evidence it can verify.
+The behavioral plan contains 96 task runs: 66 paired primary runs and 30 paired adversarial runs. Use `--primary-only` only for development diagnostics; it is not sufficient for a release decision. Raw output is written under `evals/runs/<id>/` and must remain uncommitted. To stay below legacy Windows path limits in deep checkouts, observation and blind-comparison folders use compact physical storage IDs with local maps to canonical logical run and pair IDs; `run-plan.json`, each `run_metadata.json`, and each `comparison_metadata.json` retain the logical identities. The task runner refuses a copied fixture or injected-skill input whose projected path is unsafe before the first model call. The aggregator writes `benchmark.json` in the benchmark run directory and returns `release`, `hold`, or `incomplete` from the evidence it can verify.
 
 ## Behavioral benchmark protocol
 
@@ -87,4 +87,4 @@ Missing required runs, blind pairs, trigger observations, grades, or integrity a
 
 Publish only sanitized aggregate evidence. A release record should identify the evaluated commit and skill hashes, environment and model settings, repetitions, per-skill medians, variance, adversarial outcomes, blind-comparison results, trigger metrics, unresolved findings, and the final pass/fail decision. The raw `benchmark.json`, transcripts, grades, comparisons, and observations contain local paths or execution detail and are private review material, not public artifacts. Keep them local unless a separate public projection has passed public-safety and rights review.
 
-The published `v0.1.0` tag remains immutable. This protocol gates a later release candidate; it does not rewrite the evidence or claims attached to `v0.1.0`.
+The published `v0.1.0` tag remains immutable. This protocol gates the `v0.2.0` release candidate; it does not rewrite the evidence or claims attached to `v0.1.0`.

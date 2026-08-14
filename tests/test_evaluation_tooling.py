@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from aggregate_benchmark import evaluate_release, validate_evidence_invariants  # noqa: E402
+from aggregate_benchmark import collect_runs, evaluate_release, validate_evidence_invariants  # noqa: E402
 from evaluation_common import (  # noqa: E402
     EvaluationError,
     build_run_plan,
@@ -27,8 +27,14 @@ from evaluation_common import (  # noqa: E402
     require_matching_context,
     validate_output_root,
 )
-from grade_behavioral_benchmark import validate_grade  # noqa: E402
-from run_blind_comparisons import copy_blind_bundle, label_map, validate_comparison  # noqa: E402
+from grade_behavioral_benchmark import discover_runs, validate_grade  # noqa: E402
+from run_blind_comparisons import (  # noqa: E402
+    copy_blind_bundle,
+    discover_pairs,
+    label_map,
+    physical_comparison_id,
+    validate_comparison,
+)
 from run_trigger_evals import (  # noqa: E402
     body_proven_activation,
     confusion_metrics,
@@ -221,6 +227,132 @@ class EvaluationToolingTests(unittest.TestCase):
         ):
             self.assertEqual(run_behavioral_benchmark.main(), 0)
         self.assertEqual(json.loads(stdout.getvalue())["run_count"], 96)
+
+    def test_behavioral_storage_ids_are_compact_stable_and_unique(self) -> None:
+        ids = [run_behavioral_benchmark.physical_run_id(index, 96) for index in range(1, 97)]
+        self.assertEqual(ids[0], "001")
+        self.assertEqual(ids[-1], "096")
+        self.assertEqual(len(set(ids)), 96)
+
+    def test_behavioral_path_budget_fails_before_live_execution(self) -> None:
+        plan = build_run_plan(self.suite, 3)
+        fixture = REPO_ROOT / "examples" / "synthetic-report"
+        with self.assertRaisesRegex(EvaluationError, "Use a shorter --run-id or --output-root"):
+            run_behavioral_benchmark.validate_workspace_path_budget(
+                REPO_ROOT / ("x" * 80), plan, fixture, path_limit=180
+            )
+
+    def test_behavioral_main_checks_path_budget_before_profile_or_model(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "run_behavioral_benchmark.py",
+                    "--execute",
+                    "--run-id",
+                    "path-budget-order-test",
+                    "--model",
+                    "gpt-5.6-sol",
+                    "--reasoning-effort",
+                    "ultra",
+                ],
+            ),
+            patch.object(
+                run_behavioral_benchmark,
+                "validate_workspace_path_budget",
+                side_effect=EvaluationError("unsafe projected path"),
+            ),
+            patch.object(
+                run_behavioral_benchmark,
+                "find_codex_command",
+                side_effect=AssertionError("profile discovery must not run"),
+            ),
+            redirect_stderr(stderr),
+        ):
+            self.assertEqual(run_behavioral_benchmark.main(), 2)
+        self.assertIn("unsafe projected path", stderr.getvalue())
+
+    def test_aggregate_discovers_logical_run_in_compact_storage_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            run_dir = root / "runs" / "001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "run_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "logical-with-skill-r01",
+                        "storage_id": "001",
+                        "returncode": 0,
+                        "validation_errors": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "grading.json").write_text("{}", encoding="utf-8")
+            (run_dir / "grader_metadata.json").write_text(
+                json.dumps({"returncode": 0, "validation_errors": []}), encoding="utf-8"
+            )
+
+            records, missing = collect_runs(root)
+
+        self.assertEqual(missing, [])
+        self.assertEqual(records[0]["run_id"], "logical-with-skill-r01")
+        self.assertEqual(records[0]["storage_id"], "001")
+
+    def test_blind_pairing_uses_logical_metadata_from_compact_run_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            for storage_id, configuration in (("001", "with_skill"), ("002", "without_skill")):
+                run_dir = root / "runs" / storage_id
+                run_dir.mkdir(parents=True)
+                (run_dir / "run_metadata.json").write_text(
+                    json.dumps(
+                        {
+                            "run_id": f"logical-{configuration}-r01",
+                            "pair_id": "logical-pair-r01",
+                            "case_id": "logical-case",
+                            "case_kind": "primary",
+                            "configuration": configuration,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            pairs = discover_pairs(root)
+
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["pair_id"], "logical-pair-r01")
+        self.assertEqual(set(pairs[0]["runs"]), {"with_skill", "without_skill"})
+
+    def test_grader_discovers_compact_run_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            for storage_id in ("001", "002"):
+                (root / "runs" / storage_id).mkdir(parents=True)
+            self.assertEqual([path.name for path in discover_runs(root)], ["001", "002"])
+
+    def test_compact_comparison_ids_are_stable_when_pending_subset_changes(self) -> None:
+        all_ids = [physical_comparison_id(index, 33) for index in range(1, 34)]
+        self.assertEqual(all_ids[0], "001")
+        self.assertEqual(all_ids[-1], "033")
+        self.assertEqual(all_ids[17], physical_comparison_id(18, 33))
+
+    def test_blind_bundle_copies_deep_artifacts_into_compact_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            source = root / "runs" / "001"
+            artifact = source / "workspace" / "artifacts" / ("nested-" + "x" * 80) / "report.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("evidence", encoding="utf-8")
+            (source / "task-output.json").write_text("{}", encoding="utf-8")
+            target = root / "comparisons" / "001" / "A"
+
+            copy_blind_bundle(source, target)
+
+            copied = target / "artifacts" / artifact.parent.name / "report.md"
+            self.assertEqual(copied.read_text(encoding="utf-8"), "evidence")
 
     def test_live_execution_requires_pinned_profile(self) -> None:
         result = subprocess.run(
