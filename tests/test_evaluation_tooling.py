@@ -95,9 +95,35 @@ class EvaluationToolingTests(unittest.TestCase):
                     evaluation_common.tracked_directory_sha256(skill_root),
                     expected.hexdigest(),
                 )
+                cache = snapshot / "scripts" / "__pycache__" / "runtime.pyc"
+                cache.parent.mkdir(parents=True)
+                cache.write_bytes(b"runtime cache")
+                self.assertEqual(
+                    evaluation_common.tracked_directory_sha256(skill_root),
+                    expected.hexdigest(),
+                )
+                disguised_cache = snapshot / "scripts" / "__pycache__" / "private.dat"
+                disguised_cache.write_bytes(b"not Python bytecode")
+                with self.assertRaisesRegex(EvaluationError, "Unmanifested files"):
+                    evaluation_common.tracked_directory_sha256(skill_root)
+                disguised_cache.unlink()
+                injected = snapshot / "evals" / "runs" / "injected" / "transcript.dat"
+                injected.parent.mkdir(parents=True)
+                injected.write_text("unmanifested raw evidence\n", encoding="utf-8")
+                with self.assertRaisesRegex(EvaluationError, "Raw evaluation path"):
+                    evaluation_common.tracked_directory_sha256(skill_root)
+                injected.unlink()
+                cache_bypass = (
+                    snapshot / "evals" / "runs" / "__pycache__" / "transcript.pyc"
+                )
+                cache_bypass.parent.mkdir(parents=True, exist_ok=True)
+                cache_bypass.write_bytes(b"raw evidence disguised as bytecode")
+                with self.assertRaisesRegex(EvaluationError, "Raw evaluation path"):
+                    evaluation_common.tracked_directory_sha256(skill_root)
+                cache_bypass.unlink()
                 extra = skill_root / "unlisted.txt"
                 extra.write_text("unlisted\n", encoding="utf-8")
-                with self.assertRaisesRegex(EvaluationError, "Untracked or ignored"):
+                with self.assertRaisesRegex(EvaluationError, "Unmanifested files"):
                     evaluation_common.tracked_directory_sha256(skill_root)
                 extra.unlink()
                 skill_file.write_text("tampered\n", encoding="utf-8")

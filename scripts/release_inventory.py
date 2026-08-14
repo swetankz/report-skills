@@ -54,7 +54,7 @@ def _is_within(path: PurePosixPath, prefix: PurePosixPath) -> bool:
     return path_parts[: len(prefix_parts)] == prefix_parts
 
 
-def _validate_release_path(path_text: str) -> PurePosixPath:
+def validate_release_path(path_text: str) -> PurePosixPath:
     raw_parts = path_text.split("/")
     if (
         not path_text
@@ -85,10 +85,10 @@ def _portable_path_key(path: PurePosixPath) -> str:
     )
 
 
-def _validate_portable_collisions(inventory: Iterable[TrackedFile]) -> None:
+def validate_portable_collisions(inventory: Iterable[TrackedFile]) -> None:
     seen_nodes: dict[str, tuple[PurePosixPath, str]] = {}
     for item in inventory:
-        relative = _validate_release_path(item.path.as_posix())
+        relative = validate_release_path(item.path.as_posix())
         for depth in range(1, len(relative.parts) + 1):
             node = PurePosixPath(*relative.parts[:depth])
             node_type = "file" if depth == len(relative.parts) else "directory"
@@ -120,7 +120,7 @@ def _parse_tree(payload: bytes) -> list[TrackedFile]:
             raise SystemExit("Unable to parse the Git release inventory.")
         try:
             mode, object_type, object_id = metadata.decode("ascii").split(" ", 2)
-            relative = _validate_release_path(raw_path.decode("utf-8"))
+            relative = validate_release_path(raw_path.decode("utf-8"))
         except (UnicodeDecodeError, ValueError) as error:
             raise SystemExit("Unable to decode the Git release inventory.") from error
         if object_type != "blob" or mode not in REGULAR_FILE_MODES:
@@ -131,7 +131,7 @@ def _parse_tree(payload: bytes) -> list[TrackedFile]:
         if any(_is_within(relative, prefix) for prefix in RAW_EVAL_PREFIXES):
             raise SystemExit(f"Refusing tracked raw evaluation path: {relative.as_posix()}")
         files.append(TrackedFile(relative, mode, object_id))
-    _validate_portable_collisions(files)
+    validate_portable_collisions(files)
     return sorted(files, key=lambda item: item.path.as_posix())
 
 
@@ -170,9 +170,9 @@ def copy_inventory(repo_root: Path, stage: Path, inventory: Iterable[TrackedFile
     repo_root = repo_root.resolve()
     stage_root = stage.resolve()
     items = list(inventory)
-    _validate_portable_collisions(items)
+    validate_portable_collisions(items)
     for item in items:
-        relative = _validate_release_path(item.path.as_posix())
+        relative = validate_release_path(item.path.as_posix())
         target = stage_root.joinpath(*relative.parts)
         try:
             target.resolve().relative_to(stage_root)

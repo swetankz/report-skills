@@ -15,7 +15,7 @@ import time
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 from release_inventory import TrackedFile, validate_portable_collisions, validate_release_path
@@ -44,6 +44,8 @@ PROFILE_IDENTITY_KEYS = (
     "platform",
 )
 REPOSITORY_IDENTITY_KEYS = ("commit", "tree", "dirty")
+SNAPSHOT_MANIFEST_NAME = "SOURCE_SNAPSHOT_MANIFEST.json"
+SNAPSHOT_PYTHON_CACHE_PART = "__pycache__"
 
 
 class EvaluationError(RuntimeError):
@@ -76,7 +78,7 @@ def file_sha256(path: Path) -> str:
 def snapshot_manifest_files() -> dict[str, str]:
     """Return a validated history-free source inventory when no exact Git root exists."""
 
-    manifest_path = REPO_ROOT / "SOURCE_SNAPSHOT_MANIFEST.json"
+    manifest_path = REPO_ROOT / SNAPSHOT_MANIFEST_NAME
     if (REPO_ROOT / ".git").exists():
         raise EvaluationError(
             "Refusing source snapshot fallback while repository Git metadata is present"
@@ -124,6 +126,37 @@ def snapshot_manifest_files() -> dict[str, str]:
         raise EvaluationError(str(error)) from error
     if len(validated) != len(files):
         raise EvaluationError("Source snapshot manifest paths are not unique")
+
+    actual: dict[str, Path] = {}
+    for path in sorted(REPO_ROOT.rglob("*")):
+        if path.is_symlink():
+            raise EvaluationError(
+                f"Symlink is not allowed in source snapshot: {path.relative_to(REPO_ROOT)}"
+            )
+        if not path.is_file():
+            continue
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        parts = tuple(part.casefold() for part in PurePosixPath(relative).parts)
+        if parts[:2] in {("evals", "review"), ("evals", "runs")}:
+            raise EvaluationError(f"Raw evaluation path in source snapshot: {relative}")
+        if relative == SNAPSHOT_MANIFEST_NAME:
+            continue
+        if SNAPSHOT_PYTHON_CACHE_PART in parts and path.suffix.casefold() == ".pyc":
+            continue
+        actual[relative] = path
+    missing = sorted(set(validated) - set(actual))
+    extra = sorted(set(actual) - set(validated))
+    if missing:
+        raise EvaluationError(f"Source snapshot manifest files are missing: {missing}")
+    if extra:
+        raise EvaluationError(f"Unmanifested files exist in source snapshot: {extra}")
+    mismatched = sorted(
+        relative
+        for relative, path in actual.items()
+        if hashlib.sha256(path.read_bytes()).hexdigest() != validated[relative]
+    )
+    if mismatched:
+        raise EvaluationError(f"Source snapshot file hash mismatch: {mismatched}")
     return validated
 
 
