@@ -7,11 +7,17 @@ from pathlib import Path
 from typing import Any
 
 from evaluation_common import (
+    CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+    CANONICAL_TRIGGER_TIMEOUT_SECONDS,
+    CODEX_INVOCATION_MODE,
+    CODEX_TIMEOUT_ENFORCEMENT_MODE,
     DEFAULT_SUITE,
     DEFAULT_THRESHOLDS,
     DEFAULT_TRIGGERS,
     EvaluationError,
     build_run_plan,
+    canonical_json_sha256,
+    case_contract_document,
     configuration_ids,
     configured_repetitions,
     file_sha256,
@@ -70,6 +76,19 @@ def canonical_plan_rows() -> list[dict[str, Any]]:
     ]
 
 
+def canonical_case_contract_hashes() -> dict[str, str]:
+    suite = normalize_suite(load_json(DEFAULT_SUITE))
+    thresholds = load_json(DEFAULT_THRESHOLDS)
+    rows = build_run_plan(
+        suite,
+        configured_repetitions(suite, thresholds),
+        configurations=configuration_ids(suite),
+    )
+    return {
+        row["run_id"]: canonical_json_sha256(case_contract_document(row)) for row in rows
+    }
+
+
 def _same_resolved_path(value: Any, expected: Path) -> bool:
     if not isinstance(value, (str, Path)) or not str(value).strip():
         return False
@@ -92,6 +111,7 @@ def validate_release_eval_plan(
     canonical_suite = normalize_suite(load_json(DEFAULT_SUITE))
     canonical_fixture = suite_fixture(DEFAULT_SUITE, canonical_suite)
     expected_rows = canonical_plan_rows()
+    expected_case_contract_hashes = canonical_case_contract_hashes()
 
     if not _same_resolved_path(plan.get("suite"), DEFAULT_SUITE):
         issues.append("release-contract:benchmark suite is not the tracked default")
@@ -115,11 +135,20 @@ def validate_release_eval_plan(
         or plan.get("configurations") != CANONICAL_CONFIGURATIONS
         or plan.get("run_count") != CANONICAL_RUN_COUNT
         or plan.get("pair_count") != CANONICAL_PAIR_COUNT
+        or plan.get("timeout_seconds") != CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS
         or plan.get("runs") != expected_rows
+        or plan.get("case_contract_hashes") != expected_case_contract_hashes
     ):
         issues.append("release-contract:behavioral plan is not the exact canonical 96-run plan")
     if plan.get("baseline_contamination_risk") != []:
         issues.append("release-contract:baseline contamination risk must be empty")
+    profile = plan.get("execution_profile")
+    if (
+        not isinstance(profile, dict)
+        or profile.get("codex_invocation") != CODEX_INVOCATION_MODE
+        or profile.get("codex_timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE
+    ):
+        issues.append("release-contract:execution method is not canonical")
 
     if trigger_results is not None:
         if not _same_resolved_path(trigger_results.get("suite"), DEFAULT_TRIGGERS):
@@ -129,5 +158,7 @@ def validate_release_eval_plan(
         }
         if trigger_results.get("contract_hashes") != expected_trigger_hashes:
             issues.append("release-contract:trigger input receipt does not match the canonical SHA256")
+        if trigger_results.get("timeout_seconds") != CANONICAL_TRIGGER_TIMEOUT_SECONDS:
+            issues.append("release-contract:trigger timeout is not canonical")
 
     return issues

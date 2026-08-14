@@ -7,6 +7,7 @@ import io
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -17,24 +18,53 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from aggregate_benchmark import collect_runs, evaluate_release, validate_evidence_invariants  # noqa: E402
+from aggregate_benchmark import (  # noqa: E402
+    collect_comparisons,
+    collect_runs,
+    evaluate_release,
+    validate_evidence_invariants,
+)
 from evaluation_common import (  # noqa: E402
+    CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+    CANONICAL_COMPARATOR_TIMEOUT_SECONDS,
+    CANONICAL_GRADER_TIMEOUT_SECONDS,
+    CANONICAL_TRIGGER_TIMEOUT_SECONDS,
+    CODEX_INVOCATION_MODE,
+    CODEX_TIMEOUT_TERMINATION_MODE,
+    CODEX_TIMEOUT_ENFORCEMENT_MODE,
     EvaluationError,
     build_run_plan,
+    canonical_json_sha256,
     codex_execution_profile,
     codex_base_command,
+    codex_runtime_command,
+    codex_runtime_environment,
+    execution_receipt_validation_errors,
+    file_sha256,
     load_json,
     normalize_suite,
     require_matching_context,
+    require_clean_task_execution,
+    require_complete_task_evidence,
+    run_codex,
+    task_evidence_receipt,
+    validate_task_evidence_binding,
     validate_output_root,
 )
-from grade_behavioral_benchmark import discover_runs, validate_grade  # noqa: E402
+from grade_behavioral_benchmark import (  # noqa: E402
+    discover_runs,
+    grader_input_sha256,
+    validate_grade,
+)
 from run_blind_comparisons import (  # noqa: E402
+    blind_bundle_sha256,
+    comparison_input_sha256,
     copy_blind_bundle,
     discover_pairs,
     label_map,
     physical_comparison_id,
     validate_comparison,
+    validate_comparison_output_binding,
 )
 from run_trigger_evals import (  # noqa: E402
     body_proven_activation,
@@ -45,13 +75,17 @@ from run_trigger_evals import (  # noqa: E402
     trigger_task_prompt,
 )
 from validate_release_eval_plan import (  # noqa: E402
+    canonical_case_contract_hashes,
     canonical_contract_hashes,
     canonical_plan_rows,
     validate_release_eval_plan,
 )
 from validate_eval_suite import validate_model_output_schema  # noqa: E402
 import evaluation_common  # noqa: E402
+import aggregate_benchmark  # noqa: E402
+import grade_behavioral_benchmark  # noqa: E402
 import run_behavioral_benchmark  # noqa: E402
+import run_blind_comparisons  # noqa: E402
 import run_trigger_evals  # noqa: E402
 
 
@@ -187,13 +221,19 @@ class EvaluationToolingTests(unittest.TestCase):
             "repetitions": 3,
             "run_count": 96,
             "pair_count": 48,
+            "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
             "configurations": ["with_skill", "without_skill"],
             "baseline_contamination_risk": [],
+            "execution_profile": {
+                "codex_invocation": CODEX_INVOCATION_MODE,
+                "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+            },
             "contract_hashes": {
                 "benchmark_suite_sha256": hashes["benchmark_suite_sha256"],
                 "thresholds_sha256": hashes["thresholds_sha256"],
                 "fixture_sha256": hashes["fixture_sha256"],
             },
+            "case_contract_hashes": canonical_case_contract_hashes(),
             "runs": canonical_plan_rows(),
         }
         triggers = {
@@ -201,6 +241,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "contract_hashes": {
                 "trigger_suite_sha256": hashes["trigger_suite_sha256"]
             },
+            "timeout_seconds": CANONICAL_TRIGGER_TIMEOUT_SECONDS,
         }
         return plan, triggers
 
@@ -226,6 +267,28 @@ class EvaluationToolingTests(unittest.TestCase):
             REPO_ROOT / "evals" / "trigger-evals.json",
         )
         self.assertTrue(any("exact canonical 96-run plan" in issue for issue in issues))
+
+    def test_release_contract_rejects_custom_trigger_timeout(self) -> None:
+        plan, triggers = self.canonical_release_documents()
+        triggers["timeout_seconds"] = CANONICAL_TRIGGER_TIMEOUT_SECONDS - 1
+        issues = validate_release_eval_plan(
+            plan,
+            triggers,
+            REPO_ROOT / "evals" / "release-thresholds.json",
+            REPO_ROOT / "evals" / "trigger-evals.json",
+        )
+        self.assertIn("release-contract:trigger timeout is not canonical", issues)
+
+    def test_release_contract_rejects_noncanonical_invocation(self) -> None:
+        plan, triggers = self.canonical_release_documents()
+        plan["execution_profile"]["codex_invocation"] = "legacy-wrapper"
+        issues = validate_release_eval_plan(
+            plan,
+            triggers,
+            REPO_ROOT / "evals" / "release-thresholds.json",
+            REPO_ROOT / "evals" / "trigger-evals.json",
+        )
+        self.assertIn("release-contract:execution method is not canonical", issues)
 
     def test_release_contract_rejects_custom_inputs_and_hash_drift(self) -> None:
         plan, triggers = self.canonical_release_documents()
@@ -419,8 +482,8 @@ class EvaluationToolingTests(unittest.TestCase):
             "supported_reasoning_levels": [{"effort": "low"}, {"effort": "ultra"}],
         }
         with tempfile.TemporaryDirectory() as temp_name:
-            command = Path(temp_name) / "codex.cmd"
-            command.write_text("@echo off\n", encoding="utf-8")
+            command = Path(temp_name) / "codex.exe"
+            command.write_bytes(b"MZ synthetic native")
             results = [
                 subprocess.CompletedProcess([], 0, "codex-cli 0.147.0\n", ""),
                 subprocess.CompletedProcess([], 0, json.dumps({"models": [model_entry]}), ""),
@@ -437,7 +500,422 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertEqual(profile["reasoning_effort"], "ultra")
         self.assertRegex(profile["codex_command_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(profile["codex_implementation_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(profile["codex_managed_environment_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(profile["selected_model_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(profile["codex_invocation"], CODEX_INVOCATION_MODE)
+        self.assertEqual(
+            profile["codex_timeout_enforcement"], CODEX_TIMEOUT_ENFORCEMENT_MODE
+        )
+
+    def test_packaged_wrapper_resolves_and_probes_exact_native_runtime(self) -> None:
+        model_entry = {
+            "slug": "gpt-5.6-sol",
+            "default_reasoning_level": "low",
+            "supported_reasoning_levels": [{"effort": "ultra"}],
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            command = root / "codex.cmd"
+            command.write_text("@echo off\n", encoding="utf-8")
+            executable_name = "codex.exe" if sys.platform == "win32" else "codex"
+            native = (
+                root
+                / "node_modules"
+                / "@openai"
+                / "codex"
+                / "node_modules"
+                / "@openai"
+                / "codex-test"
+                / "vendor"
+                / "target"
+                / "bin"
+                / executable_name
+            )
+            native.parent.mkdir(parents=True)
+            native.write_bytes(b"native")
+            results = [
+                subprocess.CompletedProcess([], 0, "codex-cli 0.147.0\n", ""),
+                subprocess.CompletedProcess([], 0, json.dumps({"models": [model_entry]}), ""),
+            ]
+            with (
+                patch("evaluation_common.subprocess.run", side_effect=results) as mocked,
+                patch("evaluation_common.platform.system", return_value="Windows"),
+                patch("evaluation_common.platform.release", return_value="11"),
+                patch("evaluation_common.platform.machine", return_value="ARM64"),
+            ):
+                profile = codex_execution_profile(str(command), "gpt-5.6-sol", "ultra")
+            self.assertEqual(Path(profile["codex_implementation"]), native.resolve())
+            self.assertEqual(mocked.call_args_list[0].args[0][0], str(native.resolve()))
+            self.assertEqual(mocked.call_args_list[1].args[0][0], str(native.resolve()))
+            environment = codex_runtime_environment(profile)
+            self.assertEqual(environment["CODEX_MANAGED_PACKAGE_ROOT"], str(native.parents[6]))
+            self.assertEqual(environment["CODEX_MANAGED_BY_NPM"], "1")
+            tampered = dict(profile, codex_managed_by="pnpm")
+            with self.assertRaisesRegex(EvaluationError, "receipt does not match"):
+                codex_runtime_environment(tampered)
+
+    def test_packaged_wrapper_native_resolution_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            command = root / "codex.cmd"
+            command.write_text("@echo off\n", encoding="utf-8")
+            package = root / "node_modules" / "@openai" / "codex"
+            package.mkdir(parents=True)
+            with self.assertRaisesRegex(EvaluationError, "found 0 candidates"):
+                codex_execution_profile(str(command), "gpt-5.6-sol", "ultra")
+            executable_name = "codex.exe" if sys.platform == "win32" else "codex"
+            for name in ("codex-one", "codex-two"):
+                native = package / "node_modules" / "@openai" / name / "vendor" / name / "bin" / executable_name
+                native.parent.mkdir(parents=True)
+                native.write_bytes(b"native")
+            with self.assertRaisesRegex(EvaluationError, "found 2 candidates"):
+                codex_execution_profile(str(command), "gpt-5.6-sol", "ultra")
+
+    def test_profiled_native_runtime_must_exist_and_match_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            implementation = Path(temp_name) / "codex.exe"
+            implementation.write_bytes(b"native implementation")
+            profile = {
+                "codex_invocation": CODEX_INVOCATION_MODE,
+                "codex_implementation": str(implementation),
+                "codex_implementation_sha256": hashlib.sha256(
+                    implementation.read_bytes()
+                ).hexdigest(),
+            }
+            self.assertEqual(codex_runtime_command(profile), str(implementation.resolve()))
+            implementation.write_bytes(b"changed implementation")
+            with self.assertRaisesRegex(EvaluationError, "changed during evaluation"):
+                codex_runtime_command(profile)
+
+    def test_run_codex_timeout_kills_descendants_and_never_salvages_terminal_event(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            sentinel = Path(temp_name) / "orphan-survived.txt"
+            child = (
+                "import time; from pathlib import Path; "
+                f"time.sleep(2); Path({str(sentinel)!r}).write_text('orphan', encoding='utf-8')"
+            )
+            parent = (
+                "import json, subprocess, sys, time; "
+                "print(json.dumps({'type':'turn.completed'}), flush=True); "
+                f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
+                "time.sleep(30)"
+            )
+            result = run_codex([sys.executable, "-c", parent], "", timeout=1)
+            self.assertEqual(result.returncode, 124)
+            self.assertTrue(result.timed_out)
+            self.assertEqual(result.termination_reason, "timeout")
+            self.assertEqual(result.terminal_event_count, 1)
+            self.assertGreaterEqual(result.timeout_overrun_seconds, 0)
+            time.sleep(2.5)
+            self.assertFalse(sentinel.exists())
+            self.assertEqual(result.termination_method, CODEX_TIMEOUT_TERMINATION_MODE)
+            self.assertEqual(result.timeout_enforcement, CODEX_TIMEOUT_ENFORCEMENT_MODE)
+
+    def test_run_codex_clean_exit_has_terminal_receipt(self) -> None:
+        script = "import json; print(json.dumps({'type':'turn.completed'}), flush=True)"
+        result = run_codex([sys.executable, "-c", script], "", timeout=10)
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(result.timed_out)
+        self.assertEqual(result.termination_reason, "process-exit")
+        self.assertEqual(result.termination_method, "natural-exit")
+        self.assertEqual(result.timeout_seconds, 10)
+        self.assertEqual(result.timeout_overrun_seconds, 0)
+        self.assertEqual(result.terminal_event_count, 1)
+        self.assertEqual(result.failed_terminal_event_count, 0)
+        self.assertEqual(result.timeout_enforcement, CODEX_TIMEOUT_ENFORCEMENT_MODE)
+
+    def test_execution_receipt_rejects_failed_and_completed_terminal_events(self) -> None:
+        script = (
+            "import json; "
+            "print(json.dumps({'type':'turn.failed'})); "
+            "print(json.dumps({'type':'turn.completed'}))"
+        )
+        result = run_codex([sys.executable, "-c", script], "", timeout=10)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.terminal_event_count, 1)
+        self.assertEqual(result.failed_terminal_event_count, 1)
+        self.assertTrue(
+            any(
+                "failed terminal event" in error
+                for error in execution_receipt_validation_errors(result, 10, "synthetic")
+            )
+        )
+
+    def test_clean_task_precondition_rejects_timeout_even_with_terminal_event(self) -> None:
+        clean = {
+            "returncode": 0,
+            "validation_errors": [],
+            "timed_out": False,
+            "termination_reason": "process-exit",
+            "termination_method": "natural-exit",
+            "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+            "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+            "timeout_overrun_seconds": 0.0,
+            "terminal_event_count": 1,
+            "failed_terminal_event_count": 0,
+            "execution_profile": {
+                "codex_invocation": CODEX_INVOCATION_MODE,
+                "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+            },
+        }
+        require_clean_task_execution(clean, "clean")
+        failed = {
+            **clean,
+            "returncode": 124,
+            "validation_errors": ["task exited 124"],
+            "timed_out": True,
+            "termination_reason": "timeout",
+            "terminal_event_count": 1,
+        }
+        with self.assertRaisesRegex(EvaluationError, "cannot be graded or compared"):
+            require_clean_task_execution(failed, "timed-out")
+
+    def test_downstream_requires_exact_complete_clean_task_set(self) -> None:
+        profile = {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "ultra",
+            "codex_invocation": CODEX_INVOCATION_MODE,
+            "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+            "codex_cli_version": "codex-cli 0.147.0",
+            "codex_command_sha256": "a" * 64,
+            "codex_implementation_sha256": "b" * 64,
+            "codex_managed_environment_sha256": "c" * 64,
+            "selected_model_sha256": "d" * 64,
+            "python_version": "3.12.0",
+            "platform": "test",
+        }
+        repository = {
+            "root": "repo",
+            "commit": "e" * 40,
+            "tree": "f" * 40,
+            "dirty": False,
+        }
+        clean_receipt = {
+            "returncode": 0,
+            "validation_errors": [],
+            "timed_out": False,
+            "termination_reason": "process-exit",
+            "termination_method": "natural-exit",
+            "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+            "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+            "timeout_overrun_seconds": 0.0,
+            "terminal_event_count": 1,
+            "failed_terminal_event_count": 0,
+            "execution_profile": profile,
+            "repository": repository,
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            rows = [
+                {
+                    "run_id": "one",
+                    "pair_id": "pair-one",
+                    "case_id": "case-one",
+                    "case_kind": "primary",
+                    "skill": "one",
+                    "configuration": "with_skill",
+                    "repetition": 1,
+                },
+                {
+                    "run_id": "two",
+                    "pair_id": "pair-one",
+                    "case_id": "case-one",
+                    "case_kind": "primary",
+                    "skill": "one",
+                    "configuration": "without_skill",
+                    "repetition": 1,
+                },
+            ]
+            contracts = {
+                row["run_id"]: {
+                    "prompt": "Synthetic task",
+                    "assertions": [
+                        {"assertion_id": "a", "text": "A", "weight": 100, "blocking": True}
+                    ],
+                }
+                for row in rows
+            }
+            (root / "run-plan.json").write_text(
+                json.dumps(
+                    {
+                        "runs": rows,
+                        "case_contract_hashes": {
+                            run_id: canonical_json_sha256(contract)
+                            for run_id, contract in contracts.items()
+                        },
+                        "execution_profile": profile,
+                        "repository": repository,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def write_task(storage_id: str, row: dict, receipt: dict) -> Path:
+                run_dir = root / "runs" / storage_id
+                (run_dir / "workspace" / "artifacts").mkdir(parents=True)
+                (run_dir / "task-output.json").write_text("{}\n", encoding="utf-8")
+                (run_dir / "transcript.jsonl").write_text("{}\n", encoding="utf-8")
+                (run_dir / "stderr.txt").write_text("", encoding="utf-8")
+                (run_dir / "case_contract.json").write_text(
+                    json.dumps(contracts[row["run_id"]]) + "\n", encoding="utf-8"
+                )
+                metadata = {
+                    **row,
+                    **receipt,
+                    "storage_id": storage_id,
+                    "task_evidence": task_evidence_receipt(run_dir),
+                }
+                (run_dir / "run_metadata.json").write_text(
+                    json.dumps(metadata), encoding="utf-8"
+                )
+                return run_dir
+
+            write_task("001", rows[0], clean_receipt)
+            with self.assertRaisesRegex(EvaluationError, "does not exactly match"):
+                require_complete_task_evidence(root)
+            second = write_task("002", rows[1], clean_receipt)
+            self.assertEqual(
+                [path.name for path in require_complete_task_evidence(root)],
+                ["001", "002"],
+            )
+            failed = load_json(second / "run_metadata.json")
+            failed.update({"returncode": 124, "timed_out": True})
+            (second / "run_metadata.json").write_text(json.dumps(failed), encoding="utf-8")
+            with self.assertRaisesRegex(EvaluationError, "cannot be graded or compared"):
+                require_complete_task_evidence(root)
+
+    def test_task_evidence_binding_rejects_contract_or_artifact_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            run_dir = Path(temp_name)
+            (run_dir / "workspace" / "artifacts").mkdir(parents=True)
+            (run_dir / "workspace" / "artifacts" / "report.md").write_text(
+                "original", encoding="utf-8"
+            )
+            (run_dir / "task-output.json").write_text("{}\n", encoding="utf-8")
+            (run_dir / "transcript.jsonl").write_text("{}\n", encoding="utf-8")
+            (run_dir / "stderr.txt").write_text("", encoding="utf-8")
+            contract = {"prompt": "Do work", "assertions": []}
+            (run_dir / "case_contract.json").write_text(
+                json.dumps(contract) + "\n", encoding="utf-8"
+            )
+            metadata = {"task_evidence": task_evidence_receipt(run_dir)}
+            expected_contract = canonical_json_sha256(contract)
+            self.assertEqual(
+                validate_task_evidence_binding(metadata, run_dir, expected_contract), []
+            )
+            (run_dir / "workspace" / "artifacts" / "report.md").write_text(
+                "changed", encoding="utf-8"
+            )
+            self.assertTrue(validate_task_evidence_binding(metadata, run_dir, expected_contract))
+
+    def test_grader_partial_attempt_and_overwrite_refuse_without_model_call(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            run_dir = root / "runs" / "001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "grader_attempt.json").write_text("{}\n", encoding="utf-8")
+            stderr = io.StringIO()
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "grade_behavioral_benchmark.py",
+                        str(root),
+                        "--execute",
+                        "--model",
+                        "gpt-5.6-sol",
+                        "--reasoning-effort",
+                        "ultra",
+                    ],
+                ),
+                patch.object(
+                    grade_behavioral_benchmark,
+                    "require_complete_task_evidence",
+                    return_value=[run_dir],
+                ),
+                patch.object(
+                    grade_behavioral_benchmark,
+                    "run_codex",
+                    side_effect=AssertionError("model call must not run"),
+                ),
+                redirect_stderr(stderr),
+            ):
+                self.assertEqual(grade_behavioral_benchmark.main(), 2)
+            self.assertIn("Partial grading evidence", stderr.getvalue())
+
+            for module, argv in (
+                (
+                    grade_behavioral_benchmark,
+                    ["grade_behavioral_benchmark.py", str(root), "--overwrite"],
+                ),
+                (
+                    run_blind_comparisons,
+                    ["run_blind_comparisons.py", str(root), "--overwrite"],
+                ),
+            ):
+                with (
+                    self.subTest(module=module.__name__),
+                    patch.object(sys, "argv", argv),
+                    patch.object(
+                        module,
+                        "run_codex",
+                        side_effect=AssertionError("model call must not run"),
+                    ),
+                    redirect_stderr(io.StringIO()),
+                ):
+                    self.assertEqual(module.main(), 2)
+
+    def test_blind_partial_evidence_refuses_without_model_call(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            target = root / "comparisons" / "001"
+            target.mkdir(parents=True)
+            (target / "comparison.json").write_text("{}\n", encoding="utf-8")
+            (target / "comparison_metadata.json").write_text("{}\n", encoding="utf-8")
+            (root / "comparisons" / "storage-map.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "pairs": [{"storage_id": "001", "pair_id": "pair-one"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            pair = {"pair_id": "pair-one", "case_id": "case-one", "runs": {}}
+            stderr = io.StringIO()
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "run_blind_comparisons.py",
+                        str(root),
+                        "--execute",
+                        "--model",
+                        "gpt-5.6-sol",
+                        "--reasoning-effort",
+                        "ultra",
+                    ],
+                ),
+                patch.object(
+                    run_blind_comparisons,
+                    "require_complete_task_evidence",
+                    return_value=[],
+                ),
+                patch.object(
+                    run_blind_comparisons, "discover_pairs", return_value=[pair]
+                ),
+                patch.object(
+                    run_blind_comparisons,
+                    "run_codex",
+                    side_effect=AssertionError("model call must not run"),
+                ),
+                redirect_stderr(stderr),
+            ):
+                self.assertEqual(run_blind_comparisons.main(), 2)
+            self.assertIn("Partial comparison evidence", stderr.getvalue())
 
     def test_live_profile_rejects_unsupported_effort(self) -> None:
         model_entry = {
@@ -446,8 +924,8 @@ class EvaluationToolingTests(unittest.TestCase):
             "supported_reasoning_levels": [{"effort": "low"}],
         }
         with tempfile.TemporaryDirectory() as temp_name:
-            command = Path(temp_name) / "codex.cmd"
-            command.write_text("@echo off\n", encoding="utf-8")
+            command = Path(temp_name) / "codex.exe"
+            command.write_bytes(b"MZ synthetic native")
             results = [
                 subprocess.CompletedProcess([], 0, "codex-cli 0.147.0\n", ""),
                 subprocess.CompletedProcess([], 0, json.dumps({"models": [model_entry]}), ""),
@@ -468,7 +946,13 @@ class EvaluationToolingTests(unittest.TestCase):
             redirect_stdout(stdout),
         ):
             self.assertEqual(run_behavioral_benchmark.main(), 0)
-        self.assertEqual(json.loads(stdout.getvalue())["run_count"], 96)
+        plan = json.loads(stdout.getvalue())
+        self.assertEqual(plan["run_count"], 96)
+        self.assertEqual(
+            plan["timeout_seconds"], CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS
+        )
+        self.assertEqual(plan["case_contract_hash_count"], 96)
+        self.assertNotIn("case_contract_hashes", plan)
 
     def test_behavioral_storage_ids_are_compact_stable_and_unique(self) -> None:
         ids = [run_behavioral_benchmark.physical_run_id(index, 96) for index in range(1, 97)]
@@ -521,27 +1005,146 @@ class EvaluationToolingTests(unittest.TestCase):
             root = Path(temp_name)
             run_dir = root / "runs" / "001"
             run_dir.mkdir(parents=True)
+            (run_dir / "workspace" / "artifacts").mkdir(parents=True)
+            (run_dir / "task-output.json").write_text("{}\n", encoding="utf-8")
+            (run_dir / "transcript.jsonl").write_text("{}\n", encoding="utf-8")
+            (run_dir / "stderr.txt").write_text("", encoding="utf-8")
+            contract = {
+                "assertions": [
+                    {"assertion_id": "a", "text": "A", "weight": 100, "blocking": True}
+                ]
+            }
+            grade = {
+                "expectations": [
+                    {"assertion_id": "a", "text": "A", "passed": True, "evidence": "artifact"}
+                ],
+                "summary": {"passed": 1, "failed": 0, "score": 100, "blocking_failures": 0},
+                "integrity_events": [],
+                "unauthorized_external_mutations": [],
+                "notes": [],
+            }
+            task_metadata = {
+                "run_id": "logical-with-skill-r01",
+                "storage_id": "001",
+                "case_id": "logical-case",
+                "returncode": 0,
+                "validation_errors": [],
+                "timed_out": False,
+                "termination_reason": "process-exit",
+                "termination_method": "natural-exit",
+                "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+                "timeout_overrun_seconds": 0.0,
+                "terminal_event_count": 1,
+                "failed_terminal_event_count": 0,
+                "execution_profile": {
+                    "codex_invocation": CODEX_INVOCATION_MODE,
+                    "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                },
+            }
+            for name, value in (
+                ("case_contract.json", contract),
+                ("grading.json", grade),
+            ):
+                (run_dir / name).write_text(json.dumps(value) + "\n", encoding="utf-8")
+            task_metadata["task_evidence"] = task_evidence_receipt(run_dir)
             (run_dir / "run_metadata.json").write_text(
-                json.dumps(
-                    {
-                        "run_id": "logical-with-skill-r01",
-                        "storage_id": "001",
-                        "returncode": 0,
-                        "validation_errors": [],
-                    }
-                ),
-                encoding="utf-8",
+                json.dumps(task_metadata) + "\n", encoding="utf-8"
             )
-            (run_dir / "grading.json").write_text("{}", encoding="utf-8")
+            input_hash = grader_input_sha256(run_dir)
+            attempt = {
+                "schema_version": "1.0",
+                "stage": "grader",
+                "attempt_number": 1,
+                "attempt_id": "grader:logical-with-skill-r01:attempt-01",
+                "run_id": "logical-with-skill-r01",
+                "storage_id": "001",
+                "case_id": "logical-case",
+                "started_at": "2026-08-15T00:00:00Z",
+                "timeout_seconds": CANONICAL_GRADER_TIMEOUT_SECONDS,
+                "grader_input_sha256": input_hash,
+                "execution_profile": {
+                    "codex_invocation": CODEX_INVOCATION_MODE,
+                    "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                },
+                "repository": {},
+            }
+            (run_dir / "grader_attempt.json").write_text(
+                json.dumps(attempt) + "\n", encoding="utf-8"
+            )
+            (run_dir / "grader-transcript.jsonl").write_text("{}\n", encoding="utf-8")
+            (run_dir / "grader-stderr.txt").write_text("", encoding="utf-8")
+            grader_metadata = {
+                "run_id": "logical-with-skill-r01",
+                "storage_id": "001",
+                "case_id": "logical-case",
+                "attempt_number": 1,
+                "attempt_id": attempt["attempt_id"],
+                "attempt_started_at": attempt["started_at"],
+                "grader_input_sha256": input_hash,
+                "grade_sha256": file_sha256(run_dir / "grading.json"),
+                "case_contract_sha256": file_sha256(run_dir / "case_contract.json"),
+                "grader_attempt_sha256": file_sha256(run_dir / "grader_attempt.json"),
+                "returncode": 0,
+                "validation_errors": [],
+                "timed_out": False,
+                "termination_reason": "process-exit",
+                "termination_method": "natural-exit",
+                "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                "timeout_seconds": CANONICAL_GRADER_TIMEOUT_SECONDS,
+                "timeout_overrun_seconds": 0.0,
+                "terminal_event_count": 1,
+                "failed_terminal_event_count": 0,
+                "execution_profile": {
+                    "codex_invocation": CODEX_INVOCATION_MODE,
+                    "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                },
+                "repository": {},
+            }
             (run_dir / "grader_metadata.json").write_text(
-                json.dumps({"returncode": 0, "validation_errors": []}), encoding="utf-8"
+                json.dumps(grader_metadata) + "\n", encoding="utf-8"
             )
 
             records, missing = collect_runs(root)
+            (run_dir / "grader_attempt.json").unlink()
+            partial_records, partial_missing = collect_runs(root)
 
         self.assertEqual(missing, [])
         self.assertEqual(records[0]["run_id"], "logical-with-skill-r01")
         self.assertEqual(records[0]["storage_id"], "001")
+        self.assertIsNone(partial_records[0]["grade"])
+        self.assertTrue(any("grader_attempt.json" in item for item in partial_missing))
+
+    def test_aggregate_main_propagates_comparison_collection_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            output = root / "benchmark.json"
+            stdout = io.StringIO()
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "aggregate_benchmark.py",
+                        str(root),
+                        "--output",
+                        str(output),
+                    ],
+                ),
+                patch.object(aggregate_benchmark, "collect_runs", return_value=([], [])),
+                patch.object(
+                    aggregate_benchmark,
+                    "collect_comparisons",
+                    return_value=([], ["comparison evidence invalid"]),
+                ),
+                redirect_stdout(stdout),
+            ):
+                self.assertEqual(aggregate_benchmark.main(), 1)
+            document = load_json(output)
+            self.assertIn(
+                "comparison evidence invalid",
+                document["release_verdict"]["missing_evidence"],
+            )
 
     def test_blind_pairing_uses_logical_metadata_from_compact_run_directories(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
@@ -557,6 +1160,20 @@ class EvaluationToolingTests(unittest.TestCase):
                             "case_id": "logical-case",
                             "case_kind": "primary",
                             "configuration": configuration,
+                            "returncode": 0,
+                            "validation_errors": [],
+                            "timed_out": False,
+                            "termination_reason": "process-exit",
+                            "termination_method": "natural-exit",
+                            "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                            "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+                            "timeout_overrun_seconds": 0.0,
+                            "terminal_event_count": 1,
+                            "failed_terminal_event_count": 0,
+                            "execution_profile": {
+                                "codex_invocation": CODEX_INVOCATION_MODE,
+                                "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                            },
                         }
                     ),
                     encoding="utf-8",
@@ -595,6 +1212,102 @@ class EvaluationToolingTests(unittest.TestCase):
 
             copied = target / "artifacts" / artifact.parent.name / "report.md"
             self.assertEqual(copied.read_text(encoding="utf-8"), "evidence")
+
+    def test_blind_output_binding_rejects_changed_source_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            suite = Path(temp_name)
+            target = suite / "comparisons" / "001"
+            for label in ("A", "B"):
+                (target / label / "artifacts").mkdir(parents=True)
+                (target / label / "task-output.json").write_text("{}\n", encoding="utf-8")
+                (target / label / "artifacts" / "report.md").write_text(
+                    label, encoding="utf-8"
+                )
+            contract_path = target / "case_contract.json"
+            result_path = target / "comparison.json"
+            contract_path.write_text('{"assertions":[]}\n', encoding="utf-8")
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "winner": "tie",
+                        "rubric": "Evidence",
+                        "output_quality": {"A": "Equal", "B": "Equal"},
+                        "expectation_results": [],
+                        "rationale": "Equal evidence",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            blind_map = label_map("pair-one", "report-skills-blind-v1")
+            metadata = {
+                "comparison_sha256": file_sha256(result_path),
+                "case_contract_sha256": file_sha256(contract_path),
+                "comparison_input_sha256": comparison_input_sha256(target),
+                "source_runs": {
+                    label: {
+                        "run_id": label,
+                        "configuration": blind_map[label],
+                        "blind_bundle_sha256": blind_bundle_sha256(target / label),
+                    }
+                    for label in ("A", "B")
+                },
+            }
+            self.assertEqual(
+                validate_comparison_output_binding(
+                    metadata, result_path, contract_path, target
+                ),
+                [],
+            )
+            metadata["source_runs"]["A"]["blind_bundle_sha256"] = "0" * 64
+            errors = validate_comparison_output_binding(
+                metadata, result_path, contract_path, target
+            )
+            self.assertTrue(any("source bundle A mismatch" in error for error in errors))
+            metadata["source_runs"]["A"]["blind_bundle_sha256"] = blind_bundle_sha256(
+                target / "A"
+            )
+            metadata.update(
+                {
+                    "pair_id": "pair-one",
+                    "case_id": "case-one",
+                    "storage_id": "001",
+                    "blind_seed": "report-skills-blind-v1",
+                    "label_map": blind_map,
+                    "blind_winner": "tie",
+                    "resolved_winner": "tie",
+                    "returncode": 0,
+                    "validation_errors": [],
+                    "timed_out": False,
+                    "termination_reason": "process-exit",
+                    "termination_method": "natural-exit",
+                    "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                    "timeout_seconds": CANONICAL_COMPARATOR_TIMEOUT_SECONDS,
+                    "timeout_overrun_seconds": 0.0,
+                    "terminal_event_count": 1,
+                    "failed_terminal_event_count": 0,
+                    "execution_profile": {
+                        "codex_invocation": CODEX_INVOCATION_MODE,
+                        "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                    },
+                    "repository": {},
+                }
+            )
+            (target / "comparison_metadata.json").write_text(
+                json.dumps(metadata) + "\n", encoding="utf-8"
+            )
+            (target / "comparator-transcript.jsonl").write_text("{}\n", encoding="utf-8")
+            (target / "comparator-stderr.txt").write_text("", encoding="utf-8")
+            collected, missing = collect_comparisons(suite)
+            self.assertEqual(len(collected), 1)
+            self.assertEqual(missing, [])
+            metadata["timeout_seconds"] = 999
+            (target / "comparison_metadata.json").write_text(
+                json.dumps(metadata) + "\n", encoding="utf-8"
+            )
+            collected, missing = collect_comparisons(suite)
+            self.assertEqual(collected, [])
+            self.assertTrue(any("invalid evidence" in item for item in missing))
 
     def test_live_execution_requires_pinned_profile(self) -> None:
         result = subprocess.run(
@@ -638,6 +1351,8 @@ class EvaluationToolingTests(unittest.TestCase):
         }
         comparison = {
             "winner": "A",
+            "rubric": "Compare assertion evidence and task completeness.",
+            "output_quality": {"A": "Complete and supported.", "B": "Partially supported."},
             "rationale": "A has stronger evidence.",
             "expectation_results": [
                 {
@@ -647,7 +1362,6 @@ class EvaluationToolingTests(unittest.TestCase):
                 },
                 {
                     "assertion_id": "case.a02",
-                    "text": "Second expectation",
                     "better": "tie",
                     "evidence": "Both outputs preserve the limitation.",
                 },
@@ -769,7 +1483,9 @@ class EvaluationToolingTests(unittest.TestCase):
         with patch.object(run_trigger_evals, "run_codex", return_value=expected) as mocked:
             result = run_trigger_prediction(command, query, 600)
         self.assertIs(result, expected)
-        mocked.assert_called_once_with(command, trigger_task_prompt(query), 600)
+        mocked.assert_called_once_with(
+            command, trigger_task_prompt(query), 600, environment=None
+        )
 
     def test_body_proven_activation_requires_exact_candidate_and_marker(self) -> None:
         marker = "report-skills-triggered:abc123"
@@ -850,9 +1566,12 @@ class EvaluationToolingTests(unittest.TestCase):
         profile = {
             "model": "gpt-5.6-sol",
             "reasoning_effort": "ultra",
+            "codex_invocation": CODEX_INVOCATION_MODE,
+            "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
             "codex_cli_version": "codex-cli 0.147.0",
             "codex_command_sha256": "a" * 64,
             "codex_implementation_sha256": "f" * 64,
+            "codex_managed_environment_sha256": "e" * 64,
             "selected_model_sha256": "b" * 64,
             "python_version": "3.12.0",
             "platform": "test",
@@ -866,9 +1585,12 @@ class EvaluationToolingTests(unittest.TestCase):
         profile = {
             "model": "gpt-5.6-sol",
             "reasoning_effort": "ultra",
+            "codex_invocation": CODEX_INVOCATION_MODE,
+            "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
             "codex_cli_version": "codex-cli 0.147.0",
             "codex_command_sha256": "a" * 64,
             "codex_implementation_sha256": "f" * 64,
+            "codex_managed_environment_sha256": "e" * 64,
             "selected_model_sha256": "b" * 64,
             "python_version": "3.12.0",
             "platform": "test",
@@ -884,16 +1606,99 @@ class EvaluationToolingTests(unittest.TestCase):
             "configuration": "with_skill",
             "repetition": 1,
         }
+        baseline_row = {
+            **row,
+            "run_id": "case__without_skill__r01",
+            "configuration": "without_skill",
+        }
+        contract_hash = canonical_json_sha256(
+            {
+                "assertions": [
+                    {
+                        "assertion_id": "case.a01",
+                        "text": "Complete",
+                        "weight": 100,
+                        "blocking": True,
+                    }
+                ]
+            }
+        )
         plan = {
             "execution_profile": profile,
             "repository": repository,
             "skill_hashes": skill_hashes,
-            "runs": [row],
+            "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+            "case_contract_hashes": {
+                row["run_id"]: contract_hash,
+                baseline_row["run_id"]: contract_hash,
+            },
+            "runs": [row, baseline_row],
         }
-        grader = {"execution_profile": profile, "repository": repository, "returncode": 0, "validation_errors": []}
+        clean_task_receipt = {
+            "timed_out": False,
+            "termination_reason": "process-exit",
+            "termination_method": "natural-exit",
+            "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+            "timeout_overrun_seconds": 0.0,
+            "terminal_event_count": 1,
+            "failed_terminal_event_count": 0,
+        }
+        grader_input_hash = "9" * 64
+        grader = {
+            "execution_profile": profile,
+            "repository": repository,
+            "run_id": row["run_id"],
+            "storage_id": "001",
+            "case_id": row["case_id"],
+            "attempt_number": 1,
+            "attempt_id": f"grader:{row['run_id']}:attempt-01",
+            "attempt_started_at": "2026-08-14T00:00:02Z",
+            "grader_input_sha256": grader_input_hash,
+            "returncode": 0,
+            "validation_errors": [],
+            "timeout_seconds": CANONICAL_GRADER_TIMEOUT_SECONDS,
+            **clean_task_receipt,
+        }
+        grade_contract = {
+            "assertions": [
+                {"assertion_id": "case.a01", "text": "Complete", "weight": 100, "blocking": True}
+            ]
+        }
+        grade_document = {
+            "expectations": [
+                {
+                    "assertion_id": "case.a01",
+                    "text": "Complete",
+                    "passed": True,
+                    "evidence": "artifact.md",
+                }
+            ],
+            "summary": {"passed": 1, "failed": 0, "score": 100, "blocking_failures": 0},
+            "integrity_events": [],
+            "unauthorized_external_mutations": [],
+            "notes": [],
+        }
+        grader_attempt = {
+            "schema_version": "1.0",
+            "stage": "grader",
+            "attempt_number": 1,
+            "attempt_id": grader["attempt_id"],
+            "run_id": row["run_id"],
+            "storage_id": "001",
+            "case_id": row["case_id"],
+            "started_at": grader["attempt_started_at"],
+            "timeout_seconds": CANONICAL_GRADER_TIMEOUT_SECONDS,
+            "grader_input_sha256": grader_input_hash,
+            "execution_profile": profile,
+            "repository": repository,
+        }
         task_method = {
+            "returncode": 0,
+            "validation_errors": [],
             "started_at": "2026-08-14T00:00:00Z",
             "completed_at": "2026-08-14T00:00:01Z",
+            "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+            **clean_task_receipt,
             "skill_loading": "explicit_workspace_copy",
             "codex_isolation": {
                 "ephemeral": True,
@@ -913,12 +1718,97 @@ class EvaluationToolingTests(unittest.TestCase):
             {
                 **row,
                 **task_method,
+                "storage_id": "001",
                 "execution_profile": profile,
                 "repository": repository,
                 "grader_metadata": grader,
+                "grade": grade_document,
+                "case_contract": grade_contract,
+                "grader_attempt": grader_attempt,
+                "task_evidence": {
+                    "blind_bundle_sha256": "8" * 64,
+                    "case_contract_sha256": "7" * 64,
+                },
             }
         ]
-        comparison = {"pair_id": "case__r01", "execution_profile": profile, "repository": repository, "returncode": 0}
+        baseline_grader = copy.deepcopy(grader)
+        baseline_grader.update(
+            {
+                "run_id": baseline_row["run_id"],
+                "storage_id": "002",
+                "attempt_id": f"grader:{baseline_row['run_id']}:attempt-01",
+            }
+        )
+        baseline_attempt = copy.deepcopy(grader_attempt)
+        baseline_attempt.update(
+            {
+                "attempt_id": baseline_grader["attempt_id"],
+                "run_id": baseline_row["run_id"],
+                "storage_id": "002",
+            }
+        )
+        baseline_task_method = copy.deepcopy(task_method)
+        baseline_task_method["skill_loading"] = "none"
+        records.append(
+            {
+                **baseline_row,
+                **baseline_task_method,
+                "storage_id": "002",
+                "execution_profile": profile,
+                "repository": repository,
+                "grader_metadata": baseline_grader,
+                "grade": grade_document,
+                "case_contract": grade_contract,
+                "grader_attempt": baseline_attempt,
+                "task_evidence": {
+                    "blind_bundle_sha256": "6" * 64,
+                    "case_contract_sha256": "7" * 64,
+                },
+            }
+        )
+        blind_seed = "report-skills-blind-v1"
+        blind_map = label_map(row["pair_id"], blind_seed)
+        source_by_configuration = {
+            "with_skill": (row["run_id"], "8" * 64),
+            "without_skill": (baseline_row["run_id"], "6" * 64),
+        }
+        source_runs = {
+            label: {
+                "run_id": source_by_configuration[configuration][0],
+                "configuration": configuration,
+                "blind_bundle_sha256": source_by_configuration[configuration][1],
+            }
+            for label, configuration in blind_map.items()
+        }
+        comparison_output = {
+            "winner": "A",
+            "rubric": "Compare evidence.",
+            "output_quality": {"A": "Complete.", "B": "Incomplete."},
+            "expectation_results": [
+                {"assertion_id": "case.a01", "better": "A", "evidence": "A has artifact."}
+            ],
+            "rationale": "A is stronger.",
+        }
+        comparison = {
+            "pair_id": "case__r01",
+            "case_id": "case",
+            "comparison_storage_id": "001",
+            "storage_id": "001",
+            "blind_seed": blind_seed,
+            "label_map": blind_map,
+            "source_runs": source_runs,
+            "blind_winner": "A",
+            "resolved_winner": blind_map["A"],
+            "comparison_output": comparison_output,
+            "case_contract": grade_contract,
+            "case_contract_sha256": "7" * 64,
+            "execution_profile": profile,
+            "repository": repository,
+            "returncode": 0,
+            "validation_errors": [],
+            "timeout_seconds": CANONICAL_COMPARATOR_TIMEOUT_SECONDS,
+            **clean_task_receipt,
+        }
         trigger_suite = {
             "protocol": {"repetitions_per_case": 1},
             "cases": [{"case_id": "t", "candidate_skill": "one", "should_trigger": True}],
@@ -933,6 +1823,8 @@ class EvaluationToolingTests(unittest.TestCase):
             "correct": True,
             "returncode": 0,
             "validation_errors": [],
+            "timeout_seconds": CANONICAL_TRIGGER_TIMEOUT_SECONDS,
+            **clean_task_receipt,
             "execution_profile": profile,
             "repository": repository,
         }
@@ -943,6 +1835,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "observations": [observation],
             "metrics": summarize([observation]),
             "failed_observations": [],
+            "timeout_seconds": CANONICAL_TRIGGER_TIMEOUT_SECONDS,
         }
         self.assertEqual(
             validate_evidence_invariants(plan, records, [comparison], triggers, trigger_suite), []
@@ -966,6 +1859,14 @@ class EvaluationToolingTests(unittest.TestCase):
             plan, bad_method_records, [comparison], triggers, trigger_suite
         )
         self.assertTrue(any("task isolation receipt" in issue for issue in issues))
+
+        bad_seed_comparison = copy.deepcopy(comparison)
+        bad_seed_comparison["blind_seed"] = "retry-seed"
+        bad_seed_comparison["label_map"] = label_map(row["pair_id"], "retry-seed")
+        issues = validate_evidence_invariants(
+            plan, records, [bad_seed_comparison], triggers, trigger_suite
+        )
+        self.assertTrue(any("canonical blind seed" in issue for issue in issues))
 
     def test_release_requires_every_hard_gate(self) -> None:
         skills = [case["skill"] for case in self.suite["primary_cases"]]

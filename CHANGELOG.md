@@ -4,8 +4,11 @@ All notable repository-level changes are documented here.
 
 ## 0.2.0 — 2026-08-14
 
+- Resolve and profile exactly one native Codex implementation, reproduce the package wrapper's managed environment, and bind every model-backed call to kill-on-timeout process-tree handling plus canonical stage-specific timeout and termination receipts. Failed calls stop their stage and cannot be graded, compared, resumed, or salvaged from terminal-looking output.
+
 - Add reproducible paired behavioral, blind-comparison, adversarial, and activation evaluation contracts for all eleven skills.
 - Bind live evaluation evidence to a clean commit and tree, tracked skill and fixture hashes, canonical contract hashes, and one explicit model, reasoning, CLI, and runtime profile.
+- Bind every task contract and persisted task artifact set before downstream review; use immutable grader-attempt receipts, input/output hashes, source-bound blind bundles, one deterministic blind seed, and independent aggregate-time grade/comparison revalidation so partial or altered evidence cannot be retried or change a release gate.
 - Add release thresholds, schemas, runners, aggregation, focused tests, CI contract checks, and public methodology documentation while keeping raw transcripts local and untracked.
 - Validate every model-facing object schema against the strict structured-output requirement before live evaluation.
 - Allow task agents to create local benchmark artifacts through automatic approval review constrained to the isolated `workspace-write` sandbox.

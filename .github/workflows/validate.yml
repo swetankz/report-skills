@@ -44,3 +44,21 @@ jobs:
 
       - name: Validate isolated standalone packages
         run: python scripts/test_standalone_packages.py
+
+  windows-process-lifecycle:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Windows process-tree and terminal receipts without model calls
+        run: >-
+          python -m unittest
+          tests.test_evaluation_tooling.EvaluationToolingTests.test_run_codex_timeout_kills_descendants_and_never_salvages_terminal_event
+          tests.test_evaluation_tooling.EvaluationToolingTests.test_run_codex_clean_exit_has_terminal_receipt
+          tests.test_evaluation_tooling.EvaluationToolingTests.test_execution_receipt_rejects_failed_and_completed_terminal_events

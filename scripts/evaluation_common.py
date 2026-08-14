@@ -7,10 +7,13 @@ import json
 import os
 import platform
 import re
+import signal
 import shutil
+import stat
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import hashlib
 from dataclasses import dataclass
@@ -31,14 +34,28 @@ DEFAULT_RUNS_ROOT = EVAL_ROOT / "runs"
 DEFAULT_REVIEW_ROOT = EVAL_ROOT / "review"
 RESULTS_ROOT = (EVAL_ROOT / "results").resolve()
 REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
+CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS = 7200
+CANONICAL_GRADER_TIMEOUT_SECONDS = 1200
+CANONICAL_COMPARATOR_TIMEOUT_SECONDS = 1200
+CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
+CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
+CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
+CODEX_TIMEOUT_ENFORCEMENT_MODE = (
+    "windows-job-object-kill-on-close-v1"
+    if os.name == "nt"
+    else "posix-session-process-group-v1"
+)
 TASK_IGNORE_USER_CONFIG_SCOPE = "config.toml_only"
 TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v1"
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",
+    "codex_invocation",
+    "codex_timeout_enforcement",
     "codex_cli_version",
     "codex_command_sha256",
     "codex_implementation_sha256",
+    "codex_managed_environment_sha256",
     "selected_model_sha256",
     "python_version",
     "platform",
@@ -64,7 +81,15 @@ def directory_sha256(root: Path) -> str:
     """Hash a directory deterministically from relative paths and file bytes."""
 
     digest = hashlib.sha256()
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    for path in sorted(root.rglob("*")):
+        info = path.lstat()
+        is_reparse = bool(getattr(info, "st_file_attributes", 0) & 0x400)
+        if path.is_symlink() or is_reparse:
+            raise EvaluationError(f"Link or reparse point is not hashable: {path}")
+        if stat.S_ISDIR(info.st_mode):
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            raise EvaluationError(f"Non-regular file is not hashable: {path}")
         digest.update(path.relative_to(root).as_posix().encode("utf-8"))
         digest.update(b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).digest())
@@ -73,6 +98,64 @@ def directory_sha256(root: Path) -> str:
 
 def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def canonical_json_sha256(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def case_contract_document(run: dict[str, Any]) -> dict[str, Any]:
+    return {"prompt": run.get("prompt"), "assertions": run.get("assertions", [])}
+
+
+def task_evidence_receipt(run_dir: Path) -> dict[str, Any]:
+    """Hash the exact persisted task evidence used by downstream reviewers."""
+
+    paths = {
+        "task_output_sha256": run_dir / "task-output.json",
+        "transcript_sha256": run_dir / "transcript.jsonl",
+        "stderr_sha256": run_dir / "stderr.txt",
+        "case_contract_sha256": run_dir / "case_contract.json",
+    }
+    hashes: dict[str, Any] = {
+        key: file_sha256(path) if path.is_file() else None for key, path in paths.items()
+    }
+    workspace = run_dir / "workspace"
+    hashes["workspace_sha256"] = directory_sha256(workspace) if workspace.is_dir() else None
+    artifacts = workspace / "artifacts"
+    blind_descriptor = {
+        "task-output.json": hashes["task_output_sha256"],
+        "artifacts": directory_sha256(artifacts) if artifacts.is_dir() else None,
+    }
+    hashes["blind_bundle_sha256"] = canonical_json_sha256(blind_descriptor)
+    hashes["combined_sha256"] = canonical_json_sha256(hashes)
+    return hashes
+
+
+def validate_task_evidence_binding(
+    metadata: dict[str, Any],
+    run_dir: Path,
+    expected_case_contract_sha256: str | None = None,
+) -> list[str]:
+    """Verify persisted task evidence and its planned case contract fail closed."""
+
+    errors: list[str] = []
+    recorded = metadata.get("task_evidence")
+    if not isinstance(recorded, dict):
+        return ["missing task-evidence receipt"]
+    actual = task_evidence_receipt(run_dir)
+    if recorded != actual:
+        errors.append("task-evidence receipt does not match persisted files")
+    if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in actual.values()):
+        errors.append("task-evidence receipt is incomplete")
+    if (
+        expected_case_contract_sha256 is not None
+        and canonical_json_sha256(load_json(run_dir / "case_contract.json"))
+        != expected_case_contract_sha256
+    ):
+        errors.append("case contract does not match the run plan")
+    return errors
 
 
 def snapshot_manifest_files() -> dict[str, str]:
@@ -273,17 +356,113 @@ def require_pinned_profile(execute: bool, model: str | None, reasoning_effort: s
         raise EvaluationError("Live evaluation requires both --model and --reasoning-effort for reproducibility")
 
 
+def _codex_package_manager(package_root: Path, entrypoint: Path) -> str:
+    """Mirror the installed JavaScript shim's npm/pnpm/bun environment choice."""
+
+    for start in {package_root.resolve(), entrypoint.parent.resolve()}:
+        current = start
+        while True:
+            node_modules = current / "node_modules"
+            installed = node_modules / "@openai" / "codex"
+            if (node_modules / ".modules.yaml").is_file() and installed.is_dir():
+                try:
+                    if installed.resolve() == package_root.resolve():
+                        return "pnpm"
+                except OSError:
+                    pass
+            if current == current.parent:
+                break
+            current = current.parent
+    package_text = str(package_root).replace("\\", "/")
+    if (
+        ".bun/install/global" in package_text
+        or "bun" in os.environ.get("npm_config_user_agent", "").casefold()
+        or "bun" in os.environ.get("npm_execpath", "").casefold()
+    ):
+        return "bun"
+    return "npm"
+
+
 def codex_execution_profile(codex_command: str, model: str, reasoning_effort: str) -> dict[str, Any]:
     """Verify and record the exact Codex CLI/model profile used for live calls."""
 
+    resolved_command = Path(codex_command).resolve()
+    adjacent_package = resolved_command.parent / "node_modules" / "@openai" / "codex"
+    npm_package: Path | None = adjacent_package if adjacent_package.is_dir() else None
+    if npm_package is None:
+        npm_package = next(
+            (
+                parent
+                for parent in (resolved_command.parent, *resolved_command.parents)
+                if parent.name == "codex"
+                and parent.parent.name == "@openai"
+                and (parent / "package.json").is_file()
+            ),
+            None,
+        )
+
+    managed_package_root: Path | None = None
+    managed_by: str | None = None
+    if npm_package is not None:
+        executable_name = "codex.exe" if sys.platform == "win32" else "codex"
+        candidates = sorted(
+            {
+                path.resolve()
+                for path in (npm_package / "node_modules" / "@openai").glob(
+                    f"codex-*/vendor/**/bin/{executable_name}"
+                )
+                if path.is_file()
+            }
+        )
+        if len(candidates) != 1:
+            raise EvaluationError(
+                "Cannot resolve exactly one native Codex implementation from the package "
+                f"behind {resolved_command}; found {len(candidates)} candidates"
+            )
+        implementation = candidates[0]
+        managed_package_root = npm_package.resolve()
+        managed_by = _codex_package_manager(managed_package_root, resolved_command)
+    else:
+        try:
+            header = resolved_command.read_bytes()[:4]
+        except OSError as error:
+            raise EvaluationError(f"Cannot read Codex executable {resolved_command}: {error}") from error
+        native_headers = {
+            b"MZ",
+            b"\x7fELF",
+            b"\xfe\xed\xfa\xce",
+            b"\xce\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe",
+            b"\xbe\xba\xfe\xca",
+        }
+        if not any(header.startswith(candidate) for candidate in native_headers):
+            raise EvaluationError(
+                "Codex command is a wrapper or script, but no unique packaged native "
+                f"implementation could be resolved: {resolved_command}"
+            )
+        implementation = resolved_command
+
+    probe_environment = os.environ.copy()
+    for key in ("CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_BY_PNPM", "CODEX_MANAGED_BY_BUN"):
+        probe_environment.pop(key, None)
+    if managed_package_root is None:
+        probe_environment.pop("CODEX_MANAGED_PACKAGE_ROOT", None)
+    else:
+        probe_environment["CODEX_MANAGED_PACKAGE_ROOT"] = str(managed_package_root)
+        probe_environment[f"CODEX_MANAGED_BY_{str(managed_by).upper()}"] = "1"
+    implementation_hash = hashlib.sha256(implementation.read_bytes()).hexdigest()
+
     version_result = subprocess.run(
-        [codex_command, "--version"],
+        [str(implementation), "--version"],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         check=False,
         timeout=30,
+        env=probe_environment,
     )
     if version_result.returncode != 0:
         raise EvaluationError(
@@ -293,13 +472,14 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
     version = version_result.stdout.strip()
 
     catalog_result = subprocess.run(
-        [codex_command, "debug", "models"],
+        [str(implementation), "debug", "models"],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="strict",
         check=False,
         timeout=120,
+        env=probe_environment,
     )
     if catalog_result.returncode != 0:
         raise EvaluationError(
@@ -324,31 +504,38 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
             f"Reasoning effort {reasoning_effort!r} is not supported by {model}; "
             f"available efforts: {sorted(value for value in supported if value)}"
         )
-    resolved_command = Path(codex_command).resolve()
     command_hash = hashlib.sha256(resolved_command.read_bytes()).hexdigest()
-    implementation = resolved_command
-    npm_package = resolved_command.parent / "node_modules" / "@openai" / "codex"
-    if npm_package.is_dir():
-        executable_name = "codex.exe" if sys.platform == "win32" else "codex"
-        candidates = sorted(
-            path.resolve()
-            for path in (npm_package / "node_modules" / "@openai").glob(
-                f"codex-*/vendor/**/bin/{executable_name}"
-            )
-            if path.is_file()
-        )
-        if len(candidates) == 1:
-            implementation = candidates[0]
-    implementation_hash = hashlib.sha256(implementation.read_bytes()).hexdigest()
+    final_implementation_hash = hashlib.sha256(implementation.read_bytes()).hexdigest()
+    if final_implementation_hash != implementation_hash:
+        raise EvaluationError("Native Codex implementation changed during profile discovery")
+    managed_environment_json = json.dumps(
+        {
+            "codex_managed_package_root": (
+                str(managed_package_root) if managed_package_root is not None else None
+            ),
+            "codex_managed_by": managed_by,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     selected_json = json.dumps(selected, sort_keys=True, separators=(",", ":"))
     return {
         "model": model,
         "reasoning_effort": reasoning_effort,
+        "codex_invocation": CODEX_INVOCATION_MODE,
+        "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
         "codex_cli_version": version,
         "codex_command": str(resolved_command),
         "codex_command_sha256": command_hash,
         "codex_implementation": str(implementation),
         "codex_implementation_sha256": implementation_hash,
+        "codex_managed_package_root": (
+            str(managed_package_root) if managed_package_root is not None else None
+        ),
+        "codex_managed_by": managed_by,
+        "codex_managed_environment_sha256": hashlib.sha256(
+            managed_environment_json.encode("utf-8")
+        ).hexdigest(),
         "model_catalog_sha256": hashlib.sha256(catalog_result.stdout.encode("utf-8")).hexdigest(),
         "selected_model_sha256": hashlib.sha256(selected_json.encode("utf-8")).hexdigest(),
         "model_default_reasoning_effort": str(selected.get("default_reasoning_level")),
@@ -356,6 +543,180 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
         "python_version": platform.python_version(),
         "platform": f"{platform.system()}-{platform.release()}-{platform.machine()}",
     }
+
+
+def codex_runtime_command(execution_profile: dict[str, Any]) -> str:
+    """Return the exact profiled native executable, failing if it has changed."""
+
+    if execution_profile.get("codex_invocation") != CODEX_INVOCATION_MODE:
+        raise EvaluationError("Unsupported or missing Codex invocation method")
+    raw_path = execution_profile.get("codex_implementation")
+    expected_hash = execution_profile.get("codex_implementation_sha256")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise EvaluationError("Execution profile is missing the Codex implementation path")
+    if not isinstance(expected_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+        raise EvaluationError("Execution profile has an invalid Codex implementation hash")
+    implementation = Path(raw_path).resolve()
+    if not implementation.is_file():
+        raise EvaluationError(f"Profiled Codex implementation is unavailable: {implementation}")
+    actual_hash = file_sha256(implementation)
+    if actual_hash != expected_hash:
+        raise EvaluationError(
+            "Profiled Codex implementation changed during evaluation: "
+            f"expected {expected_hash}, got {actual_hash}"
+        )
+    return str(implementation)
+
+
+def codex_runtime_environment(execution_profile: dict[str, Any]) -> dict[str, str]:
+    """Reproduce the package shim's managed environment for direct native execution."""
+
+    environment = os.environ.copy()
+    for key in ("CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_BY_PNPM", "CODEX_MANAGED_BY_BUN"):
+        environment.pop(key, None)
+    raw_root = execution_profile.get("codex_managed_package_root")
+    managed_by = execution_profile.get("codex_managed_by")
+    expected_hash = execution_profile.get("codex_managed_environment_sha256")
+    descriptor = json.dumps(
+        {
+            "codex_managed_package_root": raw_root,
+            "codex_managed_by": managed_by,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    actual_hash = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()
+    if expected_hash != actual_hash:
+        raise EvaluationError("Execution profile managed environment receipt does not match")
+    if raw_root is None and managed_by is None:
+        environment.pop("CODEX_MANAGED_PACKAGE_ROOT", None)
+        return environment
+    if not isinstance(raw_root, str) or not Path(raw_root).resolve().is_dir():
+        raise EvaluationError("Execution profile has an invalid managed package root")
+    if managed_by not in {"npm", "pnpm", "bun"}:
+        raise EvaluationError("Execution profile has an invalid Codex package manager")
+    environment["CODEX_MANAGED_PACKAGE_ROOT"] = str(Path(raw_root).resolve())
+    environment[f"CODEX_MANAGED_BY_{str(managed_by).upper()}"] = "1"
+    return environment
+
+
+def require_clean_task_execution(
+    metadata: dict[str, Any],
+    label: str,
+    run_dir: Path | None = None,
+    expected_case_contract_sha256: str | None = None,
+) -> None:
+    """Refuse downstream calls for an incomplete, failed, or timed-out task."""
+
+    profile = metadata.get("execution_profile")
+    receipt_errors = execution_receipt_validation_errors(
+        metadata, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, label
+    )
+    evidence_errors = (
+        validate_task_evidence_binding(
+            metadata, run_dir, expected_case_contract_sha256
+        )
+        if run_dir is not None
+        else []
+    )
+    if (
+        metadata.get("validation_errors") != []
+        or receipt_errors
+        or evidence_errors
+        or not isinstance(profile, dict)
+        or profile.get("codex_invocation") != CODEX_INVOCATION_MODE
+        or profile.get("codex_timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE
+    ):
+        raise EvaluationError(
+            f"{label} is not a clean task execution and cannot be graded or compared"
+        )
+
+
+def require_clean_stage_execution(
+    metadata: dict[str, Any], expected_timeout: int, label: str
+) -> None:
+    """Refuse continuation past any failed or noncanonical model-backed stage call."""
+
+    profile = metadata.get("execution_profile")
+    if (
+        metadata.get("validation_errors") != []
+        or execution_receipt_validation_errors(metadata, expected_timeout, label)
+        or not isinstance(profile, dict)
+        or profile.get("codex_invocation") != CODEX_INVOCATION_MODE
+        or profile.get("codex_timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE
+    ):
+        raise EvaluationError(f"{label} is not a clean canonical stage execution")
+
+
+def require_complete_task_evidence(suite_run_dir: Path) -> list[Path]:
+    """Return exact planned task directories only when every task finished cleanly."""
+
+    plan = load_json(suite_run_dir / "run-plan.json")
+    rows = plan.get("runs")
+    if not isinstance(rows, list):
+        raise EvaluationError("Benchmark run plan has no task inventory")
+    expected_ids = [str(row.get("run_id")) for row in rows if isinstance(row, dict)]
+    if len(expected_ids) != len(rows) or len(set(expected_ids)) != len(expected_ids):
+        raise EvaluationError("Benchmark run plan has invalid or duplicate task IDs")
+    runs_root = suite_run_dir / "runs"
+    run_dirs = (
+        sorted(path for path in runs_root.iterdir() if path.is_dir())
+        if runs_root.is_dir()
+        else []
+    )
+    observed: dict[str, Path] = {}
+    expected_rows = {str(row["run_id"]): row for row in rows}
+    expected_contract_hashes = plan.get("case_contract_hashes")
+    if not isinstance(expected_contract_hashes, dict) or set(expected_contract_hashes) != set(
+        expected_ids
+    ) or any(
+        not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in expected_contract_hashes.values()
+    ):
+        raise EvaluationError("Benchmark run plan has no exact case-contract inventory")
+    binding_fields = (
+        "pair_id",
+        "case_id",
+        "case_kind",
+        "skill",
+        "configuration",
+        "repetition",
+    )
+    for run_dir in run_dirs:
+        metadata_path = run_dir / "run_metadata.json"
+        if not metadata_path.is_file():
+            raise EvaluationError(f"Missing task metadata: {metadata_path}")
+        metadata = load_json(metadata_path)
+        run_id = metadata.get("run_id")
+        if not isinstance(run_id, str) or not run_id or run_id in observed:
+            raise EvaluationError(f"Invalid or duplicate task identity in {metadata_path}")
+        require_clean_task_execution(
+            metadata,
+            f"Task {run_dir.name}",
+            run_dir,
+            str(expected_contract_hashes.get(run_id)),
+        )
+        observed[run_id] = run_dir
+        expected = expected_rows.get(run_id)
+        if expected is None or any(
+            metadata.get(field) != expected.get(field) for field in binding_fields
+        ):
+            raise EvaluationError(f"Task {run_dir.name} does not match its run-plan row")
+        require_matching_context(
+            plan.get("execution_profile", {}),
+            plan.get("repository", {}),
+            metadata.get("execution_profile", {}),
+            metadata.get("repository", {}),
+            f"Task {run_dir.name}",
+        )
+    missing = sorted(set(expected_ids) - set(observed))
+    extra = sorted(set(observed) - set(expected_ids))
+    if missing or extra:
+        raise EvaluationError(
+            "Task evidence does not exactly match the run plan: "
+            f"missing={missing}, extra={extra}"
+        )
+    return [observed[run_id] for run_id in expected_ids]
 
 
 def require_matching_context(
@@ -412,6 +773,17 @@ def load_json(path: Path) -> dict[str, Any]:
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=False) + "\n", encoding="utf-8", newline="\n")
+
+
+def write_json_exclusive(path: Path, value: Any) -> None:
+    """Create a JSON receipt exactly once, refusing any replacement or race."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(value, indent=2, sort_keys=False) + "\n")
+    except FileExistsError as exc:
+        raise EvaluationError(f"Refusing to replace existing evidence: {path}") from exc
 
 
 def resolve_suite(path: Path | None = None) -> Path:
@@ -645,29 +1017,281 @@ class CommandResult:
     wall_clock_seconds: float
     stdout: str
     stderr: str
+    timed_out: bool = False
+    timeout_seconds: int | None = None
+    termination_method: str = "natural-exit"
+    termination_reason: str = "process-exit"
+    timeout_overrun_seconds: float = 0.0
+    terminal_event_count: int = 0
+    failed_terminal_event_count: int = 0
+    timeout_enforcement: str = CODEX_TIMEOUT_ENFORCEMENT_MODE
 
 
-def run_codex(command: list[str], prompt: str, timeout: int) -> CommandResult:
-    start = time.perf_counter()
+def execution_receipt_validation_errors(
+    receipt: Any, expected_timeout: int, label: str
+) -> list[str]:
+    """Validate the common deadline and terminal-state receipt for one model call."""
+
+    def value(key: str) -> Any:
+        return receipt.get(key) if isinstance(receipt, dict) else getattr(receipt, key, None)
+
+    errors: list[str] = []
+    if value("returncode") != 0:
+        errors.append(f"{label} exited {value('returncode')}")
+    if value("timeout_seconds") != expected_timeout:
+        errors.append(f"{label} timeout receipt does not match {expected_timeout}")
+    if value("timed_out") is not False:
+        errors.append(f"{label} timed out or is missing timeout status")
+    if value("termination_reason") != "process-exit":
+        errors.append(f"{label} did not record a clean process exit")
+    if value("termination_method") != "natural-exit":
+        errors.append(f"{label} did not terminate naturally")
+    overrun = value("timeout_overrun_seconds")
+    if isinstance(overrun, bool) or not isinstance(overrun, (int, float)) or overrun != 0:
+        errors.append(f"{label} has an invalid timeout-overrun receipt")
+    if value("terminal_event_count") != 1:
+        errors.append(f"{label} must contain exactly one turn.completed event")
+    if value("failed_terminal_event_count") != 0:
+        errors.append(f"{label} contains a failed terminal event")
+    if value("timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE:
+        errors.append(f"{label} has an unsupported timeout-enforcement receipt")
+    return errors
+
+
+def _windows_kill_on_close_job(process: subprocess.Popen[Any]) -> int:
+    """Assign a Windows process to a job that kills all descendants on close."""
+
+    import ctypes
+    from ctypes import wintypes
+
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        raise EvaluationError(
+            f"Cannot create Codex process job: Windows error {ctypes.get_last_error()}"
+        )
+    information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    information.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+    if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(information), ctypes.sizeof(information)):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(job)
+        raise EvaluationError(f"Cannot configure Codex process job: Windows error {error}")
+    if not kernel32.AssignProcessToJobObject(job, wintypes.HANDLE(int(process._handle))):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(job)
+        raise EvaluationError(f"Cannot assign Codex process job: Windows error {error}")
+    return int(job)
+
+
+def _windows_close_handle(handle: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return bool(kernel32.CloseHandle(wintypes.HANDLE(handle)))
+
+
+def _windows_resume_process(process: subprocess.Popen[Any]) -> None:
+    """Resume a process created suspended after it has entered the kill-on-close job."""
+
+    import ctypes
+    from ctypes import wintypes
+
+    ntdll = ctypes.WinDLL("ntdll", use_last_error=True)
+    ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+    ntdll.NtResumeProcess.restype = ctypes.c_long
+    status = ntdll.NtResumeProcess(wintypes.HANDLE(int(process._handle)))
+    if status != 0:
+        raise EvaluationError(f"Cannot resume Codex process after job assignment: NTSTATUS {status}")
+
+
+def _terminate_process_tree(
+    process: subprocess.Popen[Any], windows_job: int | None = None
+) -> str:
+    """Force-stop one evaluation process tree after its deadline."""
+
+    method = CODEX_TIMEOUT_TERMINATION_MODE
+    if os.name == "nt":
+        if windows_job is None or not _windows_close_handle(windows_job):
+            if process.poll() is None:
+                process.kill()
+            method = "direct-process-kill-fallback"
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            if process.poll() is None:
+                process.kill()
+            method = "direct-process-kill-fallback"
     try:
-        process = subprocess.run(
+        process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=30)
+        method = "direct-process-kill-fallback"
+    return method
+
+
+def run_codex(
+    command: list[str],
+    prompt: str,
+    timeout: int,
+    environment: dict[str, str] | None = None,
+) -> CommandResult:
+    start = time.perf_counter()
+    process_options: dict[str, Any] = {}
+    if os.name == "nt":
+        process_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004
+    else:
+        process_options["start_new_session"] = True
+    with tempfile.TemporaryFile(mode="w+b") as stdout_file, tempfile.TemporaryFile(
+        mode="w+b"
+    ) as stderr_file:
+        process = subprocess.Popen(
             command,
-            input=prompt,
+            stdin=subprocess.PIPE,
+            stdout=stdout_file,
+            stderr=stderr_file,
             text=True,
             encoding="utf-8",
             errors="replace",
-            capture_output=True,
-            check=False,
-            timeout=timeout,
+            env=environment,
+            **process_options,
         )
-    except subprocess.TimeoutExpired as exc:
-        elapsed = time.perf_counter() - start
-        return CommandResult(124, elapsed, exc.stdout or "", exc.stderr or "Timed out")
+        windows_job: int | None = None
+        if os.name == "nt":
+            try:
+                windows_job = _windows_kill_on_close_job(process)
+                _windows_resume_process(process)
+            except EvaluationError:
+                if windows_job is not None:
+                    _windows_close_handle(windows_job)
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=30)
+                raise
+        timed_out = False
+        termination_method = "natural-exit"
+        try:
+            process.communicate(prompt, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            termination_method = _terminate_process_tree(process, windows_job)
+            windows_job = None
+            try:
+                process.communicate(timeout=30)
+            except (subprocess.TimeoutExpired, ValueError):
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=30)
+                termination_method = "direct-process-kill-fallback"
+        if windows_job is not None:
+            if not _windows_close_handle(windows_job):
+                raise EvaluationError("Cannot close the Codex process job cleanly")
+        stdout_file.flush()
+        stderr_file.flush()
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read().decode("utf-8", errors="replace")
+        stderr = stderr_file.read().decode("utf-8", errors="replace")
+    elapsed = time.perf_counter() - start
+    terminal_event_count = 0
+    failed_terminal_event_count = 0
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "turn.completed":
+            terminal_event_count += 1
+        if isinstance(event, dict) and event.get("type") in {
+            "turn.failed",
+            "turn.cancelled",
+            "turn.interrupted",
+        }:
+            failed_terminal_event_count += 1
+    if timed_out:
+        timeout_message = (
+            f"Evaluation timed out after {timeout} seconds; "
+            f"termination_method={termination_method}"
+        )
+        stderr = f"{stderr.rstrip()}\n{timeout_message}\n" if stderr else f"{timeout_message}\n"
+        return CommandResult(
+            124,
+            elapsed,
+            stdout,
+            stderr,
+            timed_out=True,
+            timeout_seconds=timeout,
+            termination_method=termination_method,
+            termination_reason="timeout",
+            timeout_overrun_seconds=max(0.0, elapsed - timeout),
+            terminal_event_count=terminal_event_count,
+            failed_terminal_event_count=failed_terminal_event_count,
+            timeout_enforcement=CODEX_TIMEOUT_ENFORCEMENT_MODE,
+        )
     return CommandResult(
-        process.returncode,
-        time.perf_counter() - start,
-        process.stdout,
-        process.stderr,
+        int(process.returncode or 0),
+        elapsed,
+        stdout,
+        stderr,
+        timed_out=False,
+        timeout_seconds=timeout,
+        termination_method=termination_method,
+        termination_reason="process-exit",
+        timeout_overrun_seconds=0.0,
+        terminal_event_count=terminal_event_count,
+        failed_terminal_event_count=failed_terminal_event_count,
+        timeout_enforcement=CODEX_TIMEOUT_ENFORCEMENT_MODE,
     )
 
 

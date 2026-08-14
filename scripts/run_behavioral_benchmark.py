@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from evaluation_common import (
+    CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
     DEFAULT_RUNS_ROOT,
     DEFAULT_THRESHOLDS,
     EVAL_ROOT,
@@ -29,11 +30,16 @@ from evaluation_common import (
     TASK_SKILL_BODY_READ_GUARD,
     baseline_contamination_paths,
     build_run_plan,
+    canonical_json_sha256,
+    case_contract_document,
     codex_execution_profile,
     codex_base_command,
+    codex_runtime_command,
+    codex_runtime_environment,
     configured_repetitions,
     directory_sha256,
     file_sha256,
+    execution_receipt_validation_errors,
     find_codex_command,
     load_json,
     normalize_suite,
@@ -44,6 +50,7 @@ from evaluation_common import (
     run_codex,
     safe_copy_fixture,
     suite_fixture,
+    task_evidence_receipt,
     timestamp_id,
     token_usage_from_jsonl,
     tracked_directory_sha256,
@@ -214,7 +221,6 @@ def run_one(
     suite_run_dir: Path,
     run: dict[str, Any],
     fixture: Path,
-    codex_command: str,
     execution_profile: dict[str, Any],
     repo_receipt: dict[str, Any],
     timeout: int,
@@ -230,9 +236,11 @@ def run_one(
     output_path = run_dir / "task-output.json"
     transcript_path = run_dir / "transcript.jsonl"
     stderr_path = run_dir / "stderr.txt"
+    contract_path = run_dir / "case_contract.json"
+    write_json(contract_path, case_contract_document(run))
     prompt = task_prompt(run)
     command = codex_base_command(
-        codex_command,
+        codex_runtime_command(execution_profile),
         cwd=workspace,
         sandbox="workspace-write",
         output_schema=TASK_SCHEMA,
@@ -241,17 +249,21 @@ def run_one(
         reasoning_effort=execution_profile["reasoning_effort"],
     )
     started_at = utc_now()
-    result = run_codex(command, prompt, timeout=timeout)
+    result = run_codex(
+        command,
+        prompt,
+        timeout=timeout,
+        environment=codex_runtime_environment(execution_profile),
+    )
     completed_at = utc_now()
     require_unchanged_repository(repo_receipt)
     transcript_path.write_text(result.stdout, encoding="utf-8", newline="\n")
     stderr_path.write_text(result.stderr, encoding="utf-8", newline="\n")
-    validation_errors: list[str] = []
-    if result.returncode != 0:
-        validation_errors.append(f"task exited {result.returncode}")
+    validation_errors = execution_receipt_validation_errors(result, timeout, "task")
     if not output_path.is_file():
         validation_errors.append("task-output.json was not produced")
     validation_errors.extend(skill_body_read_violations(result.stdout, run))
+    task_evidence = task_evidence_receipt(run_dir)
     metadata = {
         **{key: value for key, value in run.items() if key not in {"prompt", "assertions"}},
         "started_at": started_at,
@@ -259,6 +271,14 @@ def run_one(
         "returncode": result.returncode,
         "validation_errors": validation_errors,
         "wall_clock_seconds": result.wall_clock_seconds,
+        "timeout_seconds": timeout,
+        "timed_out": result.timed_out,
+        "termination_method": result.termination_method,
+        "termination_reason": result.termination_reason,
+        "timeout_overrun_seconds": result.timeout_overrun_seconds,
+        "terminal_event_count": result.terminal_event_count,
+        "failed_terminal_event_count": result.failed_terminal_event_count,
+        "timeout_enforcement": result.timeout_enforcement,
         "token_usage": token_usage_from_jsonl(result.stdout),
         "storage_id": storage_id,
         "execution_profile": execution_profile,
@@ -276,9 +296,9 @@ def run_one(
             "skill_body_read_guard": TASK_SKILL_BODY_READ_GUARD,
         },
         "skill_loader_diagnostics": skill_loader_diagnostics(result.stderr),
+        "task_evidence": task_evidence,
     }
     write_json(run_dir / "run_metadata.json", metadata)
-    write_json(run_dir / "case_contract.json", {"prompt": run["prompt"], "assertions": run["assertions"]})
     return metadata
 
 
@@ -298,7 +318,12 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codex-command", help="Codex CLI executable name or path")
     parser.add_argument("--model", help="Model shared by every configuration; required with --execute")
     parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS, help="Reasoning effort shared by every configuration")
-    parser.add_argument("--timeout", type=int, default=1800, help="Seconds allowed per run")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+        help="Seconds allowed per run",
+    )
     parser.add_argument("--allow-baseline-contamination", action="store_true")
     parser.add_argument("--allow-tracked-output", action="store_true")
     return parser
@@ -344,6 +369,7 @@ def main() -> int:
             "repetitions": repetitions,
             "run_count": len(plan),
             "pair_count": len({run["pair_id"] for run in plan}),
+            "timeout_seconds": args.timeout,
             "configurations": configurations,
             "baseline_contamination_risk": contamination,
             "skill_hashes": skill_hashes,
@@ -351,6 +377,10 @@ def main() -> int:
                 "benchmark_suite_sha256": file_sha256(suite_path),
                 "thresholds_sha256": file_sha256(args.thresholds),
                 "fixture_sha256": hash_directory(fixture),
+            },
+            "case_contract_hashes": {
+                run["run_id"]: canonical_json_sha256(case_contract_document(run))
+                for run in plan
             },
             "execution_profile": {"model": args.model, "reasoning_effort": args.reasoning_effort},
         }
@@ -361,6 +391,10 @@ def main() -> int:
                     {key: value for key, value in run.items() if key not in {"prompt", "assertions"}}
                     for run in plan
                 ]
+            else:
+                printable["case_contract_hash_count"] = len(
+                    printable.pop("case_contract_hashes")
+                )
             print(json.dumps(printable, indent=2))
             return 0
         if "without_skill" in configurations and contamination and not args.allow_baseline_contamination:
@@ -408,18 +442,18 @@ def main() -> int:
         completed = []
         for index, run in enumerate(plan, 1):
             print(f"[{index}/{len(plan)}] {run['run_id']}", flush=True)
-            completed.append(
-                run_one(
-                    suite_run_dir,
-                    run,
-                    fixture,
-                    codex_command,
-                    execution_profile,
-                    repo_receipt,
-                    args.timeout,
-                    physical_run_id(index, len(plan)),
-                )
+            metadata = run_one(
+                suite_run_dir,
+                run,
+                fixture,
+                execution_profile,
+                repo_receipt,
+                args.timeout,
+                physical_run_id(index, len(plan)),
             )
+            completed.append(metadata)
+            if metadata.get("validation_errors"):
+                break
         require_unchanged_repository(repo_receipt)
         failed = [item for item in completed if item.get("validation_errors")]
         write_json(

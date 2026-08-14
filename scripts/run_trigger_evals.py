@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from evaluation_common import (
+    CANONICAL_TRIGGER_TIMEOUT_SECONDS,
     DEFAULT_TRIGGERS,
     EVAL_ROOT,
     EvaluationError,
@@ -22,8 +23,11 @@ from evaluation_common import (
     baseline_contamination_paths,
     codex_execution_profile,
     codex_base_command,
+    codex_runtime_command,
+    codex_runtime_environment,
     directory_sha256,
     file_sha256,
+    execution_receipt_validation_errors,
     find_codex_command,
     load_json,
     parse_skill_description,
@@ -136,9 +140,14 @@ def body_proven_activation(
     )
 
 
-def run_trigger_prediction(command: list[str], query: str, timeout: int) -> Any:
+def run_trigger_prediction(
+    command: list[str],
+    query: str,
+    timeout: int,
+    environment: dict[str, str] | None = None,
+) -> Any:
     """Run one prediction through the versioned, candidate-neutral prompt contract."""
-    return run_codex(command, trigger_task_prompt(query), timeout)
+    return run_codex(command, trigger_task_prompt(query), timeout, environment=environment)
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -154,7 +163,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codex-command")
     parser.add_argument("--model")
     parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS)
-    parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--timeout", type=int, default=CANONICAL_TRIGGER_TIMEOUT_SECONDS)
     parser.add_argument("--allow-tracked-output", action="store_true")
     return parser
 
@@ -187,6 +196,7 @@ def main() -> int:
             "cases": len({item["case_id"] for item in plan}),
             "repetitions": repetitions,
             "observation_count": len(plan),
+            "timeout_seconds": args.timeout,
             "skill_hashes": skill_hashes,
             "contract_hashes": {"trigger_suite_sha256": file_sha256(args.suite)},
             "execution_profile": {"model": args.model, "reasoning_effort": args.reasoning_effort},
@@ -230,7 +240,7 @@ def main() -> int:
                 marker = install_sentinel_skill(workspace, case)
                 require_unchanged_repository(repo_receipt)
                 command = codex_base_command(
-                    command_name,
+                    codex_runtime_command(execution_profile),
                     workspace,
                     "read-only",
                     TRIGGER_SCHEMA,
@@ -238,12 +248,17 @@ def main() -> int:
                     execution_profile["model"],
                     execution_profile["reasoning_effort"],
                 )
-                result = run_trigger_prediction(command, case["query"], args.timeout)
+                result = run_trigger_prediction(
+                    command,
+                    case["query"],
+                    args.timeout,
+                    environment=codex_runtime_environment(execution_profile),
+                )
             require_unchanged_repository(repo_receipt)
             (observation_dir / "transcript.jsonl").write_text(result.stdout, encoding="utf-8", newline="\n")
-            validation_errors: list[str] = []
-            if result.returncode != 0:
-                validation_errors.append(f"trigger prediction exited {result.returncode}")
+            validation_errors = execution_receipt_validation_errors(
+                result, args.timeout, "trigger prediction"
+            )
             if not output_path.is_file():
                 validation_errors.append("prediction.json was not produced")
             prediction = load_json(output_path) if not validation_errors else {}
@@ -263,6 +278,14 @@ def main() -> int:
                 "returncode": result.returncode,
                 "validation_errors": validation_errors,
                 "wall_clock_seconds": result.wall_clock_seconds,
+                "timeout_seconds": args.timeout,
+                "timed_out": result.timed_out,
+                "termination_method": result.termination_method,
+                "termination_reason": result.termination_reason,
+                "timeout_overrun_seconds": result.timeout_overrun_seconds,
+                "terminal_event_count": result.terminal_event_count,
+                "failed_terminal_event_count": result.failed_terminal_event_count,
+                "timeout_enforcement": result.timeout_enforcement,
                 "token_usage": token_usage_from_jsonl(result.stdout),
                 "execution_profile": execution_profile,
                 "repository": repo_receipt,
@@ -271,6 +294,7 @@ def main() -> int:
             observations.append(observation)
             if validation_errors:
                 failed.append(case["observation_id"])
+                break
         require_unchanged_repository(repo_receipt)
         result_doc = {
             "schema_version": "1.0",
@@ -280,6 +304,7 @@ def main() -> int:
             "contract_hashes": summary["contract_hashes"],
             "execution_profile": execution_profile,
             "repository": repo_receipt,
+            "timeout_seconds": args.timeout,
             "observations": observations,
             "metrics": summarize(observations),
             "failed_observations": failed,

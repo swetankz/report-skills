@@ -4,31 +4,69 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from evaluation_common import (
+    CANONICAL_GRADER_TIMEOUT_SECONDS,
     EVAL_ROOT,
     EvaluationError,
     REASONING_EFFORTS,
     codex_execution_profile,
     codex_base_command,
+    codex_runtime_command,
+    codex_runtime_environment,
+    directory_sha256,
     find_codex_command,
+    execution_receipt_validation_errors,
+    file_sha256,
     load_json,
     repository_receipt,
     require_matching_context,
+    require_complete_task_evidence,
+    require_clean_stage_execution,
     require_pinned_profile,
     require_unchanged_repository,
     run_codex,
     token_usage_from_jsonl,
     utc_now,
     write_json,
+    write_json_exclusive,
 )
 
 
 GRADE_SCHEMA = EVAL_ROOT / "schemas" / "grading-output.schema.json"
+GRADER_ATTEMPT_SCHEMA_VERSION = "1.0"
+
+
+def grader_input_sha256(run_dir: Path) -> str:
+    """Hash every task artifact visible to the evidence-bound grader."""
+
+    required = (
+        run_dir / "task-output.json",
+        run_dir / "transcript.jsonl",
+        run_dir / "stderr.txt",
+        run_dir / "case_contract.json",
+    )
+    missing = [path.name for path in required if not path.is_file()]
+    if missing or not (run_dir / "workspace").is_dir():
+        raise EvaluationError(
+            f"Incomplete grader inputs for {run_dir.name}: missing={missing}, "
+            f"workspace={bool((run_dir / 'workspace').is_dir())}"
+        )
+    inputs = {
+        "task-output.json": file_sha256(run_dir / "task-output.json"),
+        "transcript.jsonl": file_sha256(run_dir / "transcript.jsonl"),
+        "stderr.txt": file_sha256(run_dir / "stderr.txt"),
+        "case_contract.json": file_sha256(run_dir / "case_contract.json"),
+        "workspace": directory_sha256(run_dir / "workspace"),
+    }
+    payload = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def discover_runs(suite_run_dir: Path) -> list[Path]:
@@ -67,13 +105,78 @@ Rules:
 
 
 def validate_grade(grade: dict[str, Any], contract: dict[str, Any]) -> list[str]:
+    """Revalidate a persisted grade without trusting model-output schema enforcement."""
+
     errors: list[str] = []
-    assertions = contract.get("assertions", [])
-    expected = {item["assertion_id"]: item for item in assertions}
-    observed_items = grade.get("expectations", [])
-    observed = {item.get("assertion_id"): item for item in observed_items if isinstance(item, dict)}
-    if set(observed) != set(expected):
-        errors.append(f"assertion coverage mismatch: expected {sorted(expected)}, got {sorted(observed)}")
+    expected_root_keys = {
+        "expectations",
+        "summary",
+        "integrity_events",
+        "unauthorized_external_mutations",
+        "notes",
+    }
+    if set(grade) != expected_root_keys:
+        errors.append(
+            f"grade fields mismatch: expected {sorted(expected_root_keys)}, got {sorted(grade)}"
+        )
+    assertions = contract.get("assertions")
+    if not isinstance(assertions, list):
+        return [*errors, "case contract assertions must be a list"]
+    expected_ids: list[str] = []
+    expected: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(assertions):
+        if not isinstance(item, dict) or not isinstance(item.get("assertion_id"), str):
+            errors.append(f"case contract assertion {index} is malformed")
+            continue
+        assertion_id = item["assertion_id"]
+        expected_ids.append(assertion_id)
+        expected[assertion_id] = item
+    duplicate_expected = sorted(
+        assertion_id
+        for assertion_id, count in Counter(expected_ids).items()
+        if count > 1
+    )
+    if duplicate_expected:
+        errors.append(f"case contract has duplicate assertion IDs: {duplicate_expected}")
+
+    observed_items = grade.get("expectations")
+    if not isinstance(observed_items, list):
+        return [*errors, "expectations must be a list"]
+    observed_ids: list[str] = []
+    observed: dict[str, dict[str, Any]] = {}
+    expected_expectation_keys = {"assertion_id", "text", "passed", "evidence"}
+    for index, item in enumerate(observed_items):
+        if not isinstance(item, dict):
+            errors.append(f"expectations[{index}] must be an object")
+            continue
+        if set(item) != expected_expectation_keys:
+            errors.append(f"expectations[{index}] fields mismatch")
+        assertion_id = item.get("assertion_id")
+        if not isinstance(assertion_id, str) or not assertion_id:
+            errors.append(f"expectations[{index}] has no assertion_id")
+            continue
+        observed_ids.append(assertion_id)
+        observed[assertion_id] = item
+        expected_item = expected.get(assertion_id)
+        if expected_item is not None and item.get("text") != expected_item.get("text"):
+            errors.append(f"{assertion_id}: text does not match the case contract")
+        if not isinstance(item.get("passed"), bool):
+            errors.append(f"{assertion_id}: passed must be boolean")
+        if not isinstance(item.get("evidence"), str) or not item["evidence"].strip():
+            errors.append(f"{assertion_id}: evidence must not be empty")
+    duplicate_observed = sorted(
+        assertion_id
+        for assertion_id, count in Counter(observed_ids).items()
+        if count > 1
+    )
+    if duplicate_observed:
+        errors.append(f"duplicate assertion IDs: {duplicate_observed}")
+    if set(observed_ids) != set(expected):
+        errors.append(
+            f"assertion coverage mismatch: expected {sorted(expected)}, "
+            f"got {sorted(set(observed_ids))}"
+        )
+
     calculated_score = sum(
         float(expected[assertion_id]["weight"])
         for assertion_id, item in observed.items()
@@ -84,7 +187,12 @@ def validate_grade(grade: dict[str, Any], contract: dict[str, Any]) -> list[str]
         for assertion_id, item in observed.items()
         if assertion_id in expected and item.get("passed") is False and expected[assertion_id].get("blocking") is True
     )
-    summary = grade.get("summary", {})
+    summary = grade.get("summary")
+    summary_keys = {"passed", "failed", "score", "blocking_failures"}
+    if not isinstance(summary, dict):
+        return [*errors, "summary must be an object"]
+    if set(summary) != summary_keys:
+        errors.append("summary fields mismatch")
     calculated_passed = sum(item.get("passed") is True for item in observed.values())
     calculated_failed = sum(item.get("passed") is False for item in observed.values())
     if summary.get("passed") != calculated_passed or summary.get("failed") != calculated_failed:
@@ -93,15 +201,112 @@ def validate_grade(grade: dict[str, Any], contract: dict[str, Any]) -> list[str]
             f"expected {calculated_passed}/{calculated_failed}, "
             f"got {summary.get('passed')}/{summary.get('failed')}"
         )
-    if abs(float(summary.get("score", -1)) - calculated_score) > 0.01:
-        errors.append(f"score mismatch: expected {calculated_score:g}, got {summary.get('score')}")
+    score = summary.get("score")
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        errors.append("summary score must be numeric")
+    elif not 0 <= float(score) <= 100 or abs(float(score) - calculated_score) > 0.01:
+        errors.append(f"score mismatch: expected {calculated_score:g}, got {score}")
     if summary.get("blocking_failures") != calculated_blocking:
         errors.append(
             f"blocking failure mismatch: expected {calculated_blocking}, got {summary.get('blocking_failures')}"
         )
-    for assertion_id, item in observed.items():
-        if not str(item.get("evidence", "")).strip():
-            errors.append(f"{assertion_id}: evidence must not be empty")
+    for key in ("passed", "failed", "blocking_failures"):
+        value = summary.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            errors.append(f"summary {key} must be a nonnegative integer")
+    structured_lists = {
+        "integrity_events": {"type", "evidence"},
+        "unauthorized_external_mutations": {"target", "evidence"},
+    }
+    for key, item_keys in structured_lists.items():
+        value = grade.get(key)
+        if not isinstance(value, list):
+            errors.append(f"{key} must be a list")
+            continue
+        for index, item in enumerate(value):
+            if (
+                not isinstance(item, dict)
+                or set(item) != item_keys
+                or any(not isinstance(item.get(field), str) for field in item_keys)
+            ):
+                errors.append(f"{key}[{index}] is malformed")
+    notes = grade.get("notes")
+    if not isinstance(notes, list) or any(not isinstance(item, str) for item in notes):
+        errors.append("notes must be a list of strings")
+    return errors
+
+
+def validate_grader_attempt_binding(
+    attempt: dict[str, Any],
+    grader_metadata: dict[str, Any],
+    task_metadata: dict[str, Any],
+    storage_id: str,
+) -> list[str]:
+    """Bind a single durable grader attempt to its task and final receipt."""
+
+    errors: list[str] = []
+    expected = {
+        "schema_version": GRADER_ATTEMPT_SCHEMA_VERSION,
+        "stage": "grader",
+        "attempt_number": 1,
+        "attempt_id": f"grader:{task_metadata.get('run_id')}:attempt-01",
+        "run_id": task_metadata.get("run_id"),
+        "storage_id": storage_id,
+        "case_id": task_metadata.get("case_id"),
+        "timeout_seconds": CANONICAL_GRADER_TIMEOUT_SECONDS,
+    }
+    for key, value in expected.items():
+        if attempt.get(key) != value:
+            errors.append(f"grader attempt {key} mismatch")
+    started_at = attempt.get("started_at")
+    if not isinstance(started_at, str) or not started_at.strip():
+        errors.append("grader attempt has no started_at")
+    metadata_expected = {
+        "run_id": task_metadata.get("run_id"),
+        "storage_id": storage_id,
+        "case_id": task_metadata.get("case_id"),
+        "attempt_number": 1,
+        "attempt_id": attempt.get("attempt_id"),
+        "attempt_started_at": started_at,
+        "grader_input_sha256": attempt.get("grader_input_sha256"),
+    }
+    for key, value in metadata_expected.items():
+        if grader_metadata.get(key) != value:
+            errors.append(f"grader metadata {key} mismatch")
+    if attempt.get("execution_profile") != grader_metadata.get("execution_profile"):
+        errors.append("grader attempt execution profile mismatch")
+    if attempt.get("repository") != grader_metadata.get("repository"):
+        errors.append("grader attempt repository receipt mismatch")
+    return errors
+
+
+def validate_grader_output_binding(
+    grader_metadata: dict[str, Any],
+    grade_path: Path,
+    contract_path: Path,
+    attempt_path: Path,
+    run_dir: Path,
+) -> list[str]:
+    """Verify that grader metadata binds the exact grade and contract bytes."""
+
+    errors: list[str] = []
+    for key, path in (
+        ("grade_sha256", grade_path),
+        ("case_contract_sha256", contract_path),
+        ("grader_attempt_sha256", attempt_path),
+    ):
+        if not path.is_file():
+            errors.append(f"missing {path.name}")
+            continue
+        if grader_metadata.get(key) != file_sha256(path):
+            errors.append(f"grader metadata {key} mismatch")
+    try:
+        actual_input_hash = grader_input_sha256(run_dir)
+    except (EvaluationError, OSError) as exc:
+        errors.append(f"cannot hash grader inputs: {exc}")
+    else:
+        if grader_metadata.get("grader_input_sha256") != actual_input_hash:
+            errors.append("grader metadata grader_input_sha256 mismatch")
     return errors
 
 
@@ -113,7 +318,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codex-command")
     parser.add_argument("--model")
     parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS)
-    parser.add_argument("--timeout", type=int, default=1200)
+    parser.add_argument("--timeout", type=int, default=CANONICAL_GRADER_TIMEOUT_SECONDS)
     parser.add_argument("--overwrite", action="store_true")
     return parser
 
@@ -123,17 +328,73 @@ def main() -> int:
     if args.execute and args.dry_run:
         raise SystemExit("Choose either --dry-run or --execute, not both")
     try:
+        if args.overwrite:
+            raise EvaluationError(
+                "--overwrite is not allowed for evidence-bound grading; use a fresh benchmark run"
+            )
         require_pinned_profile(args.execute, args.model, args.reasoning_effort)
         suite_run_dir = args.run_dir.resolve()
-        runs = discover_runs(suite_run_dir)
+        runs = require_complete_task_evidence(suite_run_dir)
         if not runs:
             raise EvaluationError(f"No benchmark runs found in {suite_run_dir / 'runs'}")
-        pending = [path for path in runs if args.overwrite or not (path / "grading.json").is_file()]
+        pending: list[Path] = []
+        existing: list[tuple[Path, dict[str, Any]]] = []
+        for run_dir in runs:
+            grade_path = run_dir / "grading.json"
+            metadata_path = run_dir / "grader_metadata.json"
+            attempt_path = run_dir / "grader_attempt.json"
+            transcript_path = run_dir / "grader-transcript.jsonl"
+            stderr_path = run_dir / "grader-stderr.txt"
+            stage_paths = (
+                grade_path,
+                metadata_path,
+                attempt_path,
+                transcript_path,
+                stderr_path,
+            )
+            present = [path.is_file() for path in stage_paths]
+            if any(present) and not all(present):
+                raise EvaluationError(
+                    f"Partial grading evidence exists for {run_dir.name}; use a fresh benchmark run"
+                )
+            if not any(present):
+                pending.append(run_dir)
+                continue
+            task_metadata = load_json(run_dir / "run_metadata.json")
+            grader_metadata = load_json(metadata_path)
+            require_clean_stage_execution(
+                grader_metadata, CANONICAL_GRADER_TIMEOUT_SECONDS, f"Grader {run_dir.name}"
+            )
+            attempt_errors = validate_grader_attempt_binding(
+                load_json(attempt_path), grader_metadata, task_metadata, run_dir.name
+            )
+            attempt_errors.extend(
+                validate_grader_output_binding(
+                    grader_metadata,
+                    grade_path,
+                    run_dir / "case_contract.json",
+                    attempt_path,
+                    run_dir,
+                )
+            )
+            if attempt_errors:
+                raise EvaluationError(
+                    f"Existing grader attempt for {run_dir.name} is invalid: {attempt_errors}"
+                )
+            grade_errors = validate_grade(
+                load_json(grade_path), load_json(run_dir / "case_contract.json")
+            )
+            if grade_errors:
+                raise EvaluationError(
+                    f"Existing grade for {run_dir.name} is invalid: {grade_errors}"
+                )
+            existing.append((run_dir, grader_metadata))
         plan = {
             "suite_run_dir": str(suite_run_dir),
             "mode": "execute" if args.execute else "dry-run",
             "total_runs": len(runs),
             "pending_grades": len(pending),
+            "timeout_seconds": args.timeout,
             "run_ids": [path.name for path in pending],
         }
         if not args.execute:
@@ -152,6 +413,14 @@ def main() -> int:
             repo_receipt,
             "Grading",
         )
+        for run_dir, grader_metadata in existing:
+            require_matching_context(
+                execution_profile,
+                repo_receipt,
+                grader_metadata.get("execution_profile", {}),
+                grader_metadata.get("repository", {}),
+                f"Existing grader {run_dir.name}",
+            )
         failed: list[str] = []
         for index, run_dir in enumerate(pending, 1):
             print(f"[{index}/{len(pending)}] grade {run_dir.name}", flush=True)
@@ -166,8 +435,29 @@ def main() -> int:
             )
             contract = load_json(run_dir / "case_contract.json")
             grade_path = run_dir / "grading.json"
+            attempt_started_at = utc_now()
+            attempt_path = run_dir / "grader_attempt.json"
+            input_hash = grader_input_sha256(run_dir)
+            attempt_id = f"grader:{metadata.get('run_id')}:attempt-01"
+            write_json_exclusive(
+                attempt_path,
+                {
+                    "schema_version": GRADER_ATTEMPT_SCHEMA_VERSION,
+                    "stage": "grader",
+                    "attempt_number": 1,
+                    "attempt_id": attempt_id,
+                    "run_id": metadata.get("run_id"),
+                    "storage_id": run_dir.name,
+                    "case_id": metadata.get("case_id"),
+                    "started_at": attempt_started_at,
+                    "timeout_seconds": args.timeout,
+                    "grader_input_sha256": input_hash,
+                    "execution_profile": execution_profile,
+                    "repository": repo_receipt,
+                },
+            )
             command = codex_base_command(
-                command_name,
+                codex_runtime_command(execution_profile),
                 cwd=run_dir,
                 sandbox="read-only",
                 output_schema=GRADE_SCHEMA,
@@ -176,14 +466,21 @@ def main() -> int:
                 reasoning_effort=execution_profile["reasoning_effort"],
             )
             require_unchanged_repository(repo_receipt)
-            result = run_codex(command, grader_prompt(run_dir, metadata, contract), args.timeout)
+            result = run_codex(
+                command,
+                grader_prompt(run_dir, metadata, contract),
+                args.timeout,
+                environment=codex_runtime_environment(execution_profile),
+            )
             require_unchanged_repository(repo_receipt)
             (run_dir / "grader-transcript.jsonl").write_text(result.stdout, encoding="utf-8", newline="\n")
             (run_dir / "grader-stderr.txt").write_text(result.stderr, encoding="utf-8", newline="\n")
-            grade_errors: list[str] = []
-            if result.returncode != 0 or not grade_path.is_file():
-                grade_errors.append(f"grader exited {result.returncode}")
-            else:
+            grade_errors = execution_receipt_validation_errors(
+                result, args.timeout, "grader"
+            )
+            if not grade_path.is_file():
+                grade_errors.append("grading.json was not produced")
+            elif not grade_errors:
                 try:
                     grade_errors.extend(validate_grade(load_json(grade_path), contract))
                 except EvaluationError as exc:
@@ -191,17 +488,36 @@ def main() -> int:
             write_json(
                 run_dir / "grader_metadata.json",
                 {
+                    "run_id": metadata.get("run_id"),
+                    "storage_id": run_dir.name,
+                    "case_id": metadata.get("case_id"),
+                    "attempt_number": 1,
+                    "attempt_id": attempt_id,
+                    "attempt_started_at": attempt_started_at,
                     "graded_at": utc_now(),
                     "returncode": result.returncode,
                     "wall_clock_seconds": result.wall_clock_seconds,
+                    "timeout_seconds": args.timeout,
+                    "timed_out": result.timed_out,
+                    "termination_method": result.termination_method,
+                    "termination_reason": result.termination_reason,
+                    "timeout_overrun_seconds": result.timeout_overrun_seconds,
+                    "terminal_event_count": result.terminal_event_count,
+                    "failed_terminal_event_count": result.failed_terminal_event_count,
+                    "timeout_enforcement": result.timeout_enforcement,
                     "token_usage": token_usage_from_jsonl(result.stdout),
                     "validation_errors": grade_errors,
+                    "grade_sha256": file_sha256(grade_path) if grade_path.is_file() else None,
+                    "case_contract_sha256": file_sha256(run_dir / "case_contract.json"),
+                    "grader_attempt_sha256": file_sha256(attempt_path),
+                    "grader_input_sha256": input_hash,
                     "execution_profile": execution_profile,
                     "repository": repo_receipt,
                 },
             )
             if grade_errors:
                 failed.append(run_dir.name)
+                break
         require_unchanged_repository(repo_receipt)
         print(f"Grading complete; invalid or failed grades: {len(failed)}")
         return 1 if failed else 0

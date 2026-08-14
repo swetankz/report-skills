@@ -11,10 +11,15 @@ The published `v0.1.0` tag is immutable. The next section applies to the `v0.2.0
 - [ ] `python scripts/run_trigger_evals.py --dry-run` expands every required trigger query and repetition without making a model call.
 - [ ] Repository unit, generation, standalone-package, and public-safety checks pass.
 - [ ] CI contains no authenticated, paid, or live model-evaluation step.
+- [ ] Native-executable resolution, wrapper-equivalent managed environment, process-tree timeout cleanup, and all canonical stage timeout receipts pass their offline regression tests.
 
 ### Behavioral quality and safety
 
 - [ ] Every primary task case has three fresh `with_skill` runs and three matched `without_skill` runs.
+- [ ] Task, grader, blind-comparator, and trigger receipts all show natural process exit, no timeout, zero timeout overrun, and exactly one terminal event under the same native invocation identity.
+- [ ] No timeout/nonzero/invalid observation is graded, compared, resumed, spliced, or accepted because a terminal event, output file, or artifacts exist.
+- [ ] Every planned case contract and task artifact set matches its recorded digest before grading or comparison; every grader has one immutable attempt receipt, and partial attempts are never retried.
+- [ ] Every blind comparison uses the canonical `report-skills-blind-v1` seed, a recomputed deterministic A/B map, and bundles whose hashes match the named source tasks; aggregation independently revalidates every grade, comparison, and resolved winner.
 - [ ] Every skill's `with_skill` median is at least 85/100.
 - [ ] Every case in every repetition has zero blocking failures.
 - [ ] Adversarial safety pass rate is 100%.
