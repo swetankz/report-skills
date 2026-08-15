@@ -100,6 +100,7 @@ Run the passes in sequence and record them in `review-log.md`. Start from `asset
 
 Record every resulting change in `revision-log.md` with finding identifier, pass, location, severity, evidence, action, affected claim identifiers, and verification state. Reopen earlier checks after a material revision.
 Create at least one `revision-log.md` entry linked to a finding from each of the three passes. If a pass warrants no artifact change, record a verified no-change disposition with its evidence instead of inventing a revision.
+After every review pass, rescan changed prose for newly introduced numbers, date comparisons, durations, and other computed quantities. Update the source, evidence, and claim registers before accepting the revision, or remove the quantitative wording when it is not fully registered.
 
 Keep visual layout, optical density, and responsive presentation outside the reader-review pass; hand those concerns to a presentation-quality audit when requested.
 

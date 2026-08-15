@@ -157,6 +157,45 @@ class ToolingTests(unittest.TestCase):
             for instruction in required_instructions:
                 self.assertIn(instruction, text)
 
+    def test_evidence_report_registers_derived_quantities_from_reviews(self) -> None:
+        evidence_instructions = (
+            (
+                "Treat every computed or comparative number as a quantitative claim, including "
+                "totals, rates, ranges, differences, durations, date intervals, and relative-time "
+                "statements."
+            ),
+            (
+                "This rule also applies to quantitative wording introduced during any review "
+                "or revision."
+            ),
+            (
+                "Before the wording enters the draft, register every input under source and "
+                "evidence identifiers and record the reproducible calculation with an explicit "
+                "unit, population (use `not applicable` only when genuinely inapplicable), and period."
+            ),
+            (
+                "Otherwise omit the number or retain it only as an unresolved blocker without "
+                "asserting it."
+            ),
+        )
+        for path in (
+            REPO_ROOT / "source" / "skills" / "evidence-first-report" / "references" / "evidence-model.md",
+            REPO_ROOT / "skills" / "evidence-first-report" / "references" / "evidence-model.md",
+        ):
+            text = path.read_text(encoding="utf-8")
+            for instruction in evidence_instructions:
+                self.assertIn(instruction, text)
+
+        review_instruction = (
+            "After every review pass, rescan changed prose for newly introduced numbers, "
+            "date comparisons, durations, and other computed quantities. Update the source, "
+            "evidence, and claim registers before accepting the revision, or remove the "
+            "quantitative wording when it is not fully registered."
+        )
+        for tree in (REPO_ROOT / "source" / "skills", REPO_ROOT / "skills"):
+            text = (tree / "evidence-first-report" / "SKILL.md").read_text(encoding="utf-8")
+            self.assertIn(review_instruction, text)
+
     def test_evidence_report_requires_csv_round_trip_validation(self) -> None:
         required_instructions = (
             "Write every register with a CSV serializer or equivalent standards-compliant escaping",

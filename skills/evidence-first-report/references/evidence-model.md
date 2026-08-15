@@ -67,6 +67,8 @@ For every reported number, capture:
 
 Treat a percentage without a defined base as incomplete. Treat a change without a baseline and interval as incomplete. Preserve appropriate significant digits.
 
+Treat every computed or comparative number as a quantitative claim, including totals, rates, ranges, differences, durations, date intervals, and relative-time statements. This rule also applies to quantitative wording introduced during any review or revision. Before the wording enters the draft, register every input under source and evidence identifiers and record the reproducible calculation with an explicit unit, population (use `not applicable` only when genuinely inapplicable), and period. Otherwise omit the number or retain it only as an unresolved blocker without asserting it.
+
 ## Conflict handling
 
 Set `conflict_status` to `none`, `resolved`, or `unresolved`. Record all affected source and evidence identifiers. Resolve only through an explainable difference in definition, method, population, period, version, or source fitness. Keep an unresolved conflict visible in the draft and limitations.
