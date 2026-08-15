@@ -66,10 +66,44 @@ PROFILE_IDENTITY_KEYS = (
 REPOSITORY_IDENTITY_KEYS = ("commit", "tree", "dirty")
 SNAPSHOT_MANIFEST_NAME = "SOURCE_SNAPSHOT_MANIFEST.json"
 SNAPSHOT_PYTHON_CACHE_PART = "__pycache__"
+CANONICAL_SKILL_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+MAX_CANONICAL_SKILL_NAME_LENGTH = 64
+TOKEN_OPENING_BOUNDARY = frozenset("([{'\"\u201c\u2018")
+TOKEN_CLOSING_BOUNDARY = frozenset(".,;:!?)]}'\"\u201d\u2019")
 
 
 class EvaluationError(RuntimeError):
     """Raised for a user-correctable evaluation configuration error."""
+
+
+def query_has_exact_skill_token(query: str, skill_name: str) -> bool:
+    """Return whether query contains a standalone, case-sensitive canonical $skill token."""
+    if (
+        not isinstance(query, str)
+        or not isinstance(skill_name, str)
+        or not 1 <= len(skill_name) <= MAX_CANONICAL_SKILL_NAME_LENGTH
+        or CANONICAL_SKILL_NAME.fullmatch(skill_name) is None
+    ):
+        return False
+    for match in re.finditer(r"\$([A-Za-z0-9_-]+)", query):
+        if match.group(1) != skill_name:
+            continue
+
+        opening = match.start()
+        while opening and query[opening - 1] in TOKEN_OPENING_BOUNDARY:
+            opening -= 1
+        if opening and not query[opening - 1].isspace():
+            continue
+
+        if query[match.end() :].startswith(".."):
+            continue
+        closing = match.end()
+        while closing < len(query) and query[closing] in TOKEN_CLOSING_BOUNDARY:
+            closing += 1
+        if closing < len(query) and not query[closing].isspace():
+            continue
+        return True
+    return False
 
 
 def utc_now() -> str:

@@ -15,9 +15,9 @@ All notable repository-level changes are documented here.
 - Validate every model-facing object schema against the strict structured-output requirement before live evaluation.
 - Allow task agents to create local benchmark artifacts through automatic approval review constrained to the isolated `workspace-write` sandbox.
 - Add a defense-in-depth check that rejects named `SKILL.md` path references outside the injected candidate when they are visible in top-level command events, and record path-free local loader diagnostics.
-- Require platform-native, body-proven skill activation: the evaluated agent uses only the platform-declared eligible-skill catalog, counts explicit tokens only in the raw request, and cannot use filesystem, metadata, frontmatter, line-count, or whole-file discovery fallbacks before activation.
+- Require catalog-first, body-proven skill activation with one exact-token-bounded exception: a validated canonical token in the raw request may load only its exact workspace `SKILL.md`, while no-token cases cannot use filesystem, metadata, frontmatter, partial-read, or alternate-path discovery fallbacks.
 - Store observations and blind-comparison bundles under compact physical directories while retaining canonical logical identities, and fail before model calls if a copied fixture or injected-skill input would exceed the safe Windows path budget.
-- Build both public archives from a clean-HEAD, regular-Git-blob allowlist; reject tracked raw evaluation trees and non-regular entries while excluding ignored or untracked local material.
+- Build both public archives from a clean-HEAD, regular-Git-blob allowlist; reject tracked raw evaluation trees and non-regular entries while excluding ignored or untracked local material, and independently verify ZIP ordering, fixed metadata, manifest hashes, checksums, inventory, and double-build reproducibility.
 - Preserve tracked fixture and skill hashing in the history-free source snapshot through its verified file manifest, so extracted validation does not depend on a `.git` directory.
 
 ## 0.1.0 — 2026-08-13

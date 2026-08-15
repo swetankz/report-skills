@@ -47,6 +47,7 @@ from evaluation_common import (  # noqa: E402
     load_json,
     normalize_suite,
     persisted_run_plan_row,
+    query_has_exact_skill_token,
     require_matching_context,
     require_clean_task_execution,
     require_complete_task_evidence,
@@ -87,7 +88,11 @@ from validate_release_eval_plan import (  # noqa: E402
     canonical_plan_rows,
     validate_release_eval_plan,
 )
-from validate_eval_suite import validate_model_output_schema, validate_suite  # noqa: E402
+from validate_eval_suite import (  # noqa: E402
+    validate_model_output_schema,
+    validate_suite,
+    validate_triggers,
+)
 import evaluation_common  # noqa: E402
 import aggregate_benchmark  # noqa: E402
 import grade_behavioral_benchmark  # noqa: E402
@@ -1892,31 +1897,42 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertTrue(prompt.endswith(f"Request:\n{query}"))
         self.assertIn("not an explicit invocation", prompt)
         self.assertIn("explicit-only or implicit-invocation policy", prompt)
+        self.assertIn("raw-Request explicit-token branch before catalog eligibility", prompt)
+        self.assertIn("1-64 character canonical skill name", prompt)
+        self.assertIn("lowercase ASCII letters, digits, and single hyphens", prompt)
+        self.assertIn("Prefixes, suffixes, substrings, case variants", prompt)
+        self.assertIn("Count a token only when it appears in the Request block below", prompt)
+        self.assertIn("itself activates exactly that named skill", prompt)
+        self.assertIn("even when the platform omitted it", prompt)
+        self.assertIn(".agents/skills/<validated-name>/SKILL.md", prompt)
+        self.assertIn("one literal, complete read", prompt)
+        self.assertIn("Do not list, glob, search, recurse", prompt)
+        self.assertIn("normalize, case-fold, guess, inspect siblings", prompt)
+        self.assertIn("parse agents/openai.yaml or frontmatter", prompt)
+        self.assertIn("partial or line-count read", prompt)
+        self.assertIn("try another path or root", prompt)
+        self.assertIn("fail closed to no activation without a retry", prompt)
+        self.assertIn("Without a qualifying raw-Request token", prompt)
         self.assertIn("only skills the platform declares available", prompt)
-        self.assertIn("already applied each skill's invocation policy", prompt)
-        self.assertIn("pre-activation name and description", prompt)
-        self.assertIn("standalone, case-sensitive", prompt)
-        self.assertIn("only when it appears in the Request block below", prompt)
-        self.assertIn("never when it appears in this wrapper", prompt)
+        self.assertIn("already applied their invocation policies", prompt)
+        self.assertIn("pre-activation names and descriptions", prompt)
+        self.assertIn("never in this wrapper", prompt)
         self.assertIn("platform-declared description", prompt)
-        self.assertIn("before opening the skill body", prompt)
-        self.assertIn("Do not search the filesystem for additional skills", prompt)
-        self.assertIn("inspect agents/openai.yaml or any part of SKILL.md", prompt)
-        self.assertIn("including frontmatter", prompt)
-        self.assertIn("an unlisted skill is ineligible", prompt)
+        self.assertIn("before opening the body", prompt)
+        self.assertIn("An unlisted skill is then ineligible", prompt)
+        self.assertIn("Do not list, search, enumerate, or probe", prompt)
+        self.assertIn("do not use it to access an unlisted skill", prompt)
         self.assertIn("activate it and only then read its SKILL.md completely", prompt)
+        self.assertIn("exact path provided by the platform", prompt)
         self.assertIn("Otherwise fail closed to no activation", prompt)
-        self.assertIn("do not use a metadata parser, frontmatter parser", prompt)
-        self.assertIn("line-count preview", prompt)
-        self.assertIn("whole-file fallback", prompt)
         self.assertIn("read its SKILL.md completely", prompt)
         self.assertIn("follow its instructions", prompt)
         self.assertIn("merely to fill the response schema", prompt)
         self.assertIn("Description-only classification does not count", prompt)
         self.assertIn("set it to null", prompt)
         self.assertLess(
+            prompt.index("raw-Request explicit-token branch"),
             prompt.index("platform declares available"),
-            prompt.index("activate it and only then"),
         )
         self.assertNotIn("through the exact closing delimiter", prompt)
         self.assertNotIn("Get-Content -TotalCount", prompt)
@@ -1926,7 +1942,106 @@ class EvaluationToolingTests(unittest.TestCase):
         }
         self.assertFalse(any(candidate in prompt for candidate in candidates))
         self.assertNotIn("report-skills-triggered:", prompt)
-        self.assertNotIn(".agents/skills", prompt)
+        self.assertEqual(prompt.count(".agents/skills/<validated-name>/SKILL.md"), 1)
+
+    def test_exact_skill_token_requires_canonical_standalone_boundaries(self) -> None:
+        name = "synthetic-skill"
+        accepted = [
+            "$synthetic-skill",
+            "Use $synthetic-skill now.",
+            "Use ($synthetic-skill), please.",
+        ]
+        rejected = [
+            "synthetic-skill",
+            "$Synthetic-skill",
+            "$synthetic_skill",
+            "$synthetic--skill",
+            "$synthetic-skill-extra",
+            "x$synthetic-skill",
+            "$$synthetic-skill",
+            "$synthetic-skill/path",
+            "$synthetic-skill\\path",
+            "$synthetic-skill.txt",
+            "$synthetic-skill./path",
+            "$synthetic-skill..",
+            "$synthetic-skill*",
+            "*$synthetic-skill",
+            "?$synthetic-skill",
+            "C:$synthetic-skill",
+            "=$synthetic-skill",
+            "$synthetic-skill:stream",
+            "$synthetic-skill@host",
+            "$different-skill",
+        ]
+        for query in accepted:
+            with self.subTest(query=query):
+                self.assertTrue(query_has_exact_skill_token(query, name))
+        for query in rejected:
+            with self.subTest(query=query):
+                self.assertFalse(query_has_exact_skill_token(query, name))
+        self.assertFalse(query_has_exact_skill_token("$a", "a" * 65))
+
+    def test_trigger_validator_rejects_candidate_token_substrings(self) -> None:
+        triggers = copy.deepcopy(load_json(REPO_ROOT / "evals" / "trigger-evals.json"))
+        case = next(
+            item
+            for item in triggers["cases"]
+            if item["case_id"] == "trigger-sites-explicit-positive"
+        )
+        case["query"] = case["query"].replace(
+            "$sites-release-manager", "$sites-release-manager-extra"
+        )
+        policies = triggers["protocol"]["invocation_policies"]
+        skills = set(policies["implicit_selection"]["skills"]) | set(
+            policies["explicit_invocation"]["skills"]
+        )
+        errors: list[str] = []
+        validate_triggers(triggers, skills, errors)
+        joined = "\n".join(errors)
+        self.assertIn("query_names_candidate_skill does not match", joined)
+        self.assertIn("explicit selection must equal exact-name presence", joined)
+
+    def test_trigger_main_rejects_invalid_suite_before_paths_or_profile(self) -> None:
+        triggers = copy.deepcopy(load_json(REPO_ROOT / "evals" / "trigger-evals.json"))
+        triggers["cases"][0]["candidate_skill"] = "../../unsafe"
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_name:
+            suite_path = Path(temp_name) / "triggers.json"
+            suite_path.write_text(
+                json.dumps(triggers, indent=2) + "\n", encoding="utf-8"
+            )
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "run_trigger_evals.py",
+                        "--execute",
+                        "--suite",
+                        str(suite_path),
+                        "--run-id",
+                        "invalid-suite-order-test",
+                        "--model",
+                        "gpt-5.6-sol",
+                        "--reasoning-effort",
+                        "ultra",
+                    ],
+                ),
+                patch.object(
+                    run_trigger_evals,
+                    "validate_output_root",
+                    side_effect=AssertionError("output setup must not run"),
+                ),
+                patch.object(
+                    run_trigger_evals,
+                    "find_codex_command",
+                    side_effect=AssertionError("profile discovery must not run"),
+                ),
+                redirect_stderr(stderr),
+            ):
+                self.assertEqual(run_trigger_evals.main(), 2)
+        self.assertIn("Trigger suite validation failed", stderr.getvalue())
+        self.assertIn("candidate_skill must be a canonical skill name", stderr.getvalue())
 
     def test_trigger_task_prompt_preserves_explicit_only_invocation_boundary(self) -> None:
         cases = load_json(REPO_ROOT / "evals" / "trigger-evals.json")["cases"]
@@ -1938,6 +2053,10 @@ class EvaluationToolingTests(unittest.TestCase):
             token = f"${case['candidate_skill']}"
             wrapped = trigger_task_prompt(case["query"])
             self.assertEqual(wrapped.count(token), case["query"].count(token))
+            self.assertEqual(
+                query_has_exact_skill_token(case["query"], case["candidate_skill"]),
+                case["query_names_candidate_skill"],
+            )
 
     def test_trigger_output_schema_requires_actual_activation_semantics(self) -> None:
         schema = load_json(REPO_ROOT / "evals" / "schemas" / "trigger-output.schema.json")

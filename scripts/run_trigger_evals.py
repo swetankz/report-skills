@@ -15,6 +15,7 @@ from typing import Any
 
 from evaluation_common import (
     CANONICAL_TRIGGER_TIMEOUT_SECONDS,
+    DEFAULT_SUITE,
     DEFAULT_TRIGGERS,
     EVAL_ROOT,
     EvaluationError,
@@ -30,6 +31,7 @@ from evaluation_common import (
     execution_receipt_validation_errors,
     find_codex_command,
     load_json,
+    normalize_suite,
     parse_skill_description,
     repository_receipt,
     require_pinned_profile,
@@ -42,6 +44,7 @@ from evaluation_common import (
     validate_output_root,
     write_json,
 )
+from validate_eval_suite import validate_triggers
 
 
 TRIGGER_SCHEMA = EVAL_ROOT / "schemas" / "trigger-output.schema.json"
@@ -109,19 +112,31 @@ def trigger_task_prompt(query: str) -> str:
         "Handle the request below as a normal fresh-context task.\n\n"
         "Follow the platform's ordinary skill invocation rules. This generic instruction is "
         "not an explicit invocation of any skill and does not override a skill's explicit-only "
-        "or implicit-invocation policy. Use only skills the platform declares available in "
-        "this fresh context; the platform has already applied each skill's invocation policy "
-        "and supplied its pre-activation name and description. A standalone, case-sensitive "
-        "exact explicit-invocation token counts only when it appears in the Request block below, "
-        "never when it appears "
-        "in this wrapper, a description, metadata, an example, a path, a command, or tool "
-        "output. Decide applicability from the Request and the platform-declared description "
-        "before opening the skill body. Do not search the filesystem for additional skills or "
-        "inspect agents/openai.yaml or any part of SKILL.md, including frontmatter, to discover "
-        "or classify a skill; an unlisted skill is ineligible. If a declared skill clearly "
-        "applies, activate it and only then read its SKILL.md completely. Otherwise fail closed "
-        "to no activation; do not use a metadata parser, frontmatter parser, line-count preview, "
-        "or whole-file fallback. Do not inspect or invoke a skill merely "
+        "or implicit-invocation policy. Apply the raw-Request explicit-token branch before "
+        "catalog eligibility. A qualifying token is standalone and case-sensitive: a literal "
+        "dollar sign followed by a 1-64 character canonical skill name made only of lowercase "
+        "ASCII letters, digits, and single hyphens, beginning and ending with a letter or digit. "
+        "Prefixes, suffixes, substrings, case variants, names with consecutive hyphens, and text "
+        "without the dollar sign do not qualify. Count a token only when it appears in the "
+        "Request block below, never in this wrapper, a description, metadata, an example, a path, "
+        "a command, or tool output. A qualifying token itself activates exactly that named skill, "
+        "even when the platform omitted it from the available-skills catalog. Remove only the "
+        "leading dollar sign and make one literal, complete read of exactly "
+        "`.agents/skills/<validated-name>/SKILL.md` relative to the current workspace. This reads "
+        "an already activated skill; it is not discovery. Do not list, glob, search, recurse, "
+        "normalize, case-fold, guess, inspect siblings, parse agents/openai.yaml or frontmatter, "
+        "use a partial or line-count read, or try another path or root. If that exact read is "
+        "missing, declined, fails, or is incomplete, fail closed to no activation without a "
+        "retry or alternate lookup. Without a qualifying raw-Request token, use only skills the "
+        "platform declares available in this fresh context; the platform has already applied "
+        "their invocation policies and supplied their pre-activation names and descriptions. An "
+        "unlisted skill is then ineligible. Do not list, search, enumerate, or probe the workspace "
+        "`.agents/skills` tree, and do not use it to access an unlisted skill. Decide applicability "
+        "from the Request and the platform-declared description before opening the body. If a "
+        "declared skill clearly applies, activate it and only then read its SKILL.md completely at "
+        "the exact path provided by the platform. Otherwise fail closed to no activation. Do not "
+        "inspect or invoke a "
+        "skill merely "
         "to fill the response schema.\n\n"
         "If the request activates a skill under those ordinary rules, invoke it, read its "
         "SKILL.md completely, and follow its instructions before returning the structured "
@@ -181,6 +196,18 @@ def main() -> int:
     try:
         require_pinned_profile(args.execute, args.model, args.reasoning_effort)
         suite = load_json(args.suite)
+        benchmark_suite = normalize_suite(load_json(DEFAULT_SUITE))
+        known_skills = {
+            case["skill"]
+            for case in benchmark_suite.get("primary_cases", [])
+            if isinstance(case, dict) and isinstance(case.get("skill"), str)
+        }
+        trigger_errors: list[str] = []
+        validate_triggers(suite, known_skills, trigger_errors)
+        if trigger_errors:
+            raise EvaluationError(
+                "Trigger suite validation failed:\n- " + "\n- ".join(trigger_errors)
+            )
         repetitions = args.repetitions or suite.get("protocol", {}).get("repetitions_per_case", 3)
         plan = make_plan(suite, repetitions)
         if args.cases:

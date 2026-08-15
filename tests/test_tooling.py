@@ -10,6 +10,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -20,6 +21,7 @@ SCAN_SCRIPT = REPO_ROOT / "scripts" / "scan_public_content.py"
 RELEASE_SCRIPT = REPO_ROOT / "scripts" / "create_release_package.py"
 SOURCE_SNAPSHOT_SCRIPT = REPO_ROOT / "scripts" / "create_source_snapshot.py"
 RELEASE_INVENTORY_SCRIPT = REPO_ROOT / "scripts" / "release_inventory.py"
+VERIFY_RELEASE_SCRIPT = REPO_ROOT / "scripts" / "verify_release_artifacts.py"
 EXPECTED_SKILLS = {
     "report-skills",
     "evidence-first-report",
@@ -403,6 +405,116 @@ class ToolingTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0, script.name)
             self.assertIn("does not match plugin version", result.stdout + result.stderr)
+
+    def test_release_artifact_verifier_checks_manifest_and_zip_metadata(self) -> None:
+        inventory_module = load_script_module(
+            RELEASE_INVENTORY_SCRIPT, "test_release_inventory_verifier"
+        )
+        with mock.patch.dict(sys.modules, {"release_inventory": inventory_module}):
+            verifier = load_script_module(
+                VERIFY_RELEASE_SCRIPT, "test_verify_release_artifacts"
+            )
+
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            archive = root / "report-skills-0.2.0.zip"
+            payload = b"public source\n"
+            manifest = {
+                "schema_version": 1,
+                "plugin": "report-skills",
+                "version": "0.2.0",
+                "publication_state": "local-candidate",
+                "external_publication_authorized": False,
+                "files": {"README.md": hashlib.sha256(payload).hexdigest()},
+            }
+
+            def write_archive(path: Path, timestamp: tuple[int, ...]) -> None:
+                with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as output:
+                    for name, content in (
+                        ("README.md", payload),
+                        (
+                            "RELEASE_MANIFEST.json",
+                            (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8"),
+                        ),
+                    ):
+                        info = zipfile.ZipInfo(name, date_time=timestamp)
+                        info.compress_type = zipfile.ZIP_DEFLATED
+                        info.external_attr = 0o100644 << 16
+                        output.writestr(info, content)
+
+            write_archive(archive, (1980, 1, 1, 0, 0, 0))
+            sidecar = archive.with_suffix(".zip.sha256")
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            sidecar.write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
+
+            self.assertEqual(verifier.verify_sidecar(archive, sidecar), digest)
+            result = verifier.verify_archive(
+                archive,
+                "RELEASE_MANIFEST.json",
+                ["README.md"],
+                "0.2.0",
+                None,
+            )
+            self.assertEqual(result["entry_count"], 2)
+            self.assertFalse(result["publication_authorized"])
+
+            manifest["plugin"] = "wrong-plugin"
+            write_archive(archive, (1980, 1, 1, 0, 0, 0))
+            with self.assertRaisesRegex(SystemExit, "plugin identity mismatch"):
+                verifier.verify_archive(
+                    archive,
+                    "RELEASE_MANIFEST.json",
+                    ["README.md"],
+                    "0.2.0",
+                    None,
+                )
+
+            manifest["plugin"] = "report-skills"
+            write_archive(archive, (2026, 8, 15, 0, 0, 0))
+            with self.assertRaisesRegex(SystemExit, "Non-deterministic ZIP timestamp"):
+                verifier.verify_archive(
+                    archive,
+                    "RELEASE_MANIFEST.json",
+                    ["README.md"],
+                    "0.2.0",
+                    None,
+                )
+
+            source_archive = root / "report-skills-source-0.2.0.zip"
+            source_manifest = {
+                "schema_version": 1,
+                "project": "report-skills",
+                "version": "0.2.0",
+                "snapshot_type": "intended-public-repository-tree",
+                "publication_state": "local-source-candidate",
+                "git_history_present": False,
+                "external_publication_authorized": False,
+                "files": {"README.md": hashlib.sha256(payload).hexdigest()},
+            }
+            with zipfile.ZipFile(
+                source_archive, "w", compression=zipfile.ZIP_DEFLATED
+            ) as output:
+                for name, content in (
+                    ("README.md", payload),
+                    (
+                        "SOURCE_SNAPSHOT_MANIFEST.json",
+                        (json.dumps(source_manifest, sort_keys=True) + "\n").encode(
+                            "utf-8"
+                        ),
+                    ),
+                ):
+                    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    info.external_attr = 0o100644 << 16
+                    output.writestr(info, content)
+            with self.assertRaisesRegex(SystemExit, "file count mismatch"):
+                verifier.verify_archive(
+                    source_archive,
+                    "SOURCE_SNAPSHOT_MANIFEST.json",
+                    ["README.md"],
+                    "0.2.0",
+                    None,
+                )
 
     def test_release_inventory_uses_clean_head_and_ignores_local_artifacts(self) -> None:
         inventory_module = load_script_module(

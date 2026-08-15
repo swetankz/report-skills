@@ -5,15 +5,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 from evaluation_common import (
+    CANONICAL_SKILL_NAME,
     DEFAULT_THRESHOLDS,
     DEFAULT_TRIGGERS,
     EVAL_ROOT,
     EvaluationError,
+    MAX_CANONICAL_SKILL_NAME_LENGTH,
     REPO_ROOT,
     build_run_plan,
     artifact_check_definition_errors,
@@ -22,6 +25,7 @@ from evaluation_common import (
     fixture_csv_validation_errors,
     load_json,
     normalize_suite,
+    query_has_exact_skill_token,
     resolve_suite,
     suite_cases,
     suite_fixture,
@@ -200,7 +204,18 @@ def validate_triggers(data: dict[str, Any], skills: set[str], errors: list[str])
         if not isinstance(case, dict):
             errors.append("every trigger case must be an object")
             continue
+        case_id = case.get("case_id")
+        if not isinstance(case_id, str) or re.fullmatch(r"trigger-[a-z0-9]+(?:-[a-z0-9]+)*", case_id) is None:
+            errors.append(f"trigger {case_id}: case_id must be a canonical trigger identifier")
         candidate = case.get("candidate_skill")
+        if (
+            not isinstance(candidate, str)
+            or not 1 <= len(candidate) <= MAX_CANONICAL_SKILL_NAME_LENGTH
+            or CANONICAL_SKILL_NAME.fullmatch(candidate) is None
+        ):
+            errors.append(
+                f"trigger {case.get('case_id')}: candidate_skill must be a canonical skill name"
+            )
         if candidate not in skills:
             errors.append(f"trigger {case.get('case_id')}: unknown candidate_skill {candidate}")
         else:
@@ -219,7 +234,9 @@ def validate_triggers(data: dict[str, Any], skills: set[str], errors: list[str])
             errors.append(f"trigger {case.get('case_id')}: query is required")
         policy = case.get("invocation_policy")
         names_candidate = case.get("query_names_candidate_skill")
-        exact_name_present = f"${candidate}" in str(case.get("query", ""))
+        exact_name_present = query_has_exact_skill_token(
+            str(case.get("query", "")), str(candidate)
+        )
         if names_candidate is not exact_name_present:
             errors.append(f"trigger {case.get('case_id')}: query_names_candidate_skill does not match the literal query")
         if candidate in explicit_only:
