@@ -67,7 +67,9 @@ def copy_candidate(stage: Path) -> None:
 def write_release_manifest(stage: Path, version: str, authorized_tag: str | None) -> None:
     files = {
         path.relative_to(stage).as_posix(): sha256(path)
-        for path in sorted(stage.rglob("*"))
+        for path in sorted(
+            stage.rglob("*"), key=lambda item: item.relative_to(stage).as_posix()
+        )
         if path.is_file()
     }
     manifest = {
@@ -89,7 +91,9 @@ def write_release_manifest(stage: Path, version: str, authorized_tag: str | None
 
 def deterministic_zip(stage: Path, archive: Path) -> None:
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as output:
-        for path in sorted(stage.rglob("*")):
+        for path in sorted(
+            stage.rglob("*"), key=lambda item: item.relative_to(stage).as_posix()
+        ):
             if not path.is_file():
                 continue
             relative = path.relative_to(stage).as_posix()

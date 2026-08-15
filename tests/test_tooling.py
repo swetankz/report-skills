@@ -516,6 +516,34 @@ class ToolingTests(unittest.TestCase):
                     None,
                 )
 
+    def test_release_builders_sort_zip_entries_by_posix_name(self) -> None:
+        inventory_module = load_script_module(
+            RELEASE_INVENTORY_SCRIPT, "test_release_inventory_zip_order"
+        )
+        with mock.patch.dict(sys.modules, {"release_inventory": inventory_module}):
+            modules = (
+                load_script_module(RELEASE_SCRIPT, "test_release_zip_order"),
+                load_script_module(SOURCE_SNAPSHOT_SCRIPT, "test_source_zip_order"),
+            )
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            stage = root / "stage"
+            stage.mkdir()
+            for relative in ("z.txt", "docs/a.txt", "A.txt", ".meta/data.json"):
+                path = stage / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(relative + "\n", encoding="utf-8")
+            expected = sorted(
+                path.relative_to(stage).as_posix()
+                for path in stage.rglob("*")
+                if path.is_file()
+            )
+            for index, module in enumerate(modules):
+                archive = root / f"archive-{index}.zip"
+                module.deterministic_zip(stage, archive)
+                with zipfile.ZipFile(archive, "r") as source:
+                    self.assertEqual(source.namelist(), expected)
+
     def test_release_inventory_uses_clean_head_and_ignores_local_artifacts(self) -> None:
         inventory_module = load_script_module(
             RELEASE_INVENTORY_SCRIPT, "test_release_inventory_clean"
