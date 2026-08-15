@@ -43,7 +43,7 @@ Also validate every `skills/*` folder with the current Codex skill validator and
 
 ## Evaluation
 
-Repository CI validates the evaluation contracts and expands the complete benchmark plan without starting a model. The `v0.2.0` release candidate must also pass three fresh paired runs per case (`with_skill` versus `without_skill`), blind comparison, adversarial safety checks, and trigger tests. Live model evaluation stays outside public CI because it requires authentication and incurs usage. See the [evaluation protocol and release thresholds](docs/evaluation.md).
+Repository CI validates the evaluation contracts and expands the complete benchmark plan without starting a model. Gate 1 prepares a `v0.2.0` release candidate with a tracked 25-call, no-retry routing and adversarial/security sequence that grades each task before the next begins; it does not claim the full benchmark verdict. Gate 2 is separate final qualification with three fresh paired runs per case (`with_skill` versus `without_skill`), blind comparison, adversarial safety checks, and the complete trigger suite. Live model evaluation stays outside public CI because it requires authentication and incurs usage. See the [evaluation protocol and release thresholds](docs/evaluation.md).
 
 ## Installation
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,7 @@ MANIFEST_PATH = REPO_ROOT / ".codex-plugin" / "plugin.json"
 ROOT_FILES = ["README.md", "LICENSE", "CHANGELOG.md", "SECURITY.md"]
 DOC_FILES = [
     "docs/architecture.md",
+    "docs/evaluation.md",
     "docs/skill-catalogue.md",
     "docs/installation.md",
     "docs/limitations.md",
@@ -28,6 +30,8 @@ DOC_FILES = [
 ]
 PUBLIC_FILES = {PurePosixPath(path) for path in ROOT_FILES + DOC_FILES}
 PLUGIN_PREFIXES = {".codex-plugin", "skills"}
+MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+EXTERNAL_LINK_PATTERN = re.compile(r"^(?:https?://|mailto:)", re.IGNORECASE)
 
 
 def sha256(path: Path) -> str:
@@ -60,8 +64,57 @@ def plugin_inventory():
     return selected
 
 
+def packaged_local_markdown_targets(text: str) -> list[str]:
+    targets: list[str] = []
+    for match in MARKDOWN_LINK_PATTERN.finditer(text):
+        raw_target = match.group(1).strip()
+        if not raw_target or raw_target.startswith("#") or EXTERNAL_LINK_PATTERN.match(raw_target):
+            continue
+        if raw_target.startswith("<") and ">" in raw_target:
+            target = raw_target[1 : raw_target.index(">")]
+        else:
+            target = raw_target.split(maxsplit=1)[0]
+        target = target.split("#", 1)[0].strip()
+        if target:
+            targets.append(target)
+    return targets
+
+
+def validate_packaged_local_links(stage: Path) -> None:
+    stage_root = stage.resolve()
+    errors: list[str] = []
+    for document in sorted(
+        stage.rglob("*.md"), key=lambda path: path.relative_to(stage).as_posix()
+    ):
+        relative_document = document.relative_to(stage).as_posix()
+        try:
+            text = document.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            errors.append(f"{relative_document}: cannot read packaged Markdown: {error}")
+            continue
+        for target in packaged_local_markdown_targets(text):
+            candidate = document.parent / target
+            try:
+                resolved = candidate.resolve()
+                resolved.relative_to(stage_root)
+            except (OSError, ValueError):
+                errors.append(
+                    f"{relative_document}: packaged local Markdown target leaves the archive: {target}"
+                )
+                continue
+            if not resolved.is_file():
+                errors.append(
+                    f"{relative_document}: missing packaged local Markdown target: {target}"
+                )
+    if errors:
+        raise SystemExit(
+            "Plugin package Markdown link closure failed:\n- " + "\n- ".join(errors)
+        )
+
+
 def copy_candidate(stage: Path) -> None:
     copy_inventory(REPO_ROOT, stage, plugin_inventory())
+    validate_packaged_local_links(stage)
 
 
 def write_release_manifest(stage: Path, version: str, authorized_tag: str | None) -> None:

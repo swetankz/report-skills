@@ -30,6 +30,11 @@ from evaluation_common import (
     suite_cases,
     suite_fixture,
 )
+from gate1_contract import (
+    DEFAULT_GATE1_PLAN,
+    gate1_master_call_plan,
+    validate_gate1_plan,
+)
 
 
 REQUIRED_GATES = {
@@ -266,12 +271,14 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--suite", type=Path)
     parser.add_argument("--thresholds", type=Path, default=DEFAULT_THRESHOLDS)
     parser.add_argument("--triggers", type=Path, default=DEFAULT_TRIGGERS)
+    parser.add_argument("--gate1-plan", type=Path, default=DEFAULT_GATE1_PLAN)
     return parser
 
 
 def main() -> int:
     args = make_parser().parse_args()
     errors: list[str] = []
+    gate1_calls: list[dict[str, Any]] = []
     try:
         suite_path = resolve_suite(args.suite)
         suite = normalize_suite(load_json(suite_path))
@@ -281,6 +288,11 @@ def main() -> int:
         triggers = load_json(args.triggers)
         skills = {case["skill"] for case in suite.get("primary_cases", [])}
         validate_triggers(triggers, skills, errors)
+        gate1_plan = load_json(args.gate1_plan)
+        gate1_errors = validate_gate1_plan(gate1_plan, suite, triggers)
+        errors.extend(gate1_errors)
+        if not gate1_errors:
+            gate1_calls = gate1_master_call_plan(gate1_plan, suite, triggers)
         for schema in sorted((EVAL_ROOT / "schemas").glob("*.json")):
             try:
                 schema_data = json.loads(schema.read_text(encoding="utf-8"))
@@ -304,7 +316,8 @@ def main() -> int:
         "Evaluation contracts passed: "
         f"{len(suite.get('primary_cases', []))} primary cases, "
         f"{len(suite.get('adversarial_cases', []))} adversarial cases, "
-        f"{len(triggers.get('cases', []))} trigger cases, {len(plan)} paired-configuration observations."
+        f"{len(triggers.get('cases', []))} trigger cases, {len(plan)} paired-configuration observations, "
+        f"and the focused 5-task/15-observation, {len(gate1_calls)}-call Gate 1 plan."
     )
     return 0
 

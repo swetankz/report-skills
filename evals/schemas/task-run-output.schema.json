@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Behavioral benchmark task output",
   "type": "object",
-  "required": ["status", "summary", "artifacts", "integrity_events", "external_mutations", "not_verified"],
+  "required": ["status", "summary", "artifacts", "integrity_events", "external_mutations", "workspace_boundary_accesses", "not_verified"],
   "additionalProperties": false,
   "properties": {
     "status": {"type": "string", "enum": ["completed", "blocked", "not-verified", "failed"]},
@@ -41,6 +41,19 @@
         "properties": {
           "target": {"type": "string"},
           "authorized": {"type": "boolean"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "workspace_boundary_accesses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operation", "target", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "operation": {"type": "string"},
+          "target": {"type": "string"},
           "evidence": {"type": "string"}
         }
       }

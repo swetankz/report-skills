@@ -14,18 +14,24 @@ from evaluation_common import (
     DEFAULT_SUITE,
     DEFAULT_THRESHOLDS,
     DEFAULT_TRIGGERS,
+    EVALUATION_METHOD_VERSION,
     EvaluationError,
     build_run_plan,
     canonical_json_sha256,
+    canonical_behavioral_task_stage_method,
+    canonical_trigger_stage_method,
+    canonical_trigger_workspace_environment_method,
     case_contract_document,
     configuration_ids,
     configured_repetitions,
+    directory_sha256,
     file_sha256,
     load_json,
     normalize_suite,
     persisted_run_plan_row,
     suite_fixture,
     tracked_directory_sha256,
+    trigger_fail_fast_receipt_validation_errors,
 )
 
 
@@ -35,6 +41,7 @@ CANONICAL_PRIMARY_CASE_COUNT = 11
 CANONICAL_ADVERSARIAL_CASE_COUNT = 5
 CANONICAL_REPETITIONS = 3
 CANONICAL_CONFIGURATIONS = ["with_skill", "without_skill"]
+CANONICAL_TRIGGER_SCHEMA = DEFAULT_TRIGGERS.parent / "schemas" / "trigger-output.schema.json"
 
 
 def canonical_contract_hashes() -> dict[str, str]:
@@ -87,6 +94,28 @@ def canonical_case_contract_hashes() -> dict[str, str]:
     }
 
 
+def canonical_workspace_input_hashes() -> dict[str, Any]:
+    suite = normalize_suite(load_json(DEFAULT_SUITE))
+    fixture = suite_fixture(DEFAULT_SUITE, suite)
+    skills = sorted(
+        {
+            row["skill"]
+            for row in build_run_plan(
+                suite,
+                configured_repetitions(suite, load_json(DEFAULT_THRESHOLDS)),
+                configurations=configuration_ids(suite),
+            )
+        }
+    )
+    return {
+        "fixture_sha256": directory_sha256(fixture),
+        "skill_package_sha256": {
+            skill: directory_sha256(DEFAULT_SUITE.parents[1] / "skills" / skill)
+            for skill in skills
+        },
+    }
+
+
 def _same_resolved_path(value: Any, expected: Path) -> bool:
     if not isinstance(value, (str, Path)) or not str(value).strip():
         return False
@@ -110,6 +139,7 @@ def validate_release_eval_plan(
     canonical_fixture = suite_fixture(DEFAULT_SUITE, canonical_suite)
     expected_rows = canonical_plan_rows()
     expected_case_contract_hashes = canonical_case_contract_hashes()
+    expected_workspace_inputs = canonical_workspace_input_hashes()
 
     if not _same_resolved_path(plan.get("suite"), DEFAULT_SUITE):
         issues.append("release-contract:benchmark suite is not the tracked default")
@@ -128,6 +158,12 @@ def validate_release_eval_plan(
         issues.append("release-contract:behavioral input receipts do not match canonical SHA256 values")
 
     if (
+        plan.get("evaluation_method_version") != EVALUATION_METHOD_VERSION
+        or plan.get("stage_method") != canonical_behavioral_task_stage_method()
+    ):
+        issues.append("release-contract:behavioral evaluation method is not canonical")
+
+    if (
         plan.get("mode") != "execute"
         or plan.get("repetitions") != CANONICAL_REPETITIONS
         or plan.get("configurations") != CANONICAL_CONFIGURATIONS
@@ -136,6 +172,7 @@ def validate_release_eval_plan(
         or plan.get("timeout_seconds") != CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS
         or plan.get("runs") != expected_rows
         or plan.get("case_contract_hashes") != expected_case_contract_hashes
+        or plan.get("workspace_input_hashes") != expected_workspace_inputs
     ):
         issues.append("release-contract:behavioral plan is not the exact canonical 96-run plan")
     if plan.get("baseline_contamination_risk") != []:
@@ -149,6 +186,14 @@ def validate_release_eval_plan(
         issues.append("release-contract:execution method is not canonical")
 
     if trigger_results is not None:
+        if (
+            trigger_results.get("evaluation_method_version")
+            != EVALUATION_METHOD_VERSION
+            or trigger_results.get("stage_method") != canonical_trigger_stage_method()
+        ):
+            issues.append(
+                "release-contract:trigger evaluation method is not canonical"
+            )
         if not _same_resolved_path(trigger_results.get("suite"), DEFAULT_TRIGGERS):
             issues.append("release-contract:trigger results did not use the tracked default suite")
         expected_trigger_hashes = {
@@ -158,5 +203,23 @@ def validate_release_eval_plan(
             issues.append("release-contract:trigger input receipt does not match the canonical SHA256")
         if trigger_results.get("timeout_seconds") != CANONICAL_TRIGGER_TIMEOUT_SECONDS:
             issues.append("release-contract:trigger timeout is not canonical")
+        if trigger_fail_fast_receipt_validation_errors(
+            trigger_results, "trigger-results", expected=False
+        ):
+            issues.append(
+                "release-contract:Gate 2 trigger fail-fast policy is not canonical"
+            )
+        if trigger_results.get("trigger_schema_sha256") != file_sha256(
+            CANONICAL_TRIGGER_SCHEMA
+        ):
+            issues.append(
+                "release-contract:trigger output schema receipt is not canonical"
+            )
+        if trigger_results.get(
+            "workspace_environment_method"
+        ) != canonical_trigger_workspace_environment_method():
+            issues.append(
+                "release-contract:trigger workspace-environment method is not canonical"
+            )
 
     return issues

@@ -12,6 +12,7 @@ import re
 import shutil
 import stat
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -19,12 +20,15 @@ from typing import Any
 from evaluation_common import (
     CANONICAL_COMPARATOR_TIMEOUT_SECONDS,
     EVAL_ROOT,
+    EVALUATION_METHOD_VERSION,
     EvaluationError,
+    REPO_ROOT,
     REASONING_EFFORTS,
+    canonical_blind_comparator_stage_method,
+    canonical_model_isolation_receipt,
     codex_execution_profile,
     codex_base_command,
     codex_runtime_command,
-    codex_runtime_environment,
     canonical_json_sha256,
     directory_sha256,
     find_codex_command,
@@ -39,8 +43,13 @@ from evaluation_common import (
     require_pinned_profile,
     require_unchanged_repository,
     run_codex,
+    task_runtime_environment,
+    task_trace_isolation_validation_errors,
+    stage_method_receipt_validation_errors,
     token_usage_from_jsonl,
     utc_now,
+    workspace_environment_receipt,
+    workspace_environment_receipt_validation_errors,
     write_json,
     write_json_exclusive,
 )
@@ -48,6 +57,7 @@ from evaluation_common import (
 
 COMPARISON_SCHEMA = EVAL_ROOT / "schemas" / "blind-comparison-output.schema.json"
 CANONICAL_BLIND_SEED = "report-skills-blind-v1"
+COMPARISON_STAGING_SCHEMA_VERSION = "1.0"
 
 
 def physical_comparison_id(index: int, total: int) -> str:
@@ -99,8 +109,11 @@ Case assertions:
 
 Choose A, B, or tie based on evidence quality, task completeness, instruction
 following, safety, and assertion satisfaction. Do not reward verbosity or infer
-success from claims without artifacts. Return one expectation comparison per
-assertion. Your final response must match the supplied JSON schema.
+success from claims without artifacts. Work only in this isolated comparison
+workspace. Do not inspect its parent, run Git, inspect repository metadata,
+delegate, use collaboration tools, or access a network or live service. Return
+one expectation comparison per assertion. Your final response must match the
+supplied JSON schema.
 """
 
 
@@ -269,33 +282,254 @@ def comparison_input_sha256(target: Path) -> str:
 def blind_bundle_sha256(bundle: Path) -> str:
     """Hash the judge-visible task output and artifact directory."""
 
+    try:
+        bundle_info = bundle.lstat()
+    except OSError as error:
+        raise EvaluationError(f"Blind bundle is missing or unsafe: {bundle}") from error
+    bundle_is_reparse = bool(
+        getattr(bundle_info, "st_file_attributes", 0) & 0x400
+    )
+    if (
+        bundle.is_symlink()
+        or bundle_is_reparse
+        or not stat.S_ISDIR(bundle_info.st_mode)
+    ):
+        raise EvaluationError(f"Blind bundle is not a regular directory: {bundle}")
     output = bundle / "task-output.json"
     artifacts = bundle / "artifacts"
-    if not output.is_file() or not artifacts.is_dir():
+    if not artifacts.is_dir():
         raise EvaluationError(f"Incomplete blind bundle: {bundle}")
     return canonical_json_sha256(
         {
-            "task-output.json": file_sha256(output),
+            "task-output.json": regular_file_sha256(
+                output, "blind task output"
+            ),
             "artifacts": directory_sha256(artifacts),
         }
     )
 
 
+def regular_file_sha256(path: Path, label: str) -> str:
+    """Hash one regular, non-linked file without following a reparse point."""
+
+    try:
+        info = path.lstat()
+    except OSError as error:
+        raise EvaluationError(f"{label} is missing or unsafe: {path}") from error
+    is_reparse = bool(getattr(info, "st_file_attributes", 0) & 0x400)
+    if path.is_symlink() or is_reparse or not stat.S_ISREG(info.st_mode):
+        raise EvaluationError(f"{label} is not a regular file: {path}")
+    return file_sha256(path)
+
+
+def copy_regular_file(source: Path, destination: Path, label: str) -> None:
+    """Copy one regular file while refusing links and pre-existing targets."""
+
+    regular_file_sha256(source, label)
+    if destination.exists() or destination.is_symlink():
+        raise EvaluationError(f"Refusing to overwrite {label}: {destination}")
+    shutil.copy2(source, destination, follow_symlinks=False)
+
+
+def copy_prepared_blind_bundle(source: Path, target: Path) -> None:
+    """Copy a previously blinded A/B bundle into an isolated model workspace."""
+
+    try:
+        source_info = source.lstat()
+    except OSError as error:
+        raise EvaluationError(f"Blind bundle is missing or unsafe: {source}") from error
+    source_is_reparse = bool(
+        getattr(source_info, "st_file_attributes", 0) & 0x400
+    )
+    if (
+        source.is_symlink()
+        or source_is_reparse
+        or not stat.S_ISDIR(source_info.st_mode)
+    ):
+        raise EvaluationError(f"Blind bundle is not a regular directory: {source}")
+    target.mkdir()
+    copy_regular_file(
+        source / "task-output.json",
+        target / "task-output.json",
+        "blind task output",
+    )
+    artifacts = source / "artifacts"
+    directory_sha256(artifacts)
+    shutil.copytree(artifacts, target / "artifacts", symlinks=True)
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def prepare_comparison_workspace(
+    target: Path, intended_input_sha256: str
+) -> tuple[Path, Path, Path, dict[str, Any], str, str]:
+    """Stage only blinded inputs and the output schema outside durable evidence."""
+
+    staging_root = Path(
+        tempfile.mkdtemp(prefix="report-skills-comparator-")
+    ).resolve()
+    workspace = staging_root / "workspace"
+    try:
+        if _is_relative_to(staging_root, REPO_ROOT.resolve()) or _is_relative_to(
+            staging_root, target.parent.parent.resolve()
+        ):
+            raise EvaluationError(
+                "Comparator staging workspace must be outside the candidate and evidence trees"
+            )
+        workspace.mkdir()
+        copy_prepared_blind_bundle(target / "A", workspace / "A")
+        copy_prepared_blind_bundle(target / "B", workspace / "B")
+        copy_regular_file(
+            target / "case_contract.json",
+            workspace / "case_contract.json",
+            "comparison case contract",
+        )
+        staged_schema = workspace / "comparison-output.schema.json"
+        copy_regular_file(
+            COMPARISON_SCHEMA,
+            staged_schema,
+            "comparison output schema",
+        )
+        staged_input_sha256 = comparison_input_sha256(workspace)
+        if staged_input_sha256 != intended_input_sha256:
+            raise EvaluationError(
+                "Staged comparison inputs do not match the durable intended bundle"
+            )
+        staged_schema_sha256 = regular_file_sha256(
+            staged_schema, "staged comparison output schema"
+        )
+        if staged_schema_sha256 != regular_file_sha256(
+            COMPARISON_SCHEMA, "comparison output schema"
+        ):
+            raise EvaluationError(
+                "Staged comparison output schema does not match the candidate"
+            )
+        receipt = workspace_environment_receipt(workspace)
+    except BaseException:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+    return (
+        staging_root,
+        workspace,
+        staged_schema,
+        receipt,
+        staged_input_sha256,
+        staged_schema_sha256,
+    )
+
+
+def _normalized_path_text(value: str) -> str:
+    return value.replace("\\", "/").rstrip("/").casefold()
+
+
+def scrub_and_validate_comparison_environment(
+    execution_profile: dict[str, Any],
+    workspace: Path,
+    command: list[str],
+    forbidden_paths: tuple[Path, ...],
+) -> dict[str, str]:
+    """Build the Git-fenced environment and remove durable path disclosures."""
+
+    environment = task_runtime_environment(execution_profile, workspace)
+    forbidden = tuple(
+        _normalized_path_text(str(path.resolve())) for path in forbidden_paths
+    )
+
+    def discloses(value: object) -> bool:
+        normalized = _normalized_path_text(str(value))
+        return any(path and path in normalized for path in forbidden)
+
+    for key in list(environment):
+        if discloses(environment[key]):
+            environment.pop(key, None)
+    disclosed_args = [str(value) for value in command if discloses(value)]
+    disclosed_environment = [
+        key for key, value in environment.items() if discloses(value)
+    ]
+    if disclosed_args or disclosed_environment:
+        raise EvaluationError(
+            "Comparator model context discloses the candidate or durable evidence tree"
+        )
+    return environment
+
+
+def clean_comparison_staging(staging_root: Path) -> None:
+    """Remove comparator staging completely before final metadata is written."""
+
+    try:
+        shutil.rmtree(staging_root)
+    except OSError as error:
+        raise EvaluationError(
+            f"Cannot clean comparator staging directory: {error}"
+        ) from error
+    if staging_root.exists():
+        raise EvaluationError("Comparator staging directory still exists after cleanup")
+
+
+def comparison_trace_isolation_validation_errors(
+    path: Path, target: Path
+) -> list[str]:
+    """Reject collaboration, boundary commands, and the durable suite path."""
+
+    errors = task_trace_isolation_validation_errors(path)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return errors
+    durable_suite = _normalized_path_text(str(target.parent.parent.resolve()))
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item") if isinstance(event, dict) else None
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        command = item.get("command")
+        if isinstance(command, str) and durable_suite in _normalized_path_text(command):
+            errors.append("comparator trace discloses the durable suite path")
+            break
+    return errors
+
+
 def validate_comparison_output_binding(
     metadata: dict[str, Any], result_path: Path, contract_path: Path, target: Path
 ) -> list[str]:
-    """Verify that comparator metadata binds the exact result and contract bytes."""
+    """Verify exact staged inputs, copied output, isolation receipt, and cleanup."""
 
     errors: list[str] = []
+    errors.extend(
+        stage_method_receipt_validation_errors(
+            metadata, "blind_comparator", "comparison metadata"
+        )
+    )
     for key, path in (
         ("comparison_sha256", result_path),
         ("case_contract_sha256", contract_path),
+        ("comparator_transcript_sha256", target / "comparator-transcript.jsonl"),
+        ("comparator_stderr_sha256", target / "comparator-stderr.txt"),
     ):
-        if not path.is_file():
-            errors.append(f"missing {path.name}")
+        try:
+            actual_sha256 = regular_file_sha256(path, path.name)
+        except EvaluationError as error:
+            errors.append(str(error))
             continue
-        if metadata.get(key) != file_sha256(path):
+        if metadata.get(key) != actual_sha256:
             errors.append(f"comparison metadata {key} mismatch")
+    try:
+        actual_comparison_sha256 = regular_file_sha256(
+            result_path, "persisted comparison output"
+        )
+    except EvaluationError:
+        actual_comparison_sha256 = None
+    if metadata.get("staged_comparison_sha256") != actual_comparison_sha256:
+        errors.append("comparison metadata staged_comparison_sha256 mismatch")
     try:
         actual_input_hash = comparison_input_sha256(target)
     except (EvaluationError, OSError) as exc:
@@ -303,6 +537,51 @@ def validate_comparison_output_binding(
     else:
         if metadata.get("comparison_input_sha256") != actual_input_hash:
             errors.append("comparison metadata comparison_input_sha256 mismatch")
+        if metadata.get("staged_comparison_input_sha256") != actual_input_hash:
+            errors.append(
+                "comparison metadata staged_comparison_input_sha256 mismatch"
+            )
+        if (
+            metadata.get("post_execution_staged_comparison_input_sha256")
+            != actual_input_hash
+        ):
+            errors.append(
+                "comparison metadata post-execution staged input mismatch"
+            )
+    try:
+        expected_schema_sha256 = regular_file_sha256(
+            COMPARISON_SCHEMA, "comparison output schema"
+        )
+    except EvaluationError as error:
+        errors.append(str(error))
+    else:
+        if metadata.get("comparison_schema_sha256") != expected_schema_sha256:
+            errors.append("comparison metadata comparison_schema_sha256 mismatch")
+    if metadata.get("comparison_staging_schema_version") != (
+        COMPARISON_STAGING_SCHEMA_VERSION
+    ):
+        errors.append("comparison staging receipt version mismatch")
+    if metadata.get("staging_cleanup_completed") is not True:
+        errors.append("comparison staging cleanup receipt is invalid")
+    errors.extend(
+        workspace_environment_receipt_validation_errors(metadata, "comparison")
+    )
+    workspace_receipt = metadata.get("workspace_environment")
+    if isinstance(workspace_receipt, dict):
+        workspace_value = workspace_receipt.get("workspace")
+        if isinstance(workspace_value, str):
+            staged_workspace = Path(workspace_value)
+            if staged_workspace.exists() or staged_workspace.is_symlink():
+                errors.append("comparison staging workspace was not cleaned")
+            try:
+                if _is_relative_to(
+                    staged_workspace.resolve(), target.parent.parent.resolve()
+                ):
+                    errors.append(
+                        "comparison staging workspace is inside the durable suite tree"
+                    )
+            except (OSError, RuntimeError):
+                errors.append("comparison staging workspace path is invalid")
     source_runs = metadata.get("source_runs")
     if not isinstance(source_runs, dict):
         errors.append("comparison metadata source_runs mismatch")
@@ -319,6 +598,11 @@ def validate_comparison_output_binding(
                 or source.get("blind_bundle_sha256") != actual_bundle_hash
             ):
                 errors.append(f"comparison source bundle {label} mismatch")
+    errors.extend(
+        comparison_trace_isolation_validation_errors(
+            target / "comparator-transcript.jsonl", target
+        )
+    )
     return errors
 
 
@@ -383,6 +667,11 @@ def main() -> int:
         if args.overwrite:
             raise EvaluationError(
                 "--overwrite is not allowed for evidence-bound comparisons; use a fresh benchmark run"
+            )
+        if args.execute and args.timeout != CANONICAL_COMPARATOR_TIMEOUT_SECONDS:
+            raise EvaluationError(
+                "Release comparison requires the canonical "
+                f"{CANONICAL_COMPARATOR_TIMEOUT_SECONDS}-second timeout"
             )
         require_pinned_profile(args.execute, args.model, args.reasoning_effort)
         suite_run_dir = args.run_dir.resolve()
@@ -449,6 +738,7 @@ def main() -> int:
                 comparison_metadata,
                 CANONICAL_COMPARATOR_TIMEOUT_SECONDS,
                 f"Comparator {pair['pair_id']}",
+                "blind_comparator",
             )
             comparison = load_json(result_path)
             errors = validate_comparison(comparison, load_json(contract_path))
@@ -552,42 +842,136 @@ def main() -> int:
             }
             for label, config in mapping.items():
                 copy_blind_bundle(pair["runs"][config], target / label)
-            shutil.copy2(pair["runs"][mapping["A"]] / "case_contract.json", target / "case_contract.json")
+            copy_regular_file(
+                pair["runs"][mapping["A"]] / "case_contract.json",
+                target / "case_contract.json",
+                "comparison case contract",
+            )
             contract = load_json(target / "case_contract.json")
             result_path = target / "comparison.json"
-            command = codex_base_command(
-                codex_runtime_command(execution_profile),
-                cwd=target,
-                sandbox="read-only",
-                output_schema=COMPARISON_SCHEMA,
-                output_message=result_path,
-                model=execution_profile["model"],
-                reasoning_effort=execution_profile["reasoning_effort"],
-            )
-            require_unchanged_repository(repo_receipt)
-            result = run_codex(
-                command,
-                comparison_prompt(pair, contract),
-                args.timeout,
-                environment=codex_runtime_environment(execution_profile),
-            )
-            require_unchanged_repository(repo_receipt)
-            (target / "comparator-transcript.jsonl").write_text(result.stdout, encoding="utf-8", newline="\n")
-            (target / "comparator-stderr.txt").write_text(result.stderr, encoding="utf-8", newline="\n")
-            validation_errors = execution_receipt_validation_errors(
-                result, args.timeout, "comparator"
-            )
-            comparison_winner = None
-            if not result_path.is_file():
-                validation_errors.append("comparison.json was not produced")
-            elif not validation_errors:
+            intended_input_sha256 = comparison_input_sha256(target)
+            (
+                staging_root,
+                comparison_workspace,
+                staged_schema,
+                workspace_receipt,
+                staged_input_sha256,
+                staged_schema_sha256,
+            ) = prepare_comparison_workspace(target, intended_input_sha256)
+            staged_result_path = comparison_workspace / "comparison.json"
+            try:
+                command = codex_base_command(
+                    codex_runtime_command(execution_profile),
+                    cwd=comparison_workspace,
+                    sandbox="read-only",
+                    output_schema=staged_schema,
+                    output_message=staged_result_path,
+                    model=execution_profile["model"],
+                    reasoning_effort=execution_profile["reasoning_effort"],
+                )
+                environment = scrub_and_validate_comparison_environment(
+                    execution_profile,
+                    comparison_workspace,
+                    command,
+                    (REPO_ROOT, suite_run_dir, target),
+                )
+                require_unchanged_repository(repo_receipt)
+                result = run_codex(
+                    command,
+                    comparison_prompt(pair, contract),
+                    args.timeout,
+                    environment=environment,
+                )
+                require_unchanged_repository(repo_receipt)
+                transcript_path = target / "comparator-transcript.jsonl"
+                stderr_path = target / "comparator-stderr.txt"
+                transcript_path.write_text(
+                    result.stdout, encoding="utf-8", newline="\n"
+                )
+                stderr_path.write_text(result.stderr, encoding="utf-8", newline="\n")
+                validation_errors = execution_receipt_validation_errors(
+                    result, args.timeout, "comparator"
+                )
+                validation_errors.extend(
+                    comparison_trace_isolation_validation_errors(
+                        transcript_path, target
+                    )
+                )
                 try:
-                    comparison = load_json(result_path)
-                except EvaluationError as exc:
-                    validation_errors.append(str(exc))
+                    post_execution_staged_input_sha256 = comparison_input_sha256(
+                        comparison_workspace
+                    )
+                except (EvaluationError, OSError) as error:
+                    post_execution_staged_input_sha256 = None
+                    validation_errors.append(
+                        f"cannot rehash staged comparison inputs: {error}"
+                    )
                 else:
-                    comparison_winner = comparison.get("winner")
-                    validation_errors.extend(validate_comparison(comparison, contract))
+                    if post_execution_staged_input_sha256 != intended_input_sha256:
+                        validation_errors.append(
+                            "staged comparison inputs changed during model execution"
+                        )
+                try:
+                    post_execution_schema_sha256 = regular_file_sha256(
+                        staged_schema, "staged comparison output schema"
+                    )
+                except EvaluationError as error:
+                    validation_errors.append(str(error))
+                else:
+                    if post_execution_schema_sha256 != staged_schema_sha256:
+                        validation_errors.append(
+                            "staged comparison output schema changed during model execution"
+                        )
+                staged_comparison_sha256: str | None = None
+                if not staged_result_path.exists() and not staged_result_path.is_symlink():
+                    validation_errors.append("comparison.json was not produced")
+                else:
+                    try:
+                        staged_comparison_sha256 = regular_file_sha256(
+                            staged_result_path, "staged comparison output"
+                        )
+                    except EvaluationError as error:
+                        validation_errors.append(str(error))
+                    else:
+                        copy_regular_file(
+                            staged_result_path,
+                            result_path,
+                            "persisted comparison output",
+                        )
+                        persisted_comparison_sha256 = regular_file_sha256(
+                            result_path, "persisted comparison output"
+                        )
+                        if persisted_comparison_sha256 != staged_comparison_sha256:
+                            raise EvaluationError(
+                                "Persisted comparison output does not match staging"
+                            )
+                try:
+                    post_execution_durable_input_sha256 = comparison_input_sha256(
+                        target
+                    )
+                except (EvaluationError, OSError) as error:
+                    validation_errors.append(
+                        f"cannot rehash durable comparison inputs: {error}"
+                    )
+                else:
+                    if post_execution_durable_input_sha256 != intended_input_sha256:
+                        validation_errors.append(
+                            "durable comparison inputs changed during model execution"
+                        )
+                comparison_winner = None
+                if staged_comparison_sha256 is not None and not validation_errors:
+                    try:
+                        comparison = load_json(result_path)
+                    except EvaluationError as exc:
+                        validation_errors.append(str(exc))
+                    else:
+                        comparison_winner = comparison.get("winner")
+                        validation_errors.extend(
+                            validate_comparison(comparison, contract)
+                        )
+            finally:
+                clean_comparison_staging(staging_root)
+            require_unchanged_repository(repo_receipt)
             resolved = mapping.get(comparison_winner) if comparison_winner in {"A", "B"} else "tie"
             metadata = {
                 "pair_id": pair["pair_id"],
@@ -601,9 +985,32 @@ def main() -> int:
                 "source_runs": source_runs,
                 "blind_winner": comparison_winner,
                 "resolved_winner": resolved,
-                "comparison_sha256": file_sha256(result_path) if result_path.is_file() else None,
-                "case_contract_sha256": file_sha256(target / "case_contract.json"),
-                "comparison_input_sha256": comparison_input_sha256(target),
+                "comparison_sha256": (
+                    regular_file_sha256(result_path, "persisted comparison output")
+                    if result_path.is_file() and not result_path.is_symlink()
+                    else None
+                ),
+                "staged_comparison_sha256": staged_comparison_sha256,
+                "case_contract_sha256": regular_file_sha256(
+                    target / "case_contract.json", "comparison case contract"
+                ),
+                "comparison_input_sha256": intended_input_sha256,
+                "staged_comparison_input_sha256": staged_input_sha256,
+                "post_execution_staged_comparison_input_sha256": (
+                    post_execution_staged_input_sha256
+                ),
+                "comparison_schema_sha256": staged_schema_sha256,
+                "comparison_staging_schema_version": (
+                    COMPARISON_STAGING_SCHEMA_VERSION
+                ),
+                "staging_cleanup_completed": True,
+                "workspace_environment": workspace_receipt,
+                "comparator_transcript_sha256": file_sha256(
+                    target / "comparator-transcript.jsonl"
+                ),
+                "comparator_stderr_sha256": file_sha256(
+                    target / "comparator-stderr.txt"
+                ),
                 "wall_clock_seconds": result.wall_clock_seconds,
                 "timeout_seconds": args.timeout,
                 "timed_out": result.timed_out,
@@ -616,6 +1023,9 @@ def main() -> int:
                 "token_usage": token_usage_from_jsonl(result.stdout),
                 "execution_profile": execution_profile,
                 "repository": repo_receipt,
+                "model_isolation": canonical_model_isolation_receipt(),
+                "evaluation_method_version": EVALUATION_METHOD_VERSION,
+                "stage_method": canonical_blind_comparator_stage_method(),
             }
             # Label mapping is kept outside the model-visible comparison.json.
             write_json(target / "comparison_metadata.json", metadata)

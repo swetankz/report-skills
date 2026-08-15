@@ -406,6 +406,44 @@ class ToolingTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, script.name)
             self.assertIn("does not match plugin version", result.stdout + result.stderr)
 
+    def test_plugin_package_markdown_links_close_over_the_selected_inventory(self) -> None:
+        inventory_module = load_script_module(
+            RELEASE_INVENTORY_SCRIPT, "test_release_inventory_link_closure"
+        )
+        with mock.patch.dict(sys.modules, {"release_inventory": inventory_module}):
+            release_module = load_script_module(
+                RELEASE_SCRIPT, "test_create_release_package_link_closure"
+            )
+
+        self.assertIn("docs/evaluation.md", release_module.DOC_FILES)
+        self.assertNotIn("docs/release-checklist.md", release_module.DOC_FILES)
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            stage = root / "stage"
+            stage.mkdir()
+            (stage / "README.md").write_text(
+                "See the [evaluation protocol](docs/evaluation.md).\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                SystemExit, "missing packaged local Markdown target"
+            ):
+                release_module.validate_packaged_local_links(stage)
+
+            evaluation = stage / "docs" / "evaluation.md"
+            evaluation.parent.mkdir()
+            evaluation.write_text("# Evaluation\n", encoding="utf-8")
+            release_module.validate_packaged_local_links(stage)
+
+            (stage / "README.md").write_text(
+                "[Outside](../outside.md)\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                SystemExit, "packaged local Markdown target leaves the archive"
+            ):
+                release_module.validate_packaged_local_links(stage)
+
     def test_release_artifact_verifier_checks_manifest_and_zip_metadata(self) -> None:
         inventory_module = load_script_module(
             RELEASE_INVENTORY_SCRIPT, "test_release_inventory_verifier"

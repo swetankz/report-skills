@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import stat
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -20,27 +22,42 @@ from evaluation_common import (
     CODEX_TIMEOUT_ENFORCEMENT_MODE,
     DEFAULT_THRESHOLDS,
     DEFAULT_TRIGGERS,
+    EVALUATION_METHOD_VERSION,
     EvaluationError,
     PROFILE_IDENTITY_KEYS,
     REPOSITORY_IDENTITY_KEYS,
     REPO_ROOT,
     TASK_IGNORE_USER_CONFIG_SCOPE,
-    TASK_SKILL_BODY_READ_GUARD,
+    canonical_model_isolation_receipt,
+    canonical_stage_methods,
+    canonical_task_isolation_receipt,
+    canonical_trigger_workspace_environment_method,
     canonical_json_sha256,
     compare,
     execution_receipt_validation_errors,
+    file_sha256,
     tracked_directory_sha256,
     validate_task_evidence_binding,
     load_json,
+    planned_task_workspace_input_hashes,
     repository_receipt,
     require_clean_stage_execution,
     require_clean_task_execution,
     require_matching_context,
     summary_stats,
+    stage_method_receipt_validation_errors,
+    task_trace_isolation_validation_errors,
+    trigger_fail_fast_receipt_validation_errors,
     utc_now,
+    workspace_environment_receipt_validation_errors,
     write_json,
 )
-from run_trigger_evals import summarize
+from run_trigger_evals import (
+    TRIGGER_SCHEMA,
+    body_proven_activation,
+    summarize,
+    validate_trigger_prediction,
+)
 from grade_behavioral_benchmark import (
     validate_grade,
     validate_grader_attempt_binding,
@@ -57,7 +74,11 @@ from validate_release_eval_plan import validate_release_eval_plan
 
 
 def validate_execution_receipt(
-    document: dict[str, Any], label: str, expected_timeout: int, issues: list[str]
+    document: dict[str, Any],
+    label: str,
+    expected_timeout: int,
+    stage: str,
+    issues: list[str],
 ) -> None:
     """Require a clean, deadline-bound model-call receipt for release evidence."""
 
@@ -69,6 +90,9 @@ def validate_execution_receipt(
         or profile.get("codex_timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE
     ):
         issues.append(f"{label}:timeout enforcement profile mismatch")
+    if document.get("model_isolation") != canonical_model_isolation_receipt():
+        issues.append(f"{label}:missing or unsupported model isolation receipt")
+    issues.extend(stage_method_receipt_validation_errors(document, stage, label))
 
 
 def validate_task_method_receipt(
@@ -76,19 +100,9 @@ def validate_task_method_receipt(
 ) -> None:
     """Require the exact release-eligible task isolation and diagnostic receipt."""
 
-    isolation = record.get("codex_isolation")
-    expected_isolation = {
-        "ephemeral": True,
-        "ignore_user_config": True,
-        "ignore_user_config_scope": TASK_IGNORE_USER_CONFIG_SCOPE,
-        "ignore_rules": True,
-        "sandbox": "workspace-write",
-        "skill_body_read_guard": TASK_SKILL_BODY_READ_GUARD,
-    }
-    if not isinstance(isolation, dict) or any(
-        isolation.get(key) != value for key, value in expected_isolation.items()
-    ):
+    if record.get("codex_isolation") != canonical_task_isolation_receipt():
         issues.append(f"{label}:missing or unsupported task isolation receipt")
+    issues.extend(workspace_environment_receipt_validation_errors(record, label))
 
     expected_loading = (
         "explicit_workspace_copy" if record.get("configuration") == "with_skill" else "none"
@@ -101,7 +115,7 @@ def validate_task_method_receipt(
         if not isinstance(record.get(key), str) or not record[key].strip():
             issues.append(f"{label}:missing {key}")
     validate_execution_receipt(
-        record, label, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, issues
+        record, label, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, "behavioral_task", issues
     )
 
     diagnostics = record.get("skill_loader_diagnostics")
@@ -138,12 +152,20 @@ def collect_runs(run_dir: Path) -> tuple[list[dict[str, Any]], list[str]]:
             missing.append(f"{path.name}:run_metadata.json")
             continue
         metadata = load_json(metadata_path)
+        try:
+            expected_workspace_inputs = planned_task_workspace_input_hashes(
+                plan, metadata
+            )
+        except EvaluationError as error:
+            expected_workspace_inputs = None
+            missing.append(f"{path.name}:invalid workspace-input plan: {error}")
         task_errors = validate_task_evidence_binding(
             metadata,
             path,
             planned_contract_hashes.get(str(metadata.get("run_id")))
             if isinstance(planned_contract_hashes, dict)
             else None,
+            expected_workspace_inputs,
         )
         missing.extend(f"{path.name}:invalid task evidence: {error}" for error in task_errors)
         task_clean = not task_errors
@@ -155,6 +177,7 @@ def collect_runs(run_dir: Path) -> tuple[list[dict[str, Any]], list[str]]:
                 planned_contract_hashes.get(str(metadata.get("run_id")))
                 if isinstance(planned_contract_hashes, dict)
                 else None,
+                expected_workspace_inputs,
             )
         except EvaluationError as exc:
             task_clean = False
@@ -214,6 +237,7 @@ def collect_runs(run_dir: Path) -> tuple[list[dict[str, Any]], list[str]]:
                     grader_metadata,
                     CANONICAL_GRADER_TIMEOUT_SECONDS,
                     f"Grader {path.name}",
+                    "grader",
                 )
             except EvaluationError as exc:
                 grade_errors.append(str(exc))
@@ -270,6 +294,7 @@ def collect_comparisons(run_dir: Path) -> tuple[list[dict[str, Any]], list[str]]
                 metadata,
                 CANONICAL_COMPARATOR_TIMEOUT_SECONDS,
                 f"Comparator {target.name}",
+                "blind_comparator",
             )
         except EvaluationError as exc:
             errors.append(str(exc))
@@ -317,6 +342,259 @@ def load_trigger_results(path: Path | None) -> dict[str, Any] | None:
     if path and path.is_file():
         return load_json(path)
     return None
+
+
+def validate_trigger_file_bindings(
+    trigger_results: dict[str, Any] | None,
+    results_path: Path | None,
+    trigger_suite: dict[str, Any] | None = None,
+) -> list[str]:
+    """Rehash raw trigger files and rederive every activation observation."""
+
+    if trigger_results is None or results_path is None:
+        return []
+    observations = trigger_results.get("observations")
+    if not isinstance(observations, list):
+        return ["trigger-results:observations is not a list"]
+    if not isinstance(trigger_suite, dict):
+        return ["trigger-results:canonical trigger suite is required for binding"]
+    errors: list[str] = []
+    errors.extend(
+        stage_method_receipt_validation_errors(
+            trigger_results, "trigger", "trigger-results"
+        )
+    )
+    errors.extend(
+        trigger_fail_fast_receipt_validation_errors(
+            trigger_results, "trigger-results"
+        )
+    )
+    if trigger_results.get(
+        "workspace_environment_method"
+    ) != canonical_trigger_workspace_environment_method():
+        errors.append(
+            "trigger-results:missing or unsupported workspace-environment method"
+        )
+    expected_trigger_schema_sha256 = file_sha256(TRIGGER_SCHEMA)
+    if (
+        trigger_results.get("trigger_schema_sha256")
+        != expected_trigger_schema_sha256
+    ):
+        errors.append("trigger-results:trigger output schema hash mismatch")
+    results_directory = results_path.parent
+    root = results_directory / "trigger-observations"
+    file_hashes = trigger_results.get("observation_file_hashes")
+    if not isinstance(file_hashes, dict):
+        errors.append("trigger-results:observation file hashes are missing")
+        file_hashes = {}
+    cases = {
+        str(case.get("case_id")): case
+        for case in trigger_suite.get("cases", [])
+        if isinstance(case, dict) and isinstance(case.get("case_id"), str)
+    }
+    observed_ids: list[str] = []
+
+    def is_real_directory(path: Path) -> bool:
+        try:
+            info = path.lstat()
+        except OSError:
+            return False
+        return (
+            not path.is_symlink()
+            and not bool(getattr(info, "st_file_attributes", 0) & 0x400)
+            and stat.S_ISDIR(info.st_mode)
+        )
+
+    def is_regular_file(path: Path, expected_parent: Path) -> bool:
+        try:
+            info = path.lstat()
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return False
+        return (
+            not path.is_symlink()
+            and not bool(getattr(info, "st_file_attributes", 0) & 0x400)
+            and stat.S_ISREG(info.st_mode)
+            and resolved.parent == expected_parent
+        )
+
+    if not is_real_directory(results_directory) or not is_real_directory(root):
+        return ["trigger-results:observation root is missing or unsafe"]
+    try:
+        results_directory_resolved = results_directory.resolve(strict=True)
+        root_resolved = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return ["trigger-results:observation root is missing or unsafe"]
+    if root_resolved.parent != results_directory_resolved:
+        return ["trigger-results:observation root escapes the results directory"]
+
+    for observation in observations:
+        if not isinstance(observation, dict):
+            errors.append("trigger-results:malformed observation")
+            continue
+        observation_id = observation.get("observation_id")
+        if not isinstance(observation_id, str) or re.fullmatch(
+            r"[a-z0-9][a-z0-9-]*__r[0-9]{2,}", observation_id
+        ) is None:
+            errors.append("trigger-results:unsafe observation id")
+            continue
+        observed_ids.append(observation_id)
+        errors.extend(
+            stage_method_receipt_validation_errors(
+                observation, "trigger", f"trigger {observation_id}"
+            )
+        )
+        directory = root / observation_id
+        if not is_real_directory(directory):
+            errors.append(f"trigger {observation_id}:observation directory is missing or unsafe")
+            continue
+        try:
+            directory_resolved = directory.resolve(strict=True)
+        except (OSError, RuntimeError):
+            errors.append(f"trigger {observation_id}:observation directory is missing or unsafe")
+            continue
+        if directory_resolved.parent != root_resolved:
+            errors.append(f"trigger {observation_id}:observation directory escapes its root")
+            continue
+        prediction = directory / "prediction.json"
+        transcript = directory / "transcript.jsonl"
+        stderr = directory / "stderr.txt"
+        observation_path = directory / "observation.json"
+        for key, path in (
+            ("prediction_sha256", prediction),
+            ("transcript_sha256", transcript),
+            ("stderr_sha256", stderr),
+        ):
+            if (
+                not is_regular_file(path, directory_resolved)
+                or observation.get(key) != file_sha256(path)
+            ):
+                errors.append(f"trigger {observation_id}:{key} mismatch")
+        if observation.get("staged_prediction_sha256") != observation.get(
+            "prediction_sha256"
+        ):
+            errors.append(
+                f"trigger {observation_id}:staged and persisted prediction hashes differ"
+            )
+        for key in (
+            "trigger_schema_sha256",
+            "staged_trigger_schema_sha256",
+            "post_execution_trigger_schema_sha256",
+        ):
+            if observation.get(key) != expected_trigger_schema_sha256:
+                errors.append(f"trigger {observation_id}:{key} mismatch")
+        sentinel_skill_sha256 = observation.get("sentinel_skill_sha256")
+        post_sentinel_skill_sha256 = observation.get(
+            "post_execution_sentinel_skill_sha256"
+        )
+        if (
+            not isinstance(sentinel_skill_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", sentinel_skill_sha256) is None
+            or post_sentinel_skill_sha256 != sentinel_skill_sha256
+        ):
+            errors.append(
+                f"trigger {observation_id}:staged sentinel skill hash mismatch"
+            )
+        if observation.get("staging_cleanup_completed") is not True:
+            errors.append(f"trigger {observation_id}:staging cleanup receipt is invalid")
+        if not is_regular_file(observation_path, directory_resolved):
+            errors.append(f"trigger {observation_id}:observation.json is missing or unsafe")
+        else:
+            if file_hashes.get(observation_id) != file_sha256(observation_path):
+                errors.append(f"trigger {observation_id}:observation file hash mismatch")
+            try:
+                persisted_observation = load_json(observation_path)
+            except EvaluationError as error:
+                errors.append(f"trigger {observation_id}:{error}")
+            else:
+                if persisted_observation != observation:
+                    errors.append(
+                        f"trigger {observation_id}:result observation differs from observation.json"
+                    )
+        errors.extend(
+            f"trigger {observation_id}:{error}"
+            for error in task_trace_isolation_validation_errors(
+                transcript, "trigger trace"
+            )
+        )
+        errors.extend(
+            workspace_environment_receipt_validation_errors(
+                observation,
+                f"trigger {observation_id}",
+                require_absent_workspace=True,
+            )
+        )
+        case_id = observation.get("case_id")
+        case = cases.get(str(case_id))
+        repetition = observation.get("repetition")
+        if (
+            case is None
+            or isinstance(repetition, bool)
+            or not isinstance(repetition, int)
+            or repetition < 1
+            or observation_id != f"{case_id}__r{repetition:02d}"
+            or observation.get("candidate_skill") != case.get("candidate_skill")
+            or not isinstance(observation.get("should_trigger"), bool)
+            or observation.get("should_trigger") != case.get("should_trigger")
+        ):
+            errors.append(f"trigger {observation_id}:suite-case binding mismatch")
+            continue
+        if not is_regular_file(
+            prediction, directory_resolved
+        ) or not is_regular_file(transcript, directory_resolved):
+            continue
+        try:
+            prediction_document = load_json(prediction)
+            transcript_text = transcript.read_text(encoding="utf-8")
+        except (EvaluationError, OSError, UnicodeDecodeError) as error:
+            errors.append(f"trigger {observation_id}:cannot load raw prediction: {error}")
+            continue
+        errors.extend(
+            f"trigger {observation_id}:{error}"
+            for error in validate_trigger_prediction(prediction_document)
+        )
+        marker = "report-skills-triggered:" + hashlib.sha256(
+            observation_id.encode("utf-8")
+        ).hexdigest()[:24]
+        triggered = body_proven_activation(
+            prediction_document,
+            str(case["candidate_skill"]),
+            marker,
+            transcript_text,
+        )
+        expected_evidence = (
+            "body_only_sentinel" if triggered else "sentinel_not_observed"
+        )
+        if (
+            not isinstance(observation.get("triggered"), bool)
+            or observation.get("triggered") != triggered
+        ):
+            errors.append(f"trigger {observation_id}:triggered result mismatch")
+        expected_correct = triggered == case["should_trigger"]
+        if (
+            not isinstance(observation.get("correct"), bool)
+            or observation.get("correct") != expected_correct
+        ):
+            errors.append(f"trigger {observation_id}:correct result mismatch")
+        if observation.get("selected_skill") != prediction_document.get(
+            "selected_skill"
+        ):
+            errors.append(f"trigger {observation_id}:selected skill mismatch")
+        if observation.get("activation_evidence") != expected_evidence:
+            errors.append(f"trigger {observation_id}:activation evidence mismatch")
+    if set(file_hashes) != set(observed_ids):
+        errors.append("trigger-results:observation file hash inventory mismatch")
+    duplicate_observation_ids = sorted(
+        observation_id
+        for observation_id, count in Counter(observed_ids).items()
+        if count != 1
+    )
+    if duplicate_observation_ids:
+        errors.append(
+            "trigger-results:duplicate observation ids "
+            + repr(duplicate_observation_ids)
+        )
+    return errors
 
 
 def gate_value(gates: dict[str, Any], name: str) -> tuple[str, float]:
@@ -382,6 +660,11 @@ def validate_evidence_invariants(
     """Return non-compensable evidence identity and coverage failures."""
 
     issues: list[str] = []
+    issues.extend(
+        stage_method_receipt_validation_errors(
+            plan, "behavioral_task", "run-plan"
+        )
+    )
     anchor = evidence_identity(plan, "run-plan", issues)
     if anchor is None:
         return issues
@@ -454,7 +737,11 @@ def validate_evidence_invariants(
             if grader.get("returncode") != 0 or grader.get("validation_errors"):
                 issues.append(f"grader {run_id}:failed or invalid")
             validate_execution_receipt(
-                grader, f"grader {run_id}", CANONICAL_GRADER_TIMEOUT_SECONDS, issues
+                grader,
+                f"grader {run_id}",
+                CANONICAL_GRADER_TIMEOUT_SECONDS,
+                "grader",
+                issues,
             )
             grade = record.get("grade")
             contract = record.get("case_contract")
@@ -508,6 +795,7 @@ def validate_evidence_invariants(
             comparison,
             f"comparison {pair_id}",
             CANONICAL_COMPARATOR_TIMEOUT_SECONDS,
+            "blind_comparator",
             issues,
         )
         expected_rows = expected_pair_rows.get(pair_id, {})
@@ -589,6 +877,24 @@ def validate_evidence_invariants(
     trigger_identity = evidence_identity(trigger_results, "trigger-results", issues)
     if trigger_identity != anchor:
         issues.append("trigger-results:evaluation identity mismatch")
+    if trigger_results.get("model_isolation") != canonical_model_isolation_receipt():
+        issues.append("trigger-results:missing or unsupported model isolation receipt")
+    issues.extend(
+        stage_method_receipt_validation_errors(
+            trigger_results, "trigger", "trigger-results"
+        )
+    )
+    issues.extend(
+        trigger_fail_fast_receipt_validation_errors(
+            trigger_results, "trigger-results"
+        )
+    )
+    if trigger_results.get(
+        "workspace_environment_method"
+    ) != canonical_trigger_workspace_environment_method():
+        issues.append(
+            "trigger-results:missing or unsupported workspace-environment method"
+        )
     if trigger_results.get("skill_hashes") != expected_skill_hashes:
         issues.append("trigger-results:skill hashes do not match run-plan")
     if trigger_results.get("timeout_seconds") != CANONICAL_TRIGGER_TIMEOUT_SECONDS:
@@ -632,7 +938,15 @@ def validate_evidence_invariants(
             observation,
             f"trigger {observation_id}",
             CANONICAL_TRIGGER_TIMEOUT_SECONDS,
+            "trigger",
             issues,
+        )
+        issues.extend(
+            workspace_environment_receipt_validation_errors(
+                observation,
+                f"trigger {observation_id}",
+                require_absent_workspace=True,
+            )
         )
         if observation.get("correct") is not (
             observation.get("triggered") == observation.get("should_trigger")
@@ -797,6 +1111,11 @@ def main() -> int:
         triggers = load_trigger_results(args.trigger_results)
         thresholds = load_json(args.thresholds)
         trigger_suite = load_json(args.trigger_suite)
+        missing.extend(
+            validate_trigger_file_bindings(
+                triggers, args.trigger_results, trigger_suite
+            )
+        )
         trigger_repetitions = int(trigger_suite.get("protocol", {}).get("repetitions_per_case", 3))
         expected_trigger_observations = len(trigger_suite.get("cases", [])) * trigger_repetitions
         missing.extend(
@@ -887,15 +1206,19 @@ def main() -> int:
             }
         output = {
             "schema_version": "1.0",
+            "evaluation_method_version": EVALUATION_METHOD_VERSION,
             "generated_at": utc_now(),
             "run_dir": str(run_dir),
             "run_count": len(records),
             "graded_run_count": sum(record.get("grade") is not None for record in records),
             "blind_comparison_count": len(comparisons),
             "evaluation_receipt": {
+                "evaluation_method_version": EVALUATION_METHOD_VERSION,
+                "stage_methods": canonical_stage_methods(),
                 "execution_profile": plan.get("execution_profile"),
                 "repository": plan.get("repository"),
                 "skill_hashes": plan.get("skill_hashes"),
+                "workspace_input_hashes": plan.get("workspace_input_hashes"),
                 "repetitions": plan.get("repetitions"),
                 "blind_seed": blind_seed,
                 "timeouts_seconds": {
@@ -905,9 +1228,9 @@ def main() -> int:
                     "trigger": CANONICAL_TRIGGER_TIMEOUT_SECONDS,
                 },
                 "behavioral_method": {
-                    "skill_body_read_guard": TASK_SKILL_BODY_READ_GUARD,
-                    "ignore_user_config_scope": TASK_IGNORE_USER_CONFIG_SCOPE,
+                    **canonical_task_isolation_receipt(),
                 },
+                "model_isolation": canonical_model_isolation_receipt(),
                 "contract_hashes": {
                     **(plan.get("contract_hashes") or {}),
                     **((triggers or {}).get("contract_hashes") or {}),
