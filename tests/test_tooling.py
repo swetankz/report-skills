@@ -221,6 +221,48 @@ class ToolingTests(unittest.TestCase):
         ):
             self.assertEqual(path.read_text(encoding="utf-8").strip(), expected_header)
 
+    def test_shipped_csv_fixtures_and_templates_are_rectangular(self) -> None:
+        paths = sorted(
+            {
+                *(REPO_ROOT / "examples" / "synthetic-report" / "inputs").rglob("*.csv"),
+                *(REPO_ROOT / "templates").glob("*.csv"),
+                *(REPO_ROOT / "skills").glob("*/assets/templates/*.csv"),
+            }
+        )
+        self.assertGreaterEqual(len(paths), 9)
+        for path in paths:
+            with self.subTest(path=path.relative_to(REPO_ROOT).as_posix()):
+                with path.open("r", encoding="utf-8", newline="") as handle:
+                    rows = list(csv.reader(handle, strict=True))
+                self.assertTrue(rows, "CSV must contain a header")
+                width = len(rows[0])
+                self.assertGreater(width, 0, "CSV header must not be empty")
+                for row_number, row in enumerate(rows[1:], start=2):
+                    self.assertEqual(len(row), width, f"row {row_number} width")
+                    self.assertTrue(
+                        any(value.strip() for value in row),
+                        f"row {row_number} must not be logically blank",
+                    )
+
+    def test_shared_validation_conventions_reject_blank_csv_records(self) -> None:
+        required = (
+            "Write CSV files with a standards-compliant serializer",
+            "Require a nonempty header and exactly the header's field count in every logical record",
+            "Treat a zero-field or whitespace-only logical record anywhere",
+            "one terminal LF or CRLF",
+            "preserve embedded line breaks and blank physical lines only inside properly quoted fields",
+            "Do not rely on importers that silently drop empty records",
+        )
+        paths = [REPO_ROOT / "source" / "shared" / "validation-conventions.md"]
+        paths.extend(
+            sorted((REPO_ROOT / "skills").glob("*/references/validation-conventions.md"))
+        )
+        self.assertEqual(len(paths), len(EXPECTED_SKILLS) + 1)
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            for instruction in required:
+                self.assertIn(instruction, text)
+
     def test_benchmark_schema_declares_contract_bound_artifact_checks(self) -> None:
         schema = json.loads(
             (REPO_ROOT / "evals" / "schemas" / "benchmark-suite.schema.json").read_text(

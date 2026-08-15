@@ -41,6 +41,7 @@ from evaluation_common import (
     file_sha256,
     execution_receipt_validation_errors,
     find_codex_command,
+    fixture_csv_validation_errors,
     load_json,
     normalize_suite,
     persisted_run_plan_row,
@@ -364,6 +365,11 @@ def main() -> int:
         fixture = suite_fixture(suite_path, suite)
         if not fixture.is_dir():
             raise EvaluationError(f"Fixture does not exist: {fixture}")
+        fixture_errors = fixture_csv_validation_errors(fixture)
+        if fixture_errors:
+            raise EvaluationError(
+                "Fixture CSV validation failed:\n- " + "\n- ".join(fixture_errors)
+            )
         output_root = validate_output_root(args.output_root, args.allow_tracked_output)
         contamination = baseline_contamination_paths({run["skill"] for run in plan})
         hash_directory = tracked_directory_sha256 if args.execute else directory_sha256

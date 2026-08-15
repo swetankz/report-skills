@@ -225,26 +225,29 @@ def _csv_quote_error(payload: str) -> str | None:
     return None
 
 
-def _validate_csv_artifact(
+def csv_file_validation_errors(
     path: Path,
     label: str,
     expected_header: list[str] | None = None,
     min_rows: int = 0,
     unique_key: str | None = None,
+    subject: str = "artifact CSV",
 ) -> list[str]:
+    """Return strict structural errors for one UTF-8 CSV file."""
+
     errors: list[str] = []
     if path.is_symlink() or not path.is_file() or not stat.S_ISREG(path.lstat().st_mode):
-        return [f"artifact CSV {label} must be a regular file"]
+        return [f"{subject} {label} must be a regular file"]
     try:
         with path.open("r", encoding="utf-8", newline="") as handle:
             payload = handle.read()
             quote_error = _csv_quote_error(payload)
             if quote_error:
-                return [f"artifact CSV {label} cannot be parsed: {quote_error}"]
+                return [f"{subject} {label} cannot be parsed: {quote_error}"]
             rows = csv.reader(io.StringIO(payload, newline=""), strict=True)
             header = next(rows, None)
             if not header:
-                return [f"artifact CSV {label} has no header row"]
+                return [f"{subject} {label} has no header row"]
             normalized_headers = [
                 unicodedata.normalize("NFC", value).casefold() for value in header
             ]
@@ -252,9 +255,9 @@ def _validate_csv_artifact(
                 any(not value.strip() or value != value.strip() for value in header)
                 or len(normalized_headers) != len(set(normalized_headers))
             ):
-                errors.append(f"artifact CSV {label} has blank or duplicate headers")
+                errors.append(f"{subject} {label} has blank or duplicate headers")
             if expected_header is not None and header != expected_header:
-                errors.append(f"artifact CSV {label} header does not match its case contract")
+                errors.append(f"{subject} {label} header does not match its case contract")
             expected_width = len(header)
             key_index = header.index(unique_key) if unique_key in header else None
             seen_keys: set[str] = set()
@@ -263,25 +266,49 @@ def _validate_csv_artifact(
                 data_rows += 1
                 if len(row) != expected_width:
                     errors.append(
-                        f"artifact CSV {label} row {row_number} has "
+                        f"{subject} {label} row {row_number} has "
                         f"{len(row)} fields; expected {expected_width}"
                     )
+                    continue
+                if not any(value.strip() for value in row):
+                    errors.append(f"{subject} {label} row {row_number} is blank")
                     continue
                 if key_index is not None:
                     key = row[key_index]
                     normalized_key = unicodedata.normalize("NFC", key.strip()).casefold()
                     if not normalized_key or key != key.strip() or normalized_key in seen_keys:
                         errors.append(
-                            f"artifact CSV {label} row {row_number} has a blank, padded, "
+                            f"{subject} {label} row {row_number} has a blank, padded, "
                             f"or duplicate {unique_key}"
                         )
                     seen_keys.add(normalized_key)
             if data_rows < min_rows:
                 errors.append(
-                    f"artifact CSV {label} has {data_rows} data rows; expected at least {min_rows}"
+                    f"{subject} {label} has {data_rows} data rows; expected at least {min_rows}"
                 )
     except (OSError, UnicodeDecodeError, csv.Error) as error:
-        errors.append(f"artifact CSV {label} cannot be parsed: {error}")
+        errors.append(f"{subject} {label} cannot be parsed: {error}")
+    return errors
+
+
+def fixture_csv_validation_errors(fixture: Path) -> list[str]:
+    """Return structural errors for every CSV file in one benchmark fixture."""
+
+    errors: list[str] = []
+    for path in sorted(
+        fixture.rglob("*"),
+        key=lambda candidate: candidate.relative_to(fixture).as_posix(),
+    ):
+        relative = path.relative_to(fixture)
+        if path.suffix.casefold() != ".csv":
+            continue
+        errors.extend(
+            csv_file_validation_errors(
+                path,
+                relative.as_posix(),
+                subject="fixture CSV",
+            )
+        )
     return errors
 
 
@@ -316,7 +343,7 @@ def task_artifact_validation_errors(
                 continue
             checked.add(path)
             errors.extend(
-                _validate_csv_artifact(
+                csv_file_validation_errors(
                     path,
                     relative.as_posix(),
                     expected_header=check["header"],
@@ -335,7 +362,7 @@ def task_artifact_validation_errors(
         key=lambda candidate: candidate.relative_to(artifacts).as_posix(),
     ):
         errors.extend(
-            _validate_csv_artifact(path, path.relative_to(workspace).as_posix())
+            csv_file_validation_errors(path, path.relative_to(workspace).as_posix())
         )
     return errors
 
@@ -494,10 +521,9 @@ def snapshot_manifest_files() -> dict[str, str]:
     return validated
 
 
-def tracked_directory_sha256(root: Path) -> str:
-    """Hash exact tracked files, with a verified history-free snapshot fallback."""
+def repository_source_files() -> dict[str, Path]:
+    """Return the exact current source inventory from Git or a verified snapshot."""
 
-    relative_root = root.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
     try:
         root_result = subprocess.run(
             [
@@ -522,7 +548,7 @@ def tracked_directory_sha256(root: Path) -> str:
         and root_result.returncode == 0
         and Path(root_result.stdout.strip()).resolve() == REPO_ROOT.resolve()
     )
-    manifest_hashes: dict[str, str] | None = None
+    relative_paths: list[str]
     if exact_git_root:
         result = subprocess.run(
             [
@@ -532,44 +558,119 @@ def tracked_directory_sha256(root: Path) -> str:
                 "-C",
                 str(REPO_ROOT),
                 "ls-files",
-                "--",
-                relative_root,
+                "--stage",
+                "-z",
             ],
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="strict",
             check=False,
         )
         if result.returncode != 0:
+            detail = (result.stderr or result.stdout).decode(
+                "utf-8", errors="replace"
+            ).strip()
             raise EvaluationError(
-                f"Cannot list tracked files for {root}: "
-                f"{result.stderr.strip() or result.stdout.strip()}"
+                f"Cannot list repository source files: {detail}"
             )
-        tracked = [line for line in result.stdout.splitlines() if line]
+        relative_paths = []
+        collision_inventory: list[TrackedFile] = []
+        for entry in result.stdout.split(b"\0"):
+            if not entry:
+                continue
+            metadata, separator, raw_path = entry.partition(b"\t")
+            if not separator:
+                raise EvaluationError("Cannot parse repository source inventory")
+            try:
+                mode, object_id, stage = metadata.decode("ascii").split(" ", 2)
+                raw_relative = raw_path.decode("utf-8")
+                relative = validate_release_path(raw_relative)
+            except (UnicodeDecodeError, ValueError, SystemExit) as error:
+                raise EvaluationError(
+                    f"Unsafe repository source inventory entry: {entry!r}"
+                ) from error
+            if stage != "0" or mode not in {"100644", "100755"}:
+                raise EvaluationError(
+                    f"Non-regular repository source entry: {raw_relative} ({mode}, stage {stage})"
+                )
+            canonical = relative.as_posix()
+            if canonical != raw_relative:
+                raise EvaluationError(
+                    f"Noncanonical repository source path: {raw_relative!r}"
+                )
+            parts = tuple(part.casefold() for part in relative.parts)
+            if parts[:2] in {("evals", "review"), ("evals", "runs")}:
+                raise EvaluationError(f"Tracked raw evaluation path: {canonical}")
+            if canonical in relative_paths:
+                raise EvaluationError(f"Duplicate repository source path: {canonical}")
+            relative_paths.append(canonical)
+            collision_inventory.append(TrackedFile(relative, mode, object_id))
+        try:
+            validate_portable_collisions(collision_inventory)
+        except SystemExit as error:
+            raise EvaluationError(str(error)) from error
     else:
-        manifest_hashes = snapshot_manifest_files()
+        relative_paths = sorted(snapshot_manifest_files())
+
+    source_files: dict[str, Path] = {}
+    root = REPO_ROOT.resolve()
+    for raw_relative in sorted(relative_paths):
+        relative = PurePosixPath(raw_relative)
+        path = REPO_ROOT.joinpath(*relative.parts)
+        try:
+            path.resolve().relative_to(root)
+            info = path.lstat()
+        except (OSError, ValueError) as error:
+            raise EvaluationError(
+                f"Repository source file is missing or unsafe: {raw_relative}"
+            ) from error
+        is_reparse = bool(getattr(info, "st_file_attributes", 0) & 0x400)
+        if path.is_symlink() or is_reparse or not stat.S_ISREG(info.st_mode):
+            raise EvaluationError(f"Repository source file must be regular: {raw_relative}")
+        source_files[raw_relative] = path
+    if not source_files:
+        raise EvaluationError("Repository source inventory is empty")
+    return source_files
+
+
+def repository_csv_validation_errors() -> list[str]:
+    """Return structural errors for CSV files in the exact source inventory."""
+
+    errors: list[str] = []
+    for relative, path in repository_source_files().items():
+        if path.suffix.casefold() != ".csv":
+            continue
+        errors.extend(
+            csv_file_validation_errors(path, relative, subject="repository CSV")
+        )
+    return errors
+
+
+def tracked_directory_sha256(root: Path) -> str:
+    """Hash exact tracked files, with a verified history-free snapshot fallback."""
+
+    relative_root = root.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    inventory = repository_source_files()
+    if relative_root == ".":
+        tracked = inventory
+    else:
         prefix = f"{relative_root.rstrip('/')}/"
-        tracked = sorted(path for path in manifest_hashes if path.startswith(prefix))
+        tracked = {
+            relative: path
+            for relative, path in inventory.items()
+            if relative.startswith(prefix)
+        }
     if not tracked:
         raise EvaluationError(f"No tracked source files found under {root}")
     actual = [path for path in sorted(root.rglob("*")) if path.is_file()]
-    tracked_paths = [(REPO_ROOT / path).resolve() for path in tracked]
-    missing = sorted(
-        path.relative_to(REPO_ROOT).as_posix()
-        for path in tracked_paths
-        if not path.is_file()
+    tracked_paths = list(tracked.values())
+    extras = sorted(
+        path.relative_to(root).as_posix()
+        for path in set(actual) - set(tracked_paths)
     )
-    if missing:
-        raise EvaluationError(f"Tracked source files are missing under {root}: {missing}")
-    extras = sorted(path.relative_to(root).as_posix() for path in set(actual) - set(tracked_paths))
     if extras:
         raise EvaluationError(f"Untracked or ignored files affect evaluated directory {root}: {extras}")
     digest = hashlib.sha256()
-    for relative, path in sorted(zip(tracked, tracked_paths, strict=True)):
+    for relative, path in tracked.items():
         content_digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        if manifest_hashes is not None and content_digest != manifest_hashes[relative]:
-            raise EvaluationError(f"Source snapshot file hash mismatch: {relative}")
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
         digest.update(bytes.fromhex(content_digest))

@@ -10,6 +10,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from evaluation_common import EvaluationError, repository_csv_validation_errors
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = REPO_ROOT / "skills"
@@ -194,10 +196,18 @@ def validate_repository_links(errors: list[str]) -> None:
                 errors.append(f"{path.relative_to(REPO_ROOT).as_posix()}: broken local link {raw_target}")
 
 
+def validate_repository_csvs(errors: list[str]) -> None:
+    try:
+        errors.extend(repository_csv_validation_errors())
+    except EvaluationError as exc:
+        errors.append(str(exc))
+
+
 def main() -> int:
     errors: list[str] = []
     validate_plugin(errors)
     validate_repository_links(errors)
+    validate_repository_csvs(errors)
     mapping_config: dict[str, dict] = {}
     try:
         mapping = json.loads(MAP_PATH.read_text(encoding="utf-8"))

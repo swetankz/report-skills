@@ -19,6 +19,7 @@ from evaluation_common import (
     artifact_check_definition_errors,
     configuration_ids,
     configured_repetitions,
+    fixture_csv_validation_errors,
     load_json,
     normalize_suite,
     resolve_suite,
@@ -147,6 +148,8 @@ def validate_suite(path: Path, suite: dict[str, Any], errors: list[str]) -> None
     fixture = suite_fixture(path, suite)
     if not fixture.is_dir():
         errors.append(f"suite fixture does not exist: {fixture}")
+    else:
+        errors.extend(fixture_csv_validation_errors(fixture))
 
 
 def validate_thresholds(data: dict[str, Any], errors: list[str]) -> None:

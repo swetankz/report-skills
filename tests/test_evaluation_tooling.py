@@ -40,14 +40,18 @@ from evaluation_common import (  # noqa: E402
     codex_base_command,
     codex_runtime_command,
     codex_runtime_environment,
+    csv_file_validation_errors,
     execution_receipt_validation_errors,
     file_sha256,
+    fixture_csv_validation_errors,
     load_json,
     normalize_suite,
     persisted_run_plan_row,
     require_matching_context,
     require_clean_task_execution,
     require_complete_task_evidence,
+    repository_csv_validation_errors,
+    repository_source_files,
     run_codex,
     task_evidence_receipt,
     task_artifact_validation_errors,
@@ -83,7 +87,7 @@ from validate_release_eval_plan import (  # noqa: E402
     canonical_plan_rows,
     validate_release_eval_plan,
 )
-from validate_eval_suite import validate_model_output_schema  # noqa: E402
+from validate_eval_suite import validate_model_output_schema, validate_suite  # noqa: E402
 import evaluation_common  # noqa: E402
 import aggregate_benchmark  # noqa: E402
 import grade_behavioral_benchmark  # noqa: E402
@@ -129,6 +133,10 @@ class EvaluationToolingTests(unittest.TestCase):
 
             with patch.object(evaluation_common, "REPO_ROOT", snapshot):
                 self.assertEqual(
+                    repository_source_files(),
+                    {relative: skill_file},
+                )
+                self.assertEqual(
                     evaluation_common.tracked_directory_sha256(skill_root),
                     expected.hexdigest(),
                 )
@@ -166,6 +174,90 @@ class EvaluationToolingTests(unittest.TestCase):
                 skill_file.write_text("tampered\n", encoding="utf-8")
                 with self.assertRaisesRegex(EvaluationError, "hash mismatch"):
                     evaluation_common.tracked_directory_sha256(skill_root)
+
+    def test_repository_source_inventory_uses_index_and_current_worktree_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            repo = Path(temp_name) / "repo"
+            repo.mkdir()
+
+            def git(*arguments: str) -> None:
+                subprocess.run(
+                    ["git", "-C", str(repo), *arguments],
+                    check=True,
+                    capture_output=True,
+                )
+
+            git("init", "--quiet")
+            git("config", "user.name", "Synthetic Evaluation Test")
+            git("config", "user.email", "evaluation-test@example.invalid")
+            (repo / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+            tracked_csv = repo / "data.csv"
+            tracked_csv.write_text("id,value\n1,ok\n", encoding="utf-8")
+            git("add", ".gitignore", "data.csv")
+            git("commit", "--quiet", "-m", "source inventory")
+            ignored_csv = repo / "ignored" / "raw.csv"
+            ignored_csv.parent.mkdir()
+            ignored_csv.write_text("id,value\n1,bad\n\n", encoding="utf-8")
+            (repo / "SOURCE_SNAPSHOT_MANIFEST.json").write_text(
+                "not authoritative inside Git\n", encoding="utf-8"
+            )
+
+            with patch.object(evaluation_common, "REPO_ROOT", repo):
+                self.assertEqual(
+                    set(repository_source_files()),
+                    {".gitignore", "data.csv"},
+                )
+                self.assertEqual(repository_csv_validation_errors(), [])
+                tracked_csv.write_text("id,value\n1,ok\n\n", encoding="utf-8")
+                self.assertEqual(
+                    repository_csv_validation_errors(),
+                    ["repository CSV data.csv row 3 has 0 fields; expected 2"],
+                )
+                tracked_csv.write_text("id,value\n1,ok\n", encoding="utf-8")
+                raw_csv = repo / "evals" / "runs" / "raw.csv"
+                raw_csv.parent.mkdir(parents=True)
+                raw_csv.write_text("id,value\n1,private\n", encoding="utf-8")
+                git("add", "-f", "evals/runs/raw.csv")
+                with self.assertRaisesRegex(EvaluationError, "Tracked raw evaluation path"):
+                    repository_source_files()
+
+    def test_repository_source_inventory_rejects_nonportable_index_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            repo = Path(temp_name) / "repo"
+            repo.mkdir()
+            root_result = subprocess.CompletedProcess(
+                [], 0, f"{repo}\n", ""
+            )
+            object_id = "0" * 40
+            invalid_payloads = {
+                "symlink": f"120000 {object_id} 0\tdocs/link.csv\0".encode(),
+                "submodule": f"160000 {object_id} 0\tvendor/module\0".encode(),
+                "conflict stage": f"100644 {object_id} 2\tdata.csv\0".encode(),
+                "ADS": f"100644 {object_id} 0\tdata.csv:stream\0".encode(),
+                "raw eval": f"100644 {object_id} 0\tEVALS/RUNS/raw.csv\0".encode(),
+                "case collision": (
+                    f"100644 {object_id} 0\tdocs/Foo.csv\0"
+                    f"100644 {'1' * 40} 0\tdocs/foo.csv\0"
+                ).encode(),
+                "file-directory collision": (
+                    f"100644 {object_id} 0\tdocs/Foo\0"
+                    f"100644 {'1' * 40} 0\tdocs/foo/child.csv\0"
+                ).encode(),
+            }
+            with patch.object(evaluation_common, "REPO_ROOT", repo):
+                for label, payload in invalid_payloads.items():
+                    with self.subTest(label=label):
+                        inventory_result = subprocess.CompletedProcess(
+                            [], 0, payload, b""
+                        )
+                        with (
+                            patch(
+                                "evaluation_common.subprocess.run",
+                                side_effect=[root_result, inventory_result],
+                            ),
+                            self.assertRaises(EvaluationError),
+                        ):
+                            repository_source_files()
 
     def test_history_free_snapshot_manifest_rejects_noncanonical_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
@@ -811,6 +903,94 @@ class EvaluationToolingTests(unittest.TestCase):
             )
             self.assertTrue(validate_task_evidence_binding(metadata, run_dir, expected_contract))
 
+    def test_csv_validation_rejects_blank_records_and_preserves_valid_newlines(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            path = Path(temp_name) / "register.csv"
+            valid_payloads = (
+                b"id,value\nE-001,ok",
+                b"id,value\nE-001,ok\n",
+                b"id,value\r\nE-001,ok\r\n",
+                b'id,value\r\nE-001,"line one\r\n\r\nline two"\r\n',
+                b'id,value\nE-001,"comma, and ""quote"""\n',
+                b"id,value\nE-001,\n",
+            )
+            for payload in valid_payloads:
+                with self.subTest(payload=payload):
+                    path.write_bytes(payload)
+                    self.assertEqual(csv_file_validation_errors(path, "register.csv"), [])
+
+            path.write_bytes(b"id,value\nE-001,ok\n\n")
+            self.assertEqual(
+                csv_file_validation_errors(path, "register.csv"),
+                ["artifact CSV register.csv row 3 has 0 fields; expected 2"],
+            )
+            path.write_bytes(b"id,value\n,\n")
+            self.assertEqual(
+                csv_file_validation_errors(path, "register.csv"),
+                ["artifact CSV register.csv row 2 is blank"],
+            )
+
+    def test_fixture_csv_validation_covers_root_nested_and_declared_defect_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            fixture = Path(temp_name) / "fixture"
+            nested = fixture / "nested"
+            nested.mkdir(parents=True)
+            bad = nested / "bad.csv"
+            bad.write_text("a,b\n1,2\n\n", encoding="utf-8")
+            expected = ["fixture CSV nested/bad.csv row 3 has 0 fields; expected 2"]
+            self.assertEqual(fixture_csv_validation_errors(fixture), expected)
+
+            suite = copy.deepcopy(self.suite)
+            suite["fixture"] = str(fixture)
+            errors: list[str] = []
+            validate_suite(Path(temp_name) / "suite.json", suite, errors)
+            self.assertIn(expected[0], errors)
+
+            bad.unlink()
+            root_csv = fixture / "root.csv"
+            root_csv.write_text("a,b\n1,2\n\n", encoding="utf-8")
+            self.assertEqual(
+                fixture_csv_validation_errors(fixture),
+                ["fixture CSV root.csv row 3 has 0 fields; expected 2"],
+            )
+            root_csv.unlink()
+            declared_defect = fixture / "intentional-defects" / "malformed.csv"
+            declared_defect.parent.mkdir()
+            declared_defect.write_text("a,b\n1,2\n\n", encoding="utf-8")
+            self.assertEqual(
+                fixture_csv_validation_errors(fixture),
+                [
+                    "fixture CSV intentional-defects/malformed.csv row 3 has "
+                    "0 fields; expected 2"
+                ],
+            )
+            declared_defect.unlink()
+
+            nested_boundary_name = (
+                fixture / "usable" / "intentional-defects" / "bad.csv"
+            )
+            nested_boundary_name.parent.mkdir(parents=True)
+            nested_boundary_name.write_text("a,b\n1,2\n\n", encoding="utf-8")
+            self.assertEqual(
+                fixture_csv_validation_errors(fixture),
+                [
+                    "fixture CSV usable/intentional-defects/bad.csv row 3 has "
+                    "0 fields; expected 2"
+                ],
+            )
+            nested_boundary_name.unlink()
+
+            lookalike = fixture / "intentional-defects-public" / "bad.csv"
+            lookalike.parent.mkdir()
+            lookalike.write_text("a,b\n1,2\n\n", encoding="utf-8")
+            self.assertEqual(
+                fixture_csv_validation_errors(fixture),
+                [
+                    "fixture CSV intentional-defects-public/bad.csv row 3 has "
+                    "0 fields; expected 2"
+                ],
+            )
+
     def test_task_artifact_csv_validation_fails_closed_on_shifted_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             workspace = Path(temp_name) / "workspace"
@@ -1193,6 +1373,49 @@ class EvaluationToolingTests(unittest.TestCase):
             run_behavioral_benchmark.validate_workspace_path_budget(
                 REPO_ROOT / ("x" * 80), plan, fixture, path_limit=180
             )
+
+    def test_behavioral_main_rejects_fixture_csv_before_output_or_profile(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "run_behavioral_benchmark.py",
+                    "--execute",
+                    "--run-id",
+                    "fixture-csv-order-test",
+                    "--model",
+                    "gpt-5.6-sol",
+                    "--reasoning-effort",
+                    "ultra",
+                ],
+            ),
+            patch.object(
+                run_behavioral_benchmark,
+                "fixture_csv_validation_errors",
+                return_value=["fixture CSV inputs/bad.csv row 3 has 0 fields; expected 2"],
+            ),
+            patch.object(
+                run_behavioral_benchmark,
+                "validate_output_root",
+                side_effect=AssertionError("output setup must not run"),
+            ),
+            patch.object(
+                run_behavioral_benchmark,
+                "find_codex_command",
+                side_effect=AssertionError("profile discovery must not run"),
+            ),
+            patch.object(
+                run_behavioral_benchmark,
+                "repository_receipt",
+                side_effect=AssertionError("repository receipt must not run"),
+            ),
+            redirect_stderr(stderr),
+        ):
+            self.assertEqual(run_behavioral_benchmark.main(), 2)
+        self.assertIn("Fixture CSV validation failed", stderr.getvalue())
+        self.assertIn("inputs/bad.csv row 3", stderr.getvalue())
 
     def test_behavioral_main_checks_path_budget_before_profile_or_model(self) -> None:
         stderr = io.StringIO()

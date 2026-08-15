@@ -41,6 +41,10 @@ Bind every review to an artifact ID, version, hash or exact revision, timestamp,
 
 Do not infer a successful build, browser behavior, smooth motion, connectivity, deployment, or live edit from code inspection alone. Run or observe the required system and record the result.
 
+## Tabular artifacts
+
+Write CSV files with a standards-compliant serializer and re-open them with a strict UTF-8 CSV parser before accepting them. Require a nonempty header and exactly the header's field count in every logical record. Treat a zero-field or whitespace-only logical record anywhere, including after the final data row, as a blocking artifact error. A file may have no terminal line ending or one terminal LF or CRLF; preserve embedded line breaks and blank physical lines only inside properly quoted fields. Do not rely on importers that silently drop empty records.
+
 ## Negative tests
 
 Test that the workflow stops safely when:
@@ -56,4 +60,3 @@ Test that the workflow stops safely when:
 ## Fresh-context evaluation
 
 Evaluate complex skills in a fresh context with raw synthetic artifacts. Keep the expected answer and suspected defects in the rubric, not in the prompt. Do not count a test as generalizable when it succeeds only with leaked project context.
-
