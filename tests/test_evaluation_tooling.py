@@ -1891,14 +1891,31 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertIn("not an explicit invocation", prompt)
         self.assertIn("explicit-only or implicit-invocation policy", prompt)
         self.assertIn("Decide whether a skill applies before opening its body", prompt)
+        self.assertIn("invocation policy before any SKILL.md description", prompt)
+        self.assertIn("only a policy-eligible skill's declared description", prompt)
         self.assertIn("directory or filename is never enough", prompt)
-        self.assertIn("agents/openai.yaml metadata and SKILL.md frontmatter", prompt)
-        self.assertIn("lacks its required exact invocation token", prompt)
+        self.assertIn("agents/openai.yaml first and separately", prompt)
+        self.assertIn("before any SKILL.md access", prompt)
+        self.assertIn("declares allow_implicit_invocation: false", prompt)
+        self.assertIn("required exact invocation token", prompt)
+        self.assertIn("never open its SKILL.md, including its frontmatter", prompt)
+        self.assertIn("remains eligible under the invocation policy", prompt)
+        self.assertIn("through the exact closing delimiter", prompt)
+        self.assertIn("declined, fails, or cannot be bounded exactly", prompt)
+        self.assertIn("fail closed", prompt)
+        self.assertIn("Get-Content -Head", prompt)
+        self.assertIn("Get-Content -TotalCount", prompt)
+        self.assertIn("Select-Object -First", prompt)
+        self.assertIn("never use a whole-file read", prompt)
         self.assertIn("read its SKILL.md completely", prompt)
         self.assertIn("follow its instructions", prompt)
         self.assertIn("merely to fill the response schema", prompt)
         self.assertIn("Description-only classification does not count", prompt)
         self.assertIn("set it to null", prompt)
+        self.assertLess(
+            prompt.index("agents/openai.yaml first and separately"),
+            prompt.index("remains eligible under the invocation policy"),
+        )
         candidates = {
             case["candidate_skill"]
             for case in load_json(REPO_ROOT / "evals" / "trigger-evals.json")["cases"]
