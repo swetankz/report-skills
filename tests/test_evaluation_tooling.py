@@ -1337,6 +1337,94 @@ class EvaluationToolingTests(unittest.TestCase):
                     task_trace_isolation_validation_errors(transcript_path), command
                 )
 
+    def test_task_trace_rejects_host_capability_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            transcript_path = Path(temp_name) / "transcript.jsonl"
+
+            def errors_for(command: str) -> list[str]:
+                transcript_path.write_text(
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "command_execution",
+                                "command": command,
+                            },
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                return task_trace_isolation_validation_errors(transcript_path)
+
+            forbidden = (
+                'powershell.exe -Command "$yaml = Get-Command ConvertFrom-Yaml; '
+                '$ruby = Get-Command ruby"',
+                '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
+                "-Command '$yaml = Get-Command ConvertFrom-Yaml; "
+                '$ruby = Get-Command ruby | ConvertTo-Json"',
+                "Get-Module -ListAvailable",
+                "Microsoft.PowerShell.Core\\Get-Command ruby",
+                "bash -lc 'command -v ruby'",
+                "bash -lc 'if command -v ruby; then echo ready; fi'",
+                "which ruby",
+                "/usr/bin/which ruby",
+                "cmd.exe /c where.exe ruby",
+                "C:\\Windows\\System32\\where.exe ruby",
+                '& "C:\\Windows\\System32\\where.exe" ruby',
+                'Write-Output ok; & "C:\\Windows\\System32\\where.exe" ruby',
+                'Write-Output "$(Get-Command ruby)"',
+                "bash -lc 'echo `which ruby`'",
+                "Invoke-Expression 'Get-Command ruby'",
+                '& powershell.exe -NoProfile -Command "Get-Command ruby"',
+                '& "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
+                '-NoProfile -Command "Get-Command ruby"',
+                "/usr/bin/env bash -lc 'command -v ruby'",
+                "env FOO=bar bash -lc 'command -v ruby'",
+                "env -i bash -lc 'command -v ruby'",
+                'pwsh -Command "Write-Output `\\"Get-Command ruby`\\"; Get-Command node"',
+                'bash -lc "printf \\"command -v ruby\\"; command -v node"',
+                'cmd /c "echo \\"where ruby\\" & where node"',
+            )
+            for command in forbidden:
+                with self.subTest(command=command):
+                    errors = errors_for(command)
+                    self.assertTrue(errors, command)
+                    self.assertIn("host capability discovery", errors[0])
+
+            allowed = (
+                "Get-Content fixture/brief.yaml",
+                "Get-FileHash artifacts/sites-release-record.yaml",
+                "Get-ChildItem fixture -File | where { $_.Length -gt 0 }",
+                "pwsh -Command \"Write-Output command which\"",
+                'cmd /c "set text=where ruby"',
+                "/usr/bin/env echo bash -lc 'command -v ruby'",
+                "/usr/bin/env printf bash -lc 'command -v ruby'",
+                "bash -lc './tools/get-command fixture/input.txt'",
+                "bash -lc './tools/get-module fixture/input.txt'",
+                "& .\\tools\\get-command fixture/input.txt",
+                "& .\\tools\\get-module fixture/input.txt",
+                "bash -lc './tools/which fixture/input.txt'",
+                "& .\\tools\\where.exe fixture/input.txt",
+                "rg -n 'Get-Command|Get-Module -ListAvailable|command -v|which|where.exe' transcript.jsonl",
+                'powershell.exe -Command "rg -n \'Get-Command|where.exe\' transcript.jsonl"',
+                'pwsh -Command "Write-Output \'Get-Command ruby\'"',
+                "Select-String -Pattern Get-Command transcript.jsonl",
+                "./tools/report-builder --version",
+                "& .\\tools\\report-builder.exe -V",
+                "rg -n 'ruby --version' transcript.jsonl",
+            )
+            for command in allowed:
+                with self.subTest(command=command):
+                    self.assertEqual(errors_for(command), [], command)
+
+            # Compound heredoc records are intentionally outside this regex guard;
+            # the semantic skill rule and downstream safety review remain binding.
+            self.assertEqual(
+                errors_for("bash -lc \"cat <<EOF\nwhich ruby\nEOF\""),
+                [],
+            )
+
     def test_external_task_workspace_persistence_is_hash_bound(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

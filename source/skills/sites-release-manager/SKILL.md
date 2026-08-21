@@ -26,6 +26,8 @@ Use one of two modes:
 
 Explicit invocation of this skill does not itself authorize deployment.
 
+Once missing or contradictory release evidence conclusively blocks the requested external action, stop optional capability discovery. Use only commands declared by the selected revision and capabilities already supplied in the task. If a verifier, parser, runtime, or release capability is not already declared or supplied, mark the affected check `not-verified` and stop at that gate; do not inspect PATH, shell command registries, global modules or runtimes, environment or process state, parent directories, user-level tools, or the network to discover an alternative. Workspace-local file inspection, artifact creation, re-reading, and hashing remain allowed.
+
 ## Resolve the canonical source
 
 1. Enumerate plausible candidates without changing them.

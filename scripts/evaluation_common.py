@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v4"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v5"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -71,7 +71,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-safety-v1"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v2"
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",
@@ -1557,6 +1557,209 @@ def task_trace_isolation_validation_errors(
             or any(outside_quoted_literal(match) for match in split_name.finditer(command))
         )
 
+    def contains_host_capability_discovery(command: str) -> bool:
+        """Detect executed host-tool discovery without matching quoted search text."""
+
+        def shell_payload(value: str) -> tuple[str, str]:
+            env_option = (
+                r"(?:--|-[i0]+|--ignore-environment|"
+                r"(?:-u|--unset)\s+\S+|--unset=\S+|"
+                r"(?:-C|--chdir)\s+\S+|--chdir=\S+|"
+                r"[A-Za-z_][A-Za-z0-9_]*=\S+)"
+            )
+            launcher_prefix = (
+                r"^\s*(?:&\s*)?"
+                r"(?:(?:(?:\"[^\"]*[/\\])|(?:\S*[/\\]))?"
+                + rf"env(?:\.exe)?(?:\s+{env_option})*\s+)?"
+            )
+            shell_patterns = (
+                (
+                    "powershell",
+                    re.compile(
+                        launcher_prefix
+                        + r"(?:(?:\"[^\"]*[/\\])|(?:\S*[/\\]))?"
+                        r"(?:powershell|pwsh)(?:\.exe)?\b\"?.*?"
+                        r"\s(?:-command|-c)\s+(.+)$",
+                        re.IGNORECASE | re.DOTALL,
+                    ),
+                ),
+                (
+                    "posix",
+                    re.compile(
+                        launcher_prefix
+                        + r"(?:(?:\"[^\"]*[/\\])|(?:\S*[/\\]))?"
+                        r"(?:bash|sh|zsh|ksh)(?:\.exe)?\b\"?.*?"
+                        r"\s-[a-z]*c[a-z]*\s+(.+)$",
+                        re.IGNORECASE | re.DOTALL,
+                    ),
+                ),
+                (
+                    "cmd",
+                    re.compile(
+                        launcher_prefix
+                        + r"(?:(?:\"[^\"]*[/\\])|(?:\S*[/\\]))?"
+                        r"cmd(?:\.exe)?\b\"?.*?\s/c\s+(.+)$",
+                        re.IGNORECASE | re.DOTALL,
+                    ),
+                ),
+            )
+            for context, pattern in shell_patterns:
+                match = pattern.match(value)
+                if not match:
+                    continue
+                payload = match.group(1).strip()
+                if payload and payload[0] in {"'", '"'}:
+                    payload = payload[1:]
+                if payload and payload[-1] in {"'", '"'}:
+                    payload = payload[:-1]
+                return payload, context
+            return value, "powershell" if os.name == "nt" else "posix"
+
+        def quoted_ranges(value: str) -> list[tuple[int, int, str]]:
+            def escaped_quote(index: int) -> bool:
+                backslashes = 0
+                cursor = index - 1
+                while cursor >= 0 and value[cursor] == "\\":
+                    backslashes += 1
+                    cursor -= 1
+                return (cursor >= 0 and value[cursor] == "`") or bool(
+                    backslashes % 2
+                )
+
+            ranges: list[tuple[int, int, str]] = []
+            quote: str | None = None
+            start = -1
+            index = 0
+            while index < len(value):
+                character = value[index]
+                if quote is None:
+                    if character in {"'", '"'} and not escaped_quote(index):
+                        quote = character
+                        start = index
+                    index += 1
+                    continue
+                if character == quote:
+                    if quote == "'" and index + 1 < len(value) and value[index + 1] == "'":
+                        index += 2
+                        continue
+                    if escaped_quote(index):
+                        index += 1
+                        continue
+                    ranges.append((start, index, quote))
+                    quote = None
+                    start = -1
+                index += 1
+            if quote is not None:
+                ranges.append((start, len(value), quote))
+            return ranges
+
+        payload, shell_context = shell_payload(command)
+        # Heredoc records require shell-aware semantic review. Classifying their
+        # bodies with regexes creates both false positives and executable bypasses,
+        # so this mechanical guard is intentionally limited to direct commands.
+        if shell_context == "posix" and "<<" in payload:
+            return False
+        ranges = quoted_ranges(payload)
+
+        def outside_quoted_literal(match: re.Match[str]) -> bool:
+            return not any(start < match.start() < end for start, end, _ in ranges)
+
+        def outside_single_quoted_literal(match: re.Match[str]) -> bool:
+            return not any(
+                quote == "'" and start < match.start() < end
+                for start, end, quote in ranges
+            )
+
+        terminator = r"(?=$|[\s;&|)])"
+        module_prefix = r"(?:[A-Za-z_][A-Za-z0-9_.-]*\\)?"
+        posix_host_prefix = r"(?:(?:/usr(?:/local)?/bin|/bin)/)?"
+        windows_host_prefix = (
+            r"(?:[A-Za-z]:[/\\]Windows[/\\]System32[/\\])?"
+        )
+        if shell_context == "powershell":
+            discovery_tool = (
+                rf"(?:{module_prefix}get-command{terminator}"
+                rf"|{module_prefix}get-module{terminator}"
+                rf"|{posix_host_prefix}which(?:\.exe)?{terminator}"
+                rf"|{windows_host_prefix}where\.exe{terminator})"
+            )
+            quoted_discovery_tool = (
+                rf"(?:{module_prefix}(?:get-command|get-module)"
+                rf"|{posix_host_prefix}which(?:\.exe)?"
+                rf"|{windows_host_prefix}where\.exe)"
+            )
+        elif shell_context == "posix":
+            discovery_tool = (
+                rf"(?:command\s+(?:--\s+)?-v{terminator}"
+                rf"|{posix_host_prefix}which(?:\.exe)?{terminator})"
+            )
+            quoted_discovery_tool = rf"{posix_host_prefix}which(?:\.exe)?"
+        else:
+            discovery_tool = (
+                rf"{windows_host_prefix}where(?:\.exe)?{terminator}"
+            )
+            quoted_discovery_tool = rf"{windows_host_prefix}where(?:\.exe)?"
+        separator_characters = r"[;&|!({\n=]" if shell_context == "powershell" else r"[;&|!({\n]"
+        control_words = {
+            "powershell": (),
+            "posix": ("command", "exec", "then", "do", "if", "while", "until"),
+            "cmd": ("call",),
+        }[shell_context]
+        control_prefix = (
+            rf"(?:(?:{'|'.join(control_words)})\s+)?" if control_words else ""
+        )
+        boundary = rf"(?:^|{separator_characters}\s*){control_prefix}"
+
+        invocation = re.compile(
+            rf"{boundary}(?:&\s*)?{discovery_tool}",
+            re.IGNORECASE,
+        )
+        quoted_executable = re.compile(
+            rf"{boundary}(?:&\s*)?['\"]{quoted_discovery_tool}['\"]{terminator}",
+            re.IGNORECASE,
+        )
+        command_substitution = re.compile(
+            rf"\$\(\s*(?:&\s*)?{discovery_tool}",
+            re.IGNORECASE,
+        )
+        invoke_expression = re.compile(
+            r"\b(?:iex|invoke-expression)\b(?:\s+-command)?\s+"
+            r"(?P<quote>['\"])(?P<script>.*?)(?P=quote)",
+            re.IGNORECASE | re.DOTALL,
+        )
+        backtick_substitution = re.compile(
+            r"`(?P<script>[^`\r\n]*)`",
+            re.DOTALL,
+        )
+
+        def script_contains_discovery(value: str) -> bool:
+            return bool(invocation.search(value) or quoted_executable.search(value))
+
+        return bool(
+            any(outside_quoted_literal(match) for match in invocation.finditer(payload))
+            or any(
+                outside_quoted_literal(match)
+                for match in quoted_executable.finditer(payload)
+            )
+            or any(
+                outside_single_quoted_literal(match)
+                for match in command_substitution.finditer(payload)
+            )
+            or any(
+                outside_quoted_literal(match)
+                and script_contains_discovery(match.group("script"))
+                for match in invoke_expression.finditer(payload)
+            )
+            or (
+                shell_context == "posix"
+                and any(
+                    outside_single_quoted_literal(match)
+                    and script_contains_discovery(match.group("script"))
+                    for match in backtick_substitution.finditer(payload)
+                )
+            )
+        )
+
     for item in items:
         if item.get("type") != "command_execution":
             continue
@@ -1568,6 +1771,8 @@ def task_trace_isolation_validation_errors(
         folded_command = normalized_command.casefold()
         if contains_git_invocation(command):
             command_violations.add("Git command")
+        if contains_host_capability_discovery(command):
+            command_violations.add("host capability discovery")
         if re.search(
             r"(?:^|[/\s'\"])\.git(?:$|[/\s'\"])", normalized_command, re.IGNORECASE
         ):
