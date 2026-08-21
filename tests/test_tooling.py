@@ -22,6 +22,7 @@ RELEASE_SCRIPT = REPO_ROOT / "scripts" / "create_release_package.py"
 SOURCE_SNAPSHOT_SCRIPT = REPO_ROOT / "scripts" / "create_source_snapshot.py"
 RELEASE_INVENTORY_SCRIPT = REPO_ROOT / "scripts" / "release_inventory.py"
 VERIFY_RELEASE_SCRIPT = REPO_ROOT / "scripts" / "verify_release_artifacts.py"
+VALIDATE_REPOSITORY_SCRIPT = REPO_ROOT / "scripts" / "validate_repository.py"
 EXPECTED_SKILLS = {
     "report-skills",
     "evidence-first-report",
@@ -72,6 +73,115 @@ def tree_hashes(root: Path) -> dict[str, str]:
 
 
 class ToolingTests(unittest.TestCase):
+    def test_plugin_version_accepts_stable_and_numeric_release_candidates(self) -> None:
+        scripts_path = str(REPO_ROOT / "scripts")
+        with mock.patch.object(sys, "path", [scripts_path, *sys.path]):
+            validator = load_script_module(
+                VALIDATE_REPOSITORY_SCRIPT, "test_validate_repository_versions"
+            )
+        for version in ("0.2.0", "0.2.0-rc.1", "10.20.30-rc.12"):
+            with self.subTest(version=version):
+                self.assertTrue(validator.valid_plugin_version(version))
+        for version in (
+            "01.2.0",
+            "0.02.0",
+            "0.2.00",
+            "0.2.0-rc.01",
+            "0.2.0rc1",
+            "v0.2.0-rc.1",
+            "0.2.0-beta.1",
+            "1.2٢.3",
+            "1.2.3-rc.1٢",
+        ):
+            with self.subTest(version=version):
+                self.assertFalse(validator.valid_plugin_version(version))
+
+    def test_release_candidate_identifiers_are_preserved_in_assets_and_manifests(self) -> None:
+        inventory_module = load_script_module(
+            RELEASE_INVENTORY_SCRIPT, "test_release_inventory_rc_contract"
+        )
+        with mock.patch.dict(sys.modules, {"release_inventory": inventory_module}):
+            release_module = load_script_module(
+                RELEASE_SCRIPT, "test_create_release_package_rc_contract"
+            )
+            source_module = load_script_module(
+                SOURCE_SNAPSHOT_SCRIPT, "test_create_source_snapshot_rc_contract"
+            )
+
+        version = "0.2.0-rc.1"
+        tag = "v0.2.0-rc.1"
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            with mock.patch.object(release_module, "DIST", root):
+                plugin_archive, plugin_sidecar = release_module.release_artifact_paths(
+                    version
+                )
+            with mock.patch.object(source_module, "DIST", root):
+                source_archive, source_sidecar = source_module.source_artifact_paths(
+                    version
+                )
+            self.assertEqual(plugin_archive.name, "report-skills-0.2.0-rc.1.zip")
+            self.assertEqual(
+                plugin_sidecar.name, "report-skills-0.2.0-rc.1.zip.sha256"
+            )
+            self.assertEqual(
+                source_archive.name, "report-skills-source-0.2.0-rc.1.zip"
+            )
+            self.assertEqual(
+                source_sidecar.name, "report-skills-source-0.2.0-rc.1.zip.sha256"
+            )
+
+            plugin_stage = root / "plugin"
+            source_stage = root / "source"
+            plugin_stage.mkdir()
+            source_stage.mkdir()
+            (plugin_stage / "README.md").write_text("plugin\n", encoding="utf-8")
+            (source_stage / "README.md").write_text("source\n", encoding="utf-8")
+            release_module.write_release_manifest(plugin_stage, version, tag)
+            source_module.write_manifest(source_stage, version, tag)
+            plugin_manifest = json.loads(
+                (plugin_stage / "RELEASE_MANIFEST.json").read_text(encoding="utf-8")
+            )
+            source_manifest = json.loads(
+                (source_stage / "SOURCE_SNAPSHOT_MANIFEST.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                {
+                    key: plugin_manifest[key]
+                    for key in (
+                        "version",
+                        "publication_state",
+                        "external_publication_authorized",
+                        "authorized_release_tag",
+                    )
+                },
+                {
+                    "version": version,
+                    "publication_state": "approved-public-candidate",
+                    "external_publication_authorized": True,
+                    "authorized_release_tag": tag,
+                },
+            )
+            self.assertEqual(
+                {
+                    key: source_manifest[key]
+                    for key in (
+                        "version",
+                        "publication_state",
+                        "external_publication_authorized",
+                        "authorized_release_tag",
+                    )
+                },
+                {
+                    "version": version,
+                    "publication_state": "approved-public-source-candidate",
+                    "external_publication_authorized": True,
+                    "authorized_release_tag": tag,
+                },
+            )
+
     def test_plugin_and_tooling_versions_match(self) -> None:
         plugin = json.loads(
             (REPO_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
@@ -396,7 +506,7 @@ class ToolingTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_release_authorization_tag_must_match_version(self) -> None:
-        for script in (RELEASE_SCRIPT, SOURCE_SNAPSHOT_SCRIPT):
+        for script in (RELEASE_SCRIPT, SOURCE_SNAPSHOT_SCRIPT, VERIFY_RELEASE_SCRIPT):
             result = subprocess.run(
                 [sys.executable, str(script), "--authorized-release-tag", "v9.9.9"],
                 check=False,

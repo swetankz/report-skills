@@ -1131,6 +1131,71 @@ class EvaluationToolingTests(unittest.TestCase):
             )
             self.assertEqual(task_trace_isolation_validation_errors(transcript_path), [])
 
+            write_command(
+                '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
+                "-Command \"rg -n -i 'curl\\.exe|git push|git pull|git clone' transcript.jsonl\""
+            )
+            self.assertEqual(task_trace_isolation_validation_errors(transcript_path), [])
+
+            for command in (
+                "rg -c 'git push' transcript.jsonl",
+                "grep -c 'git push' transcript.jsonl",
+                "pwsh -Command \"Write-Output 'git status'\"",
+                "& 'legit' --help",
+                '& "C:\\Program Files\\Legit\\legit.exe" --help',
+                'Start-Process "legit.exe"',
+                'pwsh -Command "\'git\'; Write-Output ok"',
+                'pwsh -Command "Write-Output (\'git\')"',
+                'pwsh -Command "if (\'git\' -eq \'git\') { Write-Output ok }"',
+                'cmd.exe /c \'start "git" echo hello\'',
+            ):
+                write_command(command)
+                self.assertEqual(
+                    task_trace_isolation_validation_errors(transcript_path), [], command
+                )
+
+            for command in (
+                'powershell.exe -Command "Write-Output ok; git status"',
+                "powershell.exe -Command 'Write-Output ok; git status'",
+                "bash -lc 'git status'",
+                "pwsh -Command 'if ($true) { git status }'",
+                'pwsh -Command "& \'git\' status"',
+                '& "C:\\Program Files\\Git\\cmd\\git.exe" status',
+                'cmd.exe /c "call git status"',
+                "pwsh -NoProfile -Command git status",
+                "pwsh -c git status",
+                "bash -c git status",
+                "sh -c git status",
+                "cmd.exe /d /s /c git status",
+                "cmd.exe /c call git status",
+                "Start-Process -Wait -FilePath git -ArgumentList status",
+                'pwsh -Command "Start-Process -NoNewWindow -FilePath git -ArgumentList status"',
+                "wsl.exe git status",
+                "env git status",
+                'bash -c "if git status; then Write-Output ok; fi"',
+                'bash -c "exec git status"',
+                'cmd.exe /c "if exist fixture.txt git status"',
+                "wsl.exe -d Ubuntu git status",
+                "wsl.exe -u root git status",
+                'pwsh -Command "if ($true) { Start-Process -Wait -FilePath git -ArgumentList status }"',
+                'cmd.exe /c "start /wait git status"',
+                "env -u FOO git status",
+                'bash -c "time git status"',
+                'bash -c "sudo git status"',
+                'bash -c "nohup git status"',
+                'cmd.exe /c "if defined TEMP git status"',
+                'cmd.exe /c "if errorlevel 1 git status"',
+                'cmd.exe /c \'start "title" git status\'',
+                'cmd.exe /c \'if "a"=="a" git status\'',
+                'cmd.exe /c \'if /i "a"=="A" git status\'',
+                "Invoke-Expression 'git status'",
+                "Write-Output ok | git hash-object --stdin",
+            ):
+                write_command(command)
+                self.assertTrue(
+                    task_trace_isolation_validation_errors(transcript_path), command
+                )
+
     def test_external_task_workspace_persistence_is_hash_bound(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

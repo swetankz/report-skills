@@ -1,6 +1,6 @@
 # Installation
 
-Use the [latest published GitHub release](https://github.com/swetankz/report-skills/releases) for installation. Release tags and assets are immutable; `main` is the moving development branch.
+Use the latest stable [GitHub release](https://github.com/swetankz/report-skills/releases) for normal installation. Release tags and assets are immutable; `main` is the moving development branch. Install a GitHub pre-release only when intentionally evaluating a release candidate.
 
 ## Complete plugin
 

@@ -2,7 +2,7 @@
 
 All notable repository-level changes are documented here.
 
-## 0.2.0 — 2026-08-14
+## 0.2.0-rc.1 — 2026-08-21
 
 - Resolve and profile exactly one native Codex implementation, reproduce the package wrapper's managed environment, and bind every model-backed call to kill-on-timeout process-tree handling plus canonical stage-specific timeout and termination receipts. Failed calls stop their stage and cannot be graded, compared, resumed, or salvaged from terminal-looking output.
 
@@ -21,6 +21,7 @@ All notable repository-level changes are documented here.
 - Store observations and blind-comparison bundles under compact physical directories while retaining canonical logical identities, and fail before model calls if a copied fixture or injected-skill input would exceed the safe Windows path budget.
 - Build both public archives from a clean-HEAD, regular-Git-blob allowlist; reject tracked raw evaluation trees and non-regular entries while excluding ignored or untracked local material, and independently verify ZIP ordering, fixed metadata, manifest hashes, checksums, inventory, and double-build reproducibility.
 - Preserve tracked fixture and skill hashing in the history-free source snapshot through its verified file manifest, so extracted validation does not depend on a `.git` directory.
+- Treat quoted search patterns as data rather than executed Git commands in trace isolation checks, while recursively validating quoted shell command payloads; bind the corrected classifier to evaluation method `report-skills-release-evaluation-v3`.
 
 ## 0.1.0 — 2026-08-13
 

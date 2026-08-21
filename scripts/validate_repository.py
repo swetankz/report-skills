@@ -32,6 +32,16 @@ EXPECTED_SKILLS = {
 }
 EXPLICIT_ONLY = {"report-skills", "sites-release-manager", "pencil-safe-editor"}
 FORBIDDEN_SKILL_DOCS = {"README.md", "CHANGELOG.md", "INSTALLATION_GUIDE.md", "QUICK_REFERENCE.md"}
+PLUGIN_VERSION_PATTERN = re.compile(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-rc\.(?:0|[1-9][0-9]*))?"
+)
+
+
+def valid_plugin_version(value: object) -> bool:
+    """Accept stable versions and numeric release candidates without ambiguity."""
+
+    return bool(PLUGIN_VERSION_PATTERN.fullmatch(str(value)))
 
 
 def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
@@ -73,8 +83,10 @@ def validate_plugin(errors: list[str]) -> None:
         return
     if data.get("name") != "report-skills":
         errors.append("plugin name must be report-skills")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", str(data.get("version", ""))):
-        errors.append("plugin version must use strict semantic versioning")
+    if not valid_plugin_version(data.get("version", "")):
+        errors.append(
+            "plugin version must be stable semantic versioning or a numeric -rc.N prerelease"
+        )
     project_path = REPO_ROOT / "pyproject.toml"
     try:
         project = tomllib.loads(project_path.read_text(encoding="utf-8"))

@@ -26,6 +26,11 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def source_artifact_paths(version: str) -> tuple[Path, Path]:
+    archive = DIST / f"report-skills-source-{version}.zip"
+    return archive, archive.with_suffix(".zip.sha256")
+
+
 def run_check(*arguments: str) -> None:
     result = subprocess.run([sys.executable, *arguments], cwd=REPO_ROOT, check=False)
     if result.returncode:
@@ -103,8 +108,7 @@ def main() -> int:
     run_check(str(REPO_ROOT / "scripts" / "test_standalone_packages.py"))
 
     DIST.mkdir(exist_ok=True)
-    archive = DIST / f"report-skills-source-{version}.zip"
-    checksum = archive.with_suffix(".zip.sha256")
+    archive, checksum = source_artifact_paths(version)
     with tempfile.TemporaryDirectory(prefix="report-skills-source-") as temp_name:
         stage = Path(temp_name) / "report-skills"
         stage.mkdir()

@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v2"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v3"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -1167,15 +1167,329 @@ def task_trace_isolation_validation_errors(
     command_violations: set[str] = set()
     repository_root = str(REPO_ROOT.resolve()).replace("\\", "/").casefold()
 
-    def contains_git_invocation(command: str) -> bool:
-        executable = r"(?:['\"]?[^'\"\s;&|]*[/\\])?git(?:\.exe)?"
+    def contains_git_invocation(command: str, shell_context: str = "powershell") -> bool:
+        def quoted_ranges(value: str) -> list[tuple[int, int, str]]:
+            ranges: list[tuple[int, int, str]] = []
+            quote: str | None = None
+            start = -1
+            index = 0
+            while index < len(value):
+                character = value[index]
+                if quote is None:
+                    if character in {"'", '"'}:
+                        quote = character
+                        start = index
+                    index += 1
+                    continue
+                if character == quote:
+                    if quote == "'" and index + 1 < len(value) and value[index + 1] == "'":
+                        index += 2
+                        continue
+                    backslashes = 0
+                    cursor = index - 1
+                    while cursor >= 0 and value[cursor] == "\\":
+                        backslashes += 1
+                        cursor -= 1
+                    if (cursor >= 0 and value[cursor] == "`") or backslashes % 2:
+                        index += 1
+                        continue
+                    ranges.append((start, index, value[start + 1 : index]))
+                    quote = None
+                    start = -1
+                index += 1
+            if quote is not None:
+                ranges.append((start, len(value), value[start + 1 :]))
+            return ranges
+
+        ranges = quoted_ranges(command)
+
+        def command_token_records(value: str) -> list[tuple[str, bool]]:
+            tokens: list[tuple[str, bool]] = []
+            token: list[str] = []
+            token_was_quoted = False
+            quote: str | None = None
+            index = 0
+            while index < len(value):
+                character = value[index]
+                if quote is None:
+                    if character in {"'", '"'}:
+                        quote = character
+                        token_was_quoted = True
+                    elif character.isspace():
+                        if token or token_was_quoted:
+                            tokens.append(("".join(token), token_was_quoted))
+                            token = []
+                            token_was_quoted = False
+                    else:
+                        token.append(character)
+                    index += 1
+                    continue
+                if character == quote:
+                    if quote == "'" and index + 1 < len(value) and value[index + 1] == "'":
+                        token.append(character)
+                        index += 2
+                        continue
+                    backslashes = 0
+                    cursor = index - 1
+                    while cursor >= 0 and value[cursor] == "\\":
+                        backslashes += 1
+                        cursor -= 1
+                    if (cursor >= 0 and value[cursor] == "`") or backslashes % 2:
+                        token.append(character)
+                        index += 1
+                        continue
+                    quote = None
+                else:
+                    token.append(character)
+                index += 1
+            if token or token_was_quoted:
+                tokens.append(("".join(token), token_was_quoted))
+            return tokens
+
+        def executable_name(value: str) -> str:
+            return (
+                value.strip("(){}")
+                .replace("\\", "/")
+                .rsplit("/", 1)[-1]
+                .casefold()
+            )
+
+        def unquoted_segments(value: str) -> list[str]:
+            value_ranges = quoted_ranges(value)
+            segments: list[str] = []
+            start = 0
+            for index, character in enumerate(value):
+                if character not in ";&|(){}\n":
+                    continue
+                if any(begin < index < end for begin, end, _ in value_ranges):
+                    continue
+                segments.append(value[start:index])
+                start = index + 1
+            segments.append(value[start:])
+            return segments
+
+        powershell_names = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
+        command_prompt_names = {"cmd", "cmd.exe"}
+        posix_shell_names = {
+            "bash",
+            "bash.exe",
+            "sh",
+            "sh.exe",
+            "zsh",
+            "zsh.exe",
+            "ksh",
+            "ksh.exe",
+        }
+        wrappers = {"wsl", "wsl.exe", "env", "env.exe", "command"}
+        git_names = {"git", "git.exe"}
+
+        def is_git_executable(value: str) -> bool:
+            return executable_name(value) in git_names
+
+        for segment in unquoted_segments(command):
+            records = command_token_records(segment)
+            if not records:
+                continue
+            values = [value for value, _quoted in records]
+            first = executable_name(values[0])
+            if shell_context == "posix" and first in {
+                "if",
+                "then",
+                "do",
+                "while",
+                "until",
+                "exec",
+                "command",
+                "!",
+            } and len(values) > 1:
+                if contains_git_invocation(" ".join(values[1:]), shell_context):
+                    return True
+
+            if first in {"start-process", "start"}:
+                value_options = {
+                    "-argumentlist",
+                    "-credential",
+                    "-environment",
+                    "-redirectstandarderror",
+                    "-redirectstandardinput",
+                    "-redirectstandardoutput",
+                    "-verb",
+                    "-windowstyle",
+                    "-workingdirectory",
+                }
+                index = 1
+                cmd_title_skipped = False
+                while index < len(values):
+                    option = values[index].casefold()
+                    if option == "-filepath" and index + 1 < len(values):
+                        if is_git_executable(values[index + 1]):
+                            return True
+                        break
+                    if option in value_options:
+                        index += 2
+                        continue
+                    if option.startswith("-") or (
+                        first == "start" and option.startswith("/")
+                    ):
+                        index += 1
+                        continue
+                    if (
+                        first == "start"
+                        and shell_context == "cmd"
+                        and records[index][1]
+                        and not cmd_title_skipped
+                    ):
+                        cmd_title_skipped = True
+                        index += 1
+                        continue
+                    if is_git_executable(values[index]):
+                        return True
+                    break
+
+            if first in {"wsl", "wsl.exe"}:
+                value_options = {
+                    "-d",
+                    "--distribution",
+                    "-u",
+                    "--user",
+                    "--cd",
+                }
+                index = 1
+                while index < len(values):
+                    value = values[index]
+                    folded = value.casefold()
+                    if folded in value_options:
+                        index += 2
+                        continue
+                    if folded in {"-e", "--exec"}:
+                        index += 1
+                        continue
+                    if value.startswith("-"):
+                        index += 1
+                        continue
+                    if is_git_executable(value):
+                        return True
+                    break
+
+            if first in {"env", "env.exe"}:
+                value_options = {"-u", "--unset", "-c", "--chdir", "-s", "--split-string"}
+                index = 1
+                while index < len(values):
+                    value = values[index]
+                    folded = value.casefold()
+                    if folded in value_options:
+                        index += 2
+                        continue
+                    if value.startswith("-") or "=" in value:
+                        index += 1
+                        continue
+                    if is_git_executable(value):
+                        return True
+                    break
+
+            if first in {"sudo", "sudo.exe", "nohup", "time", "nice", "setsid"}:
+                value_options = {"-u", "--user", "-g", "--group", "-n", "--adjustment"}
+                index = 1
+                while index < len(values):
+                    value = values[index]
+                    folded = value.casefold()
+                    if folded in value_options:
+                        index += 2
+                        continue
+                    if value.startswith("-"):
+                        index += 1
+                        continue
+                    if is_git_executable(value):
+                        return True
+                    break
+
+            if shell_context == "cmd" and first == "if":
+                index = 1
+                while index < len(values) and values[index].casefold() in {
+                    "not",
+                    "/i",
+                }:
+                    index += 1
+                condition = values[index].casefold() if index < len(values) else ""
+                command_index: int | None = None
+                if condition in {"exist", "defined", "errorlevel", "cmdextversion"}:
+                    command_index = index + 2
+                elif "==" in condition:
+                    command_index = index + 1
+                elif index + 1 < len(values) and values[index + 1].casefold() in {
+                    "==",
+                    "equ",
+                    "neq",
+                    "lss",
+                    "leq",
+                    "gtr",
+                    "geq",
+                }:
+                    command_index = index + 3
+                if command_index is not None:
+                    if command_index < len(values) and values[
+                        command_index
+                    ].casefold() == "call":
+                        command_index += 1
+                    if command_index < len(values) and is_git_executable(
+                        values[command_index]
+                    ):
+                        return True
+
+            if first in {"iex", "invoke-expression"} and len(values) > 1:
+                if contains_git_invocation(" ".join(values[1:]), "powershell"):
+                    return True
+
+            shell_indexes = [0]
+            if first in wrappers:
+                shell_indexes.extend(range(1, len(values)))
+            for shell_index in shell_indexes:
+                shell = executable_name(values[shell_index])
+                context: str | None = None
+                flag_index: int | None = None
+                for candidate in range(shell_index + 1, len(values)):
+                    flag = values[candidate].casefold()
+                    if shell in powershell_names and flag in {"-command", "-c"}:
+                        context = "powershell"
+                        flag_index = candidate
+                        break
+                    if shell in command_prompt_names and flag == "/c":
+                        context = "cmd"
+                        flag_index = candidate
+                        break
+                    if shell in posix_shell_names and re.fullmatch(
+                        r"-[a-z]*c[a-z]*", flag
+                    ):
+                        context = "posix"
+                        flag_index = candidate
+                        break
+                if context and flag_index is not None and flag_index + 1 < len(values):
+                    if contains_git_invocation(
+                        " ".join(values[flag_index + 1 :]), context
+                    ):
+                        return True
+
+        def outside_quoted_literal(match: re.Match[str]) -> bool:
+            return not any(start < match.start() < end for start, end, _ in ranges)
+
+        quoted_executable = (
+            r"(?:'(?:[^']*[/\\])?git(?:\.exe)?'"
+            r"|\"(?:[^\"]*[/\\])?git(?:\.exe)?\")"
+        )
+        unquoted_executable = r"(?:[^'\"\s;&|(){}]*[/\\])?git(?:\.exe)?"
+        executable = rf"(?:{quoted_executable}|{unquoted_executable})"
         invocation = re.compile(
-            rf"(?:^|[;&|(\n]\s*|-(?:command|c)\s+['\"]?\s*)"
-            rf"(?:&\s*)?{executable}(?=$|['\"\s;&|)])",
+            rf"(?:^|[;&|!({{\n]\s*)"
+            rf"(?:(?:(?:call|command|exec|then|do|if|while|until)\s+|&\s*){executable}"
+            rf"|{unquoted_executable})(?=$|['\"\s;&|)])",
+            re.IGNORECASE,
+        )
+        quoted_context_invocation = re.compile(
+            rf"(?:^|[;&|!({{\n]\s*){quoted_executable}(?=$|[\s;&|)])",
             re.IGNORECASE,
         )
         explicit_launcher = re.compile(
-            rf"\b(?:start-process(?:\s+-filepath)?|cmd(?:\.exe)?\s+/c)\s+['\"]?{executable}",
+            rf"\bstart-process(?:\s+-filepath)?\s+{executable}",
             re.IGNORECASE,
         )
         split_name = re.compile(
@@ -1184,9 +1498,19 @@ def task_trace_isolation_validation_errors(
             re.IGNORECASE,
         )
         return bool(
-            invocation.search(command)
-            or explicit_launcher.search(command)
-            or split_name.search(command)
+            any(outside_quoted_literal(match) for match in invocation.finditer(command))
+            or (
+                shell_context in {"cmd", "posix"}
+                and any(
+                    outside_quoted_literal(match)
+                    for match in quoted_context_invocation.finditer(command)
+                )
+            )
+            or any(
+                outside_quoted_literal(match)
+                for match in explicit_launcher.finditer(command)
+            )
+            or any(outside_quoted_literal(match) for match in split_name.finditer(command))
         )
 
     for item in items:
