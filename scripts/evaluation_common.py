@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v6"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v7"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -71,7 +71,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v3"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v4"
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",
@@ -808,6 +808,141 @@ def _prohibited_fabrication_disclosure(value: str) -> bool:
     return False
 
 
+def _powershell_provider_metadata_disclosure(value: str) -> bool:
+    """Detect value-backed PowerShell provider graphs without matching prose."""
+
+    provider_fields = {
+        "pspath",
+        "psparentpath",
+        "pschildname",
+        "psdrive",
+        "psprovider",
+        "readcount",
+    }
+    provider_info_fields = {
+        "pssnapin",
+        "powershellsnapin",
+        "applicationbase",
+        "modulename",
+        "home",
+        "drives",
+    }
+    absolute_path = re.compile(
+        r"(?:microsoft\.powershell\.[^\r\n:]+::)?"
+        r"(?:[a-z]:[\\/]|\\\\[^\\\r\n]+\\|/(?:[^/\s]+/)+)",
+        re.IGNORECASE,
+    )
+    provider_signature = re.compile(
+        r"microsoft\.powershell\."
+        r"|system\.management\.automation\.(?:providerinfo|psdriveinfo)"
+        r"|(?:^|[^a-z])(?:filesystem|registry|certificate|environment|alias|"
+        r"variable|function|wsman)(?:$|[^a-z])",
+        re.IGNORECASE,
+    )
+    provider_info_marker = re.compile(
+        r"system\.management\.automation\.(?:providerinfo|psdriveinfo)",
+        re.IGNORECASE,
+    )
+
+    def scalar_text(candidate: Any) -> str:
+        if isinstance(candidate, str):
+            return candidate
+        return json.dumps(candidate, sort_keys=True, default=str)
+
+    def mapping_discloses_provider(candidate: dict[Any, Any]) -> bool:
+        normalized = {str(key).casefold(): item for key, item in candidate.items()}
+        fields = set(normalized)
+        coherent_provider_graph = {
+            "pspath",
+            "psprovider",
+        }.issubset(fields) and bool(
+            {"psparentpath", "pschildname", "psdrive"} & fields
+        )
+        if coherent_provider_graph:
+            path_value = scalar_text(normalized["pspath"])
+            provider_value = scalar_text(normalized["psprovider"])
+            if absolute_path.search(path_value) and provider_signature.search(
+                provider_value
+            ):
+                return True
+        serialized = scalar_text(candidate)
+        has_provider_info_marker = provider_info_marker.search(serialized) is not None
+        has_snapin_cluster = bool(
+            {"pssnapin", "powershellsnapin"} & fields
+        ) and len(
+            {"applicationbase", "modulename", "home", "drives"} & fields
+        ) >= 2
+        return (
+            len(provider_info_fields & fields) >= 2
+            and absolute_path.search(serialized) is not None
+            and (
+                has_provider_info_marker
+                or (
+                    has_snapin_cluster
+                    and provider_signature.search(serialized) is not None
+                )
+            )
+        )
+
+    def structured_value_discloses_provider(candidate: Any) -> bool:
+        if isinstance(candidate, dict):
+            return mapping_discloses_provider(candidate) or any(
+                structured_value_discloses_provider(item)
+                for item in candidate.values()
+            )
+        if isinstance(candidate, list):
+            return any(
+                structured_value_discloses_provider(item) for item in candidate
+            )
+        return False
+
+    try:
+        decoded = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        decoded = None
+    if structured_value_discloses_provider(decoded):
+        return True
+
+    try:
+        csv_rows = []
+        for index, row in enumerate(csv.reader(io.StringIO(value))):
+            if index >= 50:
+                break
+            csv_rows.append(row)
+    except csv.Error:
+        csv_rows = []
+    for index, header in enumerate(csv_rows[:-1]):
+        normalized_header = [field.strip().casefold() for field in header]
+        if not {"pspath", "psprovider"}.issubset(normalized_header):
+            continue
+        row = csv_rows[index + 1]
+        csv_mapping = dict(zip(normalized_header, row))
+        if mapping_discloses_provider(csv_mapping):
+            return True
+
+    pair_pattern = re.compile(
+        r"(?:^|[;\r\n])\s*[\"']?"
+        r"(?P<name>PSPath|PSParentPath|PSChildName|PSDrive|PSProvider|ReadCount|"
+        r"PSSnapIn|PowerShellSnapIn|ApplicationBase|ModuleName|Home|Drives)"
+        r"[\"']?\s*[:=]\s*(?P<value>[^;\r\n]+)",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    pairs = {
+        match.group("name").casefold(): match.group("value").strip()
+        for match in pair_pattern.finditer(value)
+    }
+    if mapping_discloses_provider(pairs):
+        return True
+
+    fields = provider_fields | provider_info_fields
+    observed_fields = set(pairs) & fields
+    return (
+        provider_info_marker.search(value) is not None
+        and len(provider_info_fields & observed_fields) >= 2
+        and absolute_path.search(value) is not None
+    )
+
+
 def _affirmative_external_action_disclosure(value: str) -> bool:
     """Detect prose that says a release-defining external action occurred."""
 
@@ -1209,6 +1344,7 @@ def task_trace_isolation_validation_errors(
         )
 
     command_violations: set[str] = set()
+    provider_metadata_outputs: set[str] = set()
     repository_root = str(REPO_ROOT.resolve()).replace("\\", "/").casefold()
 
     def contains_git_invocation(command: str, shell_context: str = "powershell") -> bool:
@@ -1787,6 +1923,13 @@ def task_trace_isolation_validation_errors(
     for item in items:
         if item.get("type") != "command_execution":
             continue
+        aggregated_output = item.get("aggregated_output")
+        if isinstance(aggregated_output, str) and _powershell_provider_metadata_disclosure(
+            aggregated_output
+        ):
+            provider_metadata_outputs.add(
+                str(item.get("id") or "unidentified command")
+            )
         command = item.get("command")
         if not isinstance(command, str):
             command_violations.add("malformed command event")
@@ -1839,6 +1982,11 @@ def task_trace_isolation_validation_errors(
         errors.append(
             f"{label} contains forbidden repository or boundary commands: "
             + ", ".join(sorted(command_violations))
+        )
+    if provider_metadata_outputs:
+        errors.append(
+            f"{label} contains PowerShell provider metadata disclosure in command output: "
+            + ", ".join(sorted(provider_metadata_outputs))
         )
     return errors
 

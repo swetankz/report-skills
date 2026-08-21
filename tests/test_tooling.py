@@ -242,6 +242,20 @@ class ToolingTests(unittest.TestCase):
                 self.assertIn('short_description: "Explicit-only:', short_description, skill)
                 self.assertIn(f"${skill}", short_description, skill)
 
+    def test_sites_release_manager_materializes_plain_verification_values(self) -> None:
+        required_instructions = (
+            "materialize plain file text or select only the required primitive scalar fields",
+            "Do not serialize filesystem or provider objects",
+            "[System.IO.File]::ReadAllText(...)",
+            "that evaluation run cannot be repaired in place",
+        )
+        for tree in (REPO_ROOT / "source" / "skills", REPO_ROOT / "skills"):
+            text = (tree / "sites-release-manager" / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+            for instruction in required_instructions:
+                self.assertIn(instruction, text)
+
     def test_evidence_report_records_a_disposition_for_every_review_pass(self) -> None:
         required_instruction = (
             "Create at least one `revision-log.md` entry linked to a finding from each "

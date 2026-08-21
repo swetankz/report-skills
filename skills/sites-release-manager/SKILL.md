@@ -28,6 +28,8 @@ Explicit invocation of this skill does not itself authorize deployment.
 
 Once missing or contradictory release evidence conclusively blocks the requested external action, stop optional capability discovery. Use only commands declared by the selected revision and capabilities already supplied in the task. If a verifier, parser, runtime, or release capability is not already declared or supplied, mark the affected check `not-verified` and stop at that gate; do not inspect PATH, shell command registries, global modules or runtimes, environment or process state, parent directories, user-level tools, or the network to discover an alternative. Workspace-local file inspection, artifact creation, re-reading, and hashing remain allowed.
 
+For workspace-local verification, materialize plain file text or select only the required primitive scalar fields before displaying or serializing results. Do not serialize filesystem or provider objects, command-return objects, or shell-decorated values that can carry parent, home, system, or runtime metadata. In Windows PowerShell, prefer `[System.IO.File]::ReadAllText(...)` for file content and construct output only from explicit scalar fields. If an allowed local check exposes provider metadata, record the boundary access instead of sanitizing or reclassifying it; that evaluation run cannot be repaired in place.
+
 ## Resolve the canonical source
 
 1. Enumerate plausible candidates without changing them.

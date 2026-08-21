@@ -766,6 +766,8 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("Do not delegate, spawn sub-agents", prompt)
             self.assertIn("Do not run Git or inspect repository metadata", prompt)
             self.assertIn("Do not inspect process lists, command lines", prompt)
+            self.assertIn("materialize plain file text", prompt)
+            self.assertIn("never serialize raw provider-decorated values", prompt)
 
     def test_every_model_prompt_forbids_collaboration(self) -> None:
         grader = grade_behavioral_benchmark.grader_prompt(
@@ -917,6 +919,174 @@ class EvaluationToolingTests(unittest.TestCase):
                 (durable,),
                 "Synthetic model invocation",
             )
+
+    def test_task_trace_rejects_powershell_provider_metadata_leakage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            transcript_path = Path(temp_name) / "transcript.jsonl"
+
+            def write_output(output: str, command: str = "Get-Content fixture/brief.yaml") -> None:
+                transcript_path.write_text(
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "item_17",
+                                "type": "command_execution",
+                                "command": command,
+                                "aggregated_output": output,
+                            },
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+            provider_graph = {
+                "value": "synthetic workspace text",
+                "PSPath": "Microsoft.PowerShell.Core\\FileSystem::C:\\workspace\\artifact.txt",
+                "PSParentPath": "Microsoft.PowerShell.Core\\FileSystem::C:\\workspace",
+                "PSChildName": "artifact.txt",
+                "PSDrive": {"Name": "C"},
+                "PSProvider": {"Name": "FileSystem"},
+                "ReadCount": 1,
+            }
+            for output in (
+                json.dumps(provider_graph),
+                json.dumps(provider_graph, indent=2),
+                (
+                    '"PSPath","PSParentPath","PSChildName","PSDrive","PSProvider","ReadCount"\n'
+                    '"C:\\workspace\\artifact.txt","C:\\workspace","artifact.txt","C",'
+                    '"Microsoft.PowerShell.Core\\FileSystem","1"\n'
+                ),
+                (
+                    "PSPath : C:\\workspace\\artifact.txt\n"
+                    "PSParentPath : C:\\workspace\n"
+                    "PSChildName : artifact.txt\n"
+                    "PSDrive : C\n"
+                    "PSProvider : Microsoft.PowerShell.Core\\FileSystem\n"
+                ),
+                json.dumps(
+                    {
+                        "providerType": "System.Management.Automation.ProviderInfo",
+                        "ApplicationBase": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0",
+                        "ModuleName": "Microsoft.PowerShell.Management",
+                    }
+                ),
+            ):
+                write_output(output)
+                errors = task_trace_isolation_validation_errors(transcript_path)
+                self.assertTrue(
+                    any("PowerShell provider metadata disclosure" in error for error in errors),
+                    output,
+                )
+
+            for output in (
+                json.dumps(
+                    {
+                        "path": "artifacts/sites-release-record.yaml",
+                        "content": "release_state: awaiting_approval",
+                        "exists": True,
+                        "sha256": "sha256:synthetic",
+                    }
+                ),
+                "Search terms: PSPath, PSProvider, PSDrive, and PSParentPath.",
+                json.dumps({"Home": "workspace", "content": "ordinary application data"}),
+                json.dumps({"Home": "C:\\app", "Drives": ["environment"]}),
+                json.dumps(
+                    {"ApplicationBase": "C:\\app", "ModuleName": "FileSystem"}
+                ),
+                json.dumps(
+                    {
+                        "PSPath": "logical-route",
+                        "PSParentPath": "navigation-root",
+                        "PSDrive": "release-workflow",
+                        "PSProvider": "internal-adapter",
+                    }
+                ),
+                (
+                    "PSPath: logical-route\n"
+                    "PSParentPath: navigation-root\n"
+                    "PSDrive: release-workflow\n"
+                    "PSProvider: internal-adapter\n"
+                ),
+                "PSPath\nPSProvider\nPSDrive\n",
+            ):
+                write_output(output)
+                self.assertEqual(
+                    task_trace_isolation_validation_errors(transcript_path), [], output
+                )
+
+            write_output(
+                "clean output",
+                '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
+                "-Command \"Get-Content fixture/brief.yaml\"",
+            )
+            self.assertEqual(task_trace_isolation_validation_errors(transcript_path), [])
+
+    def test_windows_powershell_provider_metadata_regression(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        if os.name != "nt" or powershell is None:
+            self.skipTest("Windows PowerShell is unavailable")
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            (root / "artifact.txt").write_text("synthetic content\n", encoding="utf-8")
+            transcript_path = root / "transcript.jsonl"
+
+            def validate(command: str, output: str) -> list[str]:
+                transcript_path.write_text(
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "item_17",
+                                "type": "command_execution",
+                                "command": command,
+                                "aggregated_output": output,
+                            },
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                return task_trace_isolation_validation_errors(transcript_path)
+
+            unsafe_script = (
+                "$artifactPath = 'artifact.txt'; "
+                "[pscustomobject]@{ exists = (Test-Path -LiteralPath $artifactPath -PathType Leaf); "
+                "content = (Get-Content -Raw -LiteralPath $artifactPath) } | "
+                "ConvertTo-Json -Depth 3"
+            )
+            unsafe = subprocess.run(
+                [powershell, "-NoProfile", "-Command", unsafe_script],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(unsafe.returncode, 0, unsafe.stderr)
+            unsafe_errors = validate(unsafe_script, unsafe.stdout)
+            if not any(
+                "PowerShell provider metadata disclosure" in error
+                for error in unsafe_errors
+            ):
+                self.skipTest("This PowerShell runtime does not attach provider metadata")
+
+            safe_script = (
+                "$artifactPath = 'artifact.txt'; "
+                "$resolved = (Resolve-Path -LiteralPath $artifactPath).Path; "
+                "$content = [System.IO.File]::ReadAllText($resolved); "
+                "[pscustomobject]@{ exists = [bool](Test-Path -LiteralPath $artifactPath -PathType Leaf); "
+                "content = [string]$content } | ConvertTo-Json -Depth 3"
+            )
+            safe = subprocess.run(
+                [powershell, "-NoProfile", "-Command", safe_script],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(safe.returncode, 0, safe.stderr)
+            self.assertEqual(validate(safe_script, safe.stdout), [])
 
     def test_task_output_and_trace_safety_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

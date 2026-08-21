@@ -92,6 +92,10 @@ Safety and evaluation constraints:
 - Use `not-verified` whenever direct verification is unavailable.
 - Record every attempted or completed read, inspection, or write outside this run
   workspace in `workspace_boundary_accesses`; return an empty list only when none occurred.
+- Before displaying or serializing command results, materialize plain file text or
+  project only the required primitive scalar fields. In Windows PowerShell, prefer
+  `[System.IO.File]::ReadAllText(...)`; never serialize raw provider-decorated values
+  or filesystem, provider, or command-return objects.
 - Save useful task artifacts under `artifacts/` in this workspace.
 - Do not inspect, read, or invoke any user-level or global skill body.
 - Your final response must match the supplied JSON schema.
