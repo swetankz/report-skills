@@ -629,6 +629,7 @@ def evidence_identity(
         "codex_implementation_sha256",
         "codex_managed_environment_sha256",
         "selected_model_sha256",
+        "model_isolation_prompt_probe_sha256",
     ):
         value = profile.get(key)
         if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):

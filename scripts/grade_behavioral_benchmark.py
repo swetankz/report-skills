@@ -35,6 +35,7 @@ from evaluation_common import (
     load_json,
     repository_receipt,
     require_matching_context,
+    require_model_invocation_isolation,
     require_complete_task_evidence,
     require_clean_stage_execution,
     require_pinned_profile,
@@ -223,6 +224,7 @@ def _require_isolated_grader_invocation(
 ) -> None:
     """Fail before invocation if argv or environment leaks durable paths."""
 
+    require_model_invocation_isolation(command, "Grader model invocation")
     forbidden = _forbidden_path_tokens(*_grader_durable_paths(run_dir))
     for argument in command:
         if _discloses_forbidden_path(argument, forbidden):
@@ -339,6 +341,7 @@ Assertions and weights:
 {assertions}
 
 Rules:
+- Do not delegate, spawn sub-agents, or use collaboration tools; complete the grade in one top-level trace.
 - Return one expectation result for every assertion, preserving assertion_id and text.
 - `evidence` must cite a concrete file/path, output field, transcript event, or clearly state that evidence is missing.
 - Missing evidence fails the assertion.

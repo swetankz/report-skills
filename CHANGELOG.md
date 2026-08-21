@@ -22,6 +22,7 @@ All notable repository-level changes are documented here.
 - Build both public archives from a clean-HEAD, regular-Git-blob allowlist; reject tracked raw evaluation trees and non-regular entries while excluding ignored or untracked local material, and independently verify ZIP ordering, fixed metadata, manifest hashes, checksums, inventory, and double-build reproducibility.
 - Preserve tracked fixture and skill hashing in the history-free source snapshot through its verified file manifest, so extracted validation does not depend on a `.git` directory.
 - Treat quoted search patterns as data rather than executed Git commands in trace isolation checks, while recursively validating quoted shell command payloads; bind the corrected classifier to evaluation method `report-skills-release-evaluation-v3`.
+- Disable both Codex multi-agent feature paths and set `agents.enabled=false` for every release-defining call, reject alternate profiles plus noncanonical or compound configuration overrides, inspect the model-visible prompt from a fresh external temporary directory before spending evaluation tokens, fail closed on an unexpected prompt schema, empty developer content, or sentinel, bind a deterministic normalized developer-context hash across execution receipts, add no-collaboration prompt guards to graders and trigger observations, and bind the strengthened isolation receipt to evaluation method `report-skills-release-evaluation-v4`.
 
 ## 0.1.0 — 2026-08-13
 

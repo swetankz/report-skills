@@ -131,6 +131,14 @@ def safe_task_output() -> dict:
     }
 
 
+def model_isolation_profile_receipt(probe_hash: str = "9" * 64) -> dict:
+    return {
+        "model_isolation_prompt_probe": "debug-prompt-input-no-agent-context-v2",
+        "model_isolation_prompt_schema": "prompt-input-list-with-sentinel-v1",
+        "model_isolation_prompt_probe_sha256": probe_hash,
+    }
+
+
 def safe_workspace_persistence(
     run_dir: Path,
     configuration: str = "without_skill",
@@ -473,6 +481,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "execution_profile": {
                 "codex_invocation": CODEX_INVOCATION_MODE,
                 "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                **model_isolation_profile_receipt(),
             },
             "contract_hashes": {
                 "benchmark_suite_sha256": hashes["benchmark_suite_sha256"],
@@ -693,10 +702,40 @@ class EvaluationToolingTests(unittest.TestCase):
         )
         self.assertIn("gpt-5.6-sol", command)
         self.assertIn('model_reasoning_effort="ultra"', command)
-        self.assertEqual(command[command.index("--disable") + 1], "multi_agent")
+        disabled_features = [
+            command[index + 1]
+            for index, argument in enumerate(command[:-1])
+            if argument == "--disable"
+        ]
+        config_values = [
+            command[index + 1]
+            for index, argument in enumerate(command[:-1])
+            if argument == "--config"
+        ]
+        self.assertEqual(disabled_features, ["multi_agent", "multi_agent_v2"])
+        self.assertEqual(
+            config_values,
+            ["agents.enabled=false", 'model_reasoning_effort="ultra"'],
+        )
         self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-sol")
         self.assertEqual(
-            command[command.index("--config") + 1], 'model_reasoning_effort="ultra"'
+            canonical_model_isolation_receipt(),
+            {
+                "multi_agent": False,
+                "agents_enabled": False,
+                "multi_agent_guard": "feature-and-agent-tools-disabled-v2",
+                "feature_overrides": [
+                    "--disable multi_agent",
+                    "--disable multi_agent_v2",
+                ],
+                "agent_tools_override": "--config agents.enabled=false",
+                "prompt_context_probe": {
+                    "method": "debug-prompt-input-no-agent-context-v2",
+                    "schema": "prompt-input-list-with-sentinel-v1",
+                    "profile_receipt": "normalized-developer-context-sha256-v1",
+                },
+                "collaboration_guard": "no-collaboration-tool-events-v1",
+            },
         )
         self.assertNotIn("--approve-for-me", command)
         self.assertIn("--sandbox", command)
@@ -727,6 +766,78 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("Do not delegate, spawn sub-agents", prompt)
             self.assertIn("Do not run Git or inspect repository metadata", prompt)
             self.assertIn("Do not inspect process lists, command lines", prompt)
+
+    def test_every_model_prompt_forbids_collaboration(self) -> None:
+        grader = grade_behavioral_benchmark.grader_prompt(
+            {"case_id": "case", "configuration": "with_skill"},
+            {"assertions": []},
+        )
+        trigger = run_trigger_evals.trigger_task_prompt("Synthetic request")
+        comparator = run_blind_comparisons.comparison_prompt(
+            {"pair_id": "pair"}, {"assertions": []}
+        )
+        for prompt in (grader, trigger, comparator):
+            self.assertIn("delegate", prompt)
+            self.assertIn("collaboration tools", prompt)
+
+    def test_model_invocation_preflight_requires_exact_collaboration_controls(self) -> None:
+        valid = [
+            "codex",
+            "exec",
+            "--disable",
+            "multi_agent",
+            "--disable",
+            "multi_agent_v2",
+            "--config",
+            "agents.enabled=false",
+        ]
+        evaluation_common.require_model_invocation_isolation(
+            valid, "Synthetic model invocation"
+        )
+        invalid_commands = (
+            valid[:4] + valid[6:],
+            valid[:-1] + ["agents.enabled=true"],
+            valid + ["--enable", "multi_agent"],
+            valid + ["--config", "features.multi_agent=true"],
+            valid + ["--config", "features={ multi_agent = true }"],
+            valid + ["--config", "agents={ enabled = true }"],
+            valid + ["-cagents={ enabled = true }"],
+            valid + ["-cfeatures.multi_agent=true"],
+            valid + ['-c"agents".enabled=true'],
+            valid + ["--config", '"features".multi_agent=true'],
+            valid + ["--config", "agents . enabled=true"],
+            valid + ["--config", "unrelated.option=true"],
+            valid
+            + [
+                "--config",
+                'model_reasoning_effort="ultra"\nagents.enabled=true',
+            ],
+            valid + ['-cmodel_reasoning_effort="ultra"'],
+            valid + ["--profile", "isolation-bypass"],
+            valid + ["--profile=isolation-bypass"],
+            valid + ["-p", "isolation-bypass"],
+            valid + ["-pisolation-bypass"],
+            valid + ["-p=isolation-bypass"],
+            valid + ["--config", "agents.enabled=false"],
+        )
+        for command in invalid_commands:
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(EvaluationError, "must"):
+                    evaluation_common.require_model_invocation_isolation(
+                        command, "Synthetic model invocation"
+                    )
+
+    def test_stage_specific_preflights_require_collaboration_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            with self.assertRaisesRegex(EvaluationError, "multi-agent feature"):
+                grade_behavioral_benchmark._require_isolated_grader_invocation(
+                    ["codex", "exec"], {}, root
+                )
+            with self.assertRaisesRegex(EvaluationError, "multi-agent feature"):
+                run_blind_comparisons.scrub_and_validate_comparison_environment(
+                    {}, root, ["codex", "exec"], ()
+                )
 
     def test_task_environment_blocks_parent_git_discovery(self) -> None:
         if shutil.which("git") is None:
@@ -792,7 +903,16 @@ class EvaluationToolingTests(unittest.TestCase):
             EvaluationError, "candidate or durable evidence path"
         ):
             evaluation_common.require_isolated_model_invocation(
-                ["codex", "exec"],
+                [
+                    "codex",
+                    "exec",
+                    "--disable",
+                    "multi_agent",
+                    "--disable",
+                    "multi_agent_v2",
+                    "--config",
+                    "agents.enabled=false",
+                ],
                 {"DURABLE_HINT": mixed_separator_path},
                 (durable,),
                 "Synthetic model invocation",
@@ -870,6 +990,27 @@ class EvaluationToolingTests(unittest.TestCase):
                 task_trace_isolation_validation_errors(transcript_path),
                 ["task trace contains forbidden collaboration events: spawn_agent"],
             )
+
+            collaboration_items = (
+                {"type": "collab_tool_call", "tool": "wait"},
+                {"type": "collab_tool_call", "tool": "wait_agent"},
+                {
+                    "type": "mcp_tool_call",
+                    "server": "collaboration",
+                    "tool": "wait",
+                },
+            )
+            for item in collaboration_items:
+                transcript_path.write_text(
+                    json.dumps({"type": "item.completed", "item": item}) + "\n",
+                    encoding="utf-8",
+                )
+                errors = evaluation_common.model_trace_collaboration_validation_errors(
+                    transcript_path
+                )
+                self.assertEqual(len(errors), 1)
+                self.assertIn("forbidden collaboration events", errors[0])
+                self.assertIn("wait", errors[0])
 
             for item in (
                 {"type": "mcp_tool_call", "server": "github", "tool": "get_file"},
@@ -1654,6 +1795,27 @@ class EvaluationToolingTests(unittest.TestCase):
             results = [
                 subprocess.CompletedProcess([], 0, "codex-cli 0.147.0\n", ""),
                 subprocess.CompletedProcess([], 0, json.dumps({"models": [model_entry]}), ""),
+                subprocess.CompletedProcess(
+                    [],
+                    0,
+                    json.dumps(
+                        [
+                            {"role": "developer", "content": "isolated"},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "Report Skills model-isolation preflight sentinel v1."
+                                        ),
+                                    }
+                                ],
+                            },
+                        ]
+                    ),
+                    "",
+                ),
             ]
             with (
                 patch("evaluation_common.subprocess.run", side_effect=results),
@@ -1671,7 +1833,198 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertRegex(profile["selected_model_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(profile["codex_invocation"], CODEX_INVOCATION_MODE)
         self.assertEqual(
+            profile["model_isolation_prompt_probe"],
+            "debug-prompt-input-no-agent-context-v2",
+        )
+        self.assertEqual(
+            profile["model_isolation_prompt_schema"],
+            "prompt-input-list-with-sentinel-v1",
+        )
+        self.assertRegex(
+            profile["model_isolation_prompt_probe_sha256"], r"^[0-9a-f]{64}$"
+        )
+        self.assertEqual(
             profile["codex_timeout_enforcement"], CODEX_TIMEOUT_ENFORCEMENT_MODE
+        )
+
+    def test_live_profile_fails_before_model_use_if_agent_context_remains(self) -> None:
+        model_entry = {
+            "slug": "gpt-5.6-sol",
+            "default_reasoning_level": "low",
+            "supported_reasoning_levels": [{"effort": "ultra"}],
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            command = Path(temp_name) / "codex.exe"
+            command.write_bytes(b"MZ synthetic native")
+            results = [
+                subprocess.CompletedProcess([], 0, "codex-cli 0.147.0\n", ""),
+                subprocess.CompletedProcess(
+                    [], 0, json.dumps({"models": [model_entry]}), ""
+                ),
+                subprocess.CompletedProcess(
+                    [],
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "role": "developer",
+                                "content": "<multi_agent_mode>enabled</multi_agent_mode>",
+                            },
+                            {
+                                "role": "user",
+                                "content": "Report Skills model-isolation preflight sentinel v1.",
+                            },
+                        ]
+                    ),
+                    "",
+                ),
+            ]
+            with patch("evaluation_common.subprocess.run", side_effect=results):
+                with self.assertRaisesRegex(
+                    EvaluationError, "still exposes collaboration context"
+                ):
+                    codex_execution_profile(
+                        str(command), "gpt-5.6-sol", "ultra"
+                    )
+
+    def test_live_profile_rejects_unbound_prompt_probe_json(self) -> None:
+        model_entry = {
+            "slug": "gpt-5.6-sol",
+            "default_reasoning_level": "low",
+            "supported_reasoning_levels": [{"effort": "ultra"}],
+        }
+        invalid_payloads = (
+            {},
+            [],
+            [{"role": "developer", "content": "isolated"}],
+            [
+                {"role": "developer", "content": "isolated"},
+                {"role": "user", "content": "wrong prompt"},
+            ],
+            [
+                {"role": "developer", "content": "isolated"},
+                {
+                    "role": "user",
+                    "content": (
+                        "Report Skills model-isolation preflight sentinel v1. extra"
+                    ),
+                },
+            ],
+            [
+                {"role": "developer", "content": "isolated"},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "Report Skills model-isolation preflight sentinel v1."
+                            ),
+                        },
+                        {"type": "input_text", "text": "extra"},
+                    ],
+                },
+            ],
+            [
+                {"role": "developer"},
+                {
+                    "role": "user",
+                    "content": (
+                        "Report Skills model-isolation preflight sentinel v1."
+                    ),
+                },
+            ],
+            [
+                {"role": "developer", "content": ""},
+                {
+                    "role": "user",
+                    "content": (
+                        "Report Skills model-isolation preflight sentinel v1."
+                    ),
+                },
+            ],
+            [
+                {"role": "developer", "content": []},
+                {
+                    "role": "user",
+                    "content": (
+                        "Report Skills model-isolation preflight sentinel v1."
+                    ),
+                },
+            ],
+        )
+        with tempfile.TemporaryDirectory() as temp_name:
+            command = Path(temp_name) / "codex.exe"
+            command.write_bytes(b"MZ synthetic native")
+            for payload in invalid_payloads:
+                results = [
+                    subprocess.CompletedProcess([], 0, "codex-cli 0.147.0\n", ""),
+                    subprocess.CompletedProcess(
+                        [], 0, json.dumps({"models": [model_entry]}), ""
+                    ),
+                    subprocess.CompletedProcess([], 0, json.dumps(payload), ""),
+                ]
+                with self.subTest(payload=payload):
+                    with patch(
+                        "evaluation_common.subprocess.run", side_effect=results
+                    ):
+                        with self.assertRaisesRegex(EvaluationError, "prompt probe"):
+                            codex_execution_profile(
+                                str(command), "gpt-5.6-sol", "ultra"
+                            )
+
+    def test_prompt_probe_receipt_normalizes_volatile_ids_and_environment_cwd(self) -> None:
+        def prompt_input(message_id: str, workspace: str) -> list[dict]:
+            metadata = {"turn_id": f"turn-{message_id}"}
+            return [
+                {
+                    "type": "message",
+                    "id": f"developer-{message_id}",
+                    "role": "developer",
+                    "content": [
+                        {"type": "input_text", "text": "isolated developer context"}
+                    ],
+                    "internal_chat_message_metadata_passthrough": metadata,
+                },
+                {
+                    "type": "message",
+                    "id": f"environment-{message_id}",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"<environment_context><cwd>{workspace}</cwd></environment_context>",
+                        }
+                    ],
+                    "internal_chat_message_metadata_passthrough": metadata,
+                },
+                {
+                    "type": "message",
+                    "id": f"sentinel-{message_id}",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "Report Skills model-isolation preflight sentinel v1."
+                            ),
+                        }
+                    ],
+                    "internal_chat_message_metadata_passthrough": metadata,
+                },
+            ]
+
+        first = prompt_input("one", r"C:\Temp\report-skills-probe-one")
+        second = prompt_input("two", r"C:\Temp\report-skills-probe-two")
+        first_hash = evaluation_common.model_isolation_prompt_receipt_sha256(first)
+        second_hash = evaluation_common.model_isolation_prompt_receipt_sha256(second)
+        self.assertEqual(first_hash, second_hash)
+
+        changed = copy.deepcopy(second)
+        changed[0]["content"][0]["text"] = "changed developer context"
+        self.assertNotEqual(
+            first_hash,
+            evaluation_common.model_isolation_prompt_receipt_sha256(changed),
         )
 
     def test_packaged_wrapper_resolves_and_probes_exact_native_runtime(self) -> None:
@@ -1703,6 +2056,20 @@ class EvaluationToolingTests(unittest.TestCase):
             results = [
                 subprocess.CompletedProcess([], 0, "codex-cli 0.147.0\n", ""),
                 subprocess.CompletedProcess([], 0, json.dumps({"models": [model_entry]}), ""),
+                subprocess.CompletedProcess(
+                    [],
+                    0,
+                    json.dumps(
+                        [
+                            {"role": "developer", "content": "isolated"},
+                            {
+                                "role": "user",
+                                "content": "Report Skills model-isolation preflight sentinel v1.",
+                            },
+                        ]
+                    ),
+                    "",
+                ),
             ]
             with (
                 patch("evaluation_common.subprocess.run", side_effect=results) as mocked,
@@ -1714,6 +2081,13 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertEqual(Path(profile["codex_implementation"]), native.resolve())
             self.assertEqual(mocked.call_args_list[0].args[0][0], str(native.resolve()))
             self.assertEqual(mocked.call_args_list[1].args[0][0], str(native.resolve()))
+            prompt_probe_command = mocked.call_args_list[2].args[0]
+            prompt_probe_cwd = Path(mocked.call_args_list[2].kwargs["cwd"])
+            self.assertEqual(prompt_probe_command[0], str(native.resolve()))
+            self.assertIn("multi_agent", prompt_probe_command)
+            self.assertIn("multi_agent_v2", prompt_probe_command)
+            self.assertIn("agents.enabled=false", prompt_probe_command)
+            self.assertFalse(prompt_probe_cwd.exists())
             environment = codex_runtime_environment(profile)
             self.assertEqual(environment["CODEX_MANAGED_PACKAGE_ROOT"], str(native.parents[6]))
             self.assertEqual(environment["CODEX_MANAGED_BY_NPM"], "1")
@@ -1823,6 +2197,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "execution_profile": {
                 "codex_invocation": CODEX_INVOCATION_MODE,
                 "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                **model_isolation_profile_receipt(),
             },
             "codex_isolation": canonical_task_isolation_receipt(),
             "model_isolation": canonical_model_isolation_receipt(),
@@ -1837,6 +2212,26 @@ class EvaluationToolingTests(unittest.TestCase):
         stale["codex_isolation"].pop("workspace_guard")
         with self.assertRaisesRegex(EvaluationError, "cannot be graded or compared"):
             require_clean_task_execution(stale, "stale-method")
+        prior_method = copy.deepcopy(clean)
+        prior_method["evaluation_method_version"] = (
+            "report-skills-release-evaluation-v3"
+        )
+        with self.assertRaisesRegex(EvaluationError, "cannot be graded or compared"):
+            require_clean_task_execution(prior_method, "prior-evaluation-method")
+        prior_model_guard = copy.deepcopy(clean)
+        prior_model_guard["model_isolation"] = {
+            "multi_agent": False,
+            "multi_agent_guard": "disabled-cli-flag-v1",
+            "collaboration_guard": "no-collaboration-tool-events-v1",
+        }
+        with self.assertRaisesRegex(EvaluationError, "cannot be graded or compared"):
+            require_clean_task_execution(prior_model_guard, "prior-model-isolation")
+        missing_prompt_probe = copy.deepcopy(clean)
+        missing_prompt_probe["execution_profile"].pop(
+            "model_isolation_prompt_probe_sha256"
+        )
+        with self.assertRaisesRegex(EvaluationError, "cannot be graded or compared"):
+            require_clean_task_execution(missing_prompt_probe, "missing-prompt-probe")
         prepatch = copy.deepcopy(clean)
         prepatch.pop("evaluation_method_version")
         prepatch.pop("stage_method")
@@ -1864,6 +2259,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "codex_implementation_sha256": "b" * 64,
             "codex_managed_environment_sha256": "c" * 64,
             "selected_model_sha256": "d" * 64,
+            **model_isolation_profile_receipt(),
             "python_version": "3.12.0",
             "platform": "test",
         }
@@ -2740,7 +3136,19 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertFalse(captured["staging_root"].exists())
             with self.assertRaisesRegex(EvaluationError, "exposes a durable"):
                 grade_behavioral_benchmark._require_isolated_grader_invocation(
-                    ["codex", mixed_evidence_path], {}, run_dir
+                    [
+                        "codex",
+                        "exec",
+                        "--disable",
+                        "multi_agent",
+                        "--disable",
+                        "multi_agent_v2",
+                        "--config",
+                        "agents.enabled=false",
+                        mixed_evidence_path,
+                    ],
+                    {},
+                    run_dir,
                 )
             self.assertNotIn("grader_transcript_sha256", attempt)
             self.assertNotIn("grader_stderr_sha256", attempt)
@@ -2891,13 +3299,16 @@ class EvaluationToolingTests(unittest.TestCase):
                 any("durable evidence path" in error for error in errors)
             )
             grader_transcript.write_text(
-                json.dumps(
-                    {
-                        "type": "item.completed",
-                        "item": {"type": "collab_tool_call", "tool": "spawn_agent"},
-                    }
-                )
-                + "\n",
+                "".join(
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "collab_tool_call", "tool": "wait"},
+                        }
+                    )
+                    + "\n"
+                    for _ in range(5)
+                ),
                 encoding="utf-8",
             )
             grader_metadata["grader_transcript_sha256"] = file_sha256(
@@ -3532,6 +3943,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 "execution_profile": {
                     "codex_invocation": CODEX_INVOCATION_MODE,
                     "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                    **model_isolation_profile_receipt(),
                 },
             }
             for name, value in (
@@ -3594,6 +4006,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 "execution_profile": {
                     "codex_invocation": CODEX_INVOCATION_MODE,
                     "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                    **model_isolation_profile_receipt(),
                 },
                 "repository": {},
                 "model_isolation": canonical_model_isolation_receipt(),
@@ -3637,6 +4050,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 "execution_profile": {
                     "codex_invocation": CODEX_INVOCATION_MODE,
                     "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                    **model_isolation_profile_receipt(),
                 },
                 "repository": {},
                 "model_isolation": canonical_model_isolation_receipt(),
@@ -3726,6 +4140,7 @@ class EvaluationToolingTests(unittest.TestCase):
                             "execution_profile": {
                                 "codex_invocation": CODEX_INVOCATION_MODE,
                                 "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                                **model_isolation_profile_receipt(),
                             },
                             "codex_isolation": canonical_task_isolation_receipt(),
                             "model_isolation": canonical_model_isolation_receipt(),
@@ -4063,6 +4478,7 @@ class EvaluationToolingTests(unittest.TestCase):
                     "execution_profile": {
                         "codex_invocation": CODEX_INVOCATION_MODE,
                         "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                        **model_isolation_profile_receipt(),
                     },
                     "repository": {},
                     "model_isolation": canonical_model_isolation_receipt(),
@@ -5285,6 +5701,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "codex_implementation_sha256": "f" * 64,
             "codex_managed_environment_sha256": "e" * 64,
             "selected_model_sha256": "b" * 64,
+            **model_isolation_profile_receipt(),
             "python_version": "3.12.0",
             "platform": "test",
         }
@@ -5292,6 +5709,13 @@ class EvaluationToolingTests(unittest.TestCase):
         mismatched = dict(profile, reasoning_effort="high")
         with self.assertRaisesRegex(EvaluationError, "does not match"):
             require_matching_context(profile, repository, mismatched, repository, "test")
+        mismatched_probe = dict(
+            profile, model_isolation_prompt_probe_sha256="8" * 64
+        )
+        with self.assertRaisesRegex(EvaluationError, "does not match"):
+            require_matching_context(
+                profile, repository, mismatched_probe, repository, "test"
+            )
 
     def test_invariants_reject_mixed_stage_and_trigger_metrics(self) -> None:
         profile = {
@@ -5304,6 +5728,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "codex_implementation_sha256": "f" * 64,
             "codex_managed_environment_sha256": "e" * 64,
             "selected_model_sha256": "b" * 64,
+            **model_isolation_profile_receipt(),
             "python_version": "3.12.0",
             "platform": "test",
         }

@@ -211,6 +211,8 @@ def trigger_task_prompt(query: str) -> str:
     """Require ordinary, policy-respecting skill loading without candidate leakage."""
     return (
         "Handle the request below as a normal fresh-context task.\n\n"
+        "Do not delegate, spawn sub-agents, or use collaboration tools; complete this "
+        "observation in one top-level trace.\n\n"
         "Follow the platform's ordinary skill invocation rules. This generic instruction is "
         "not an explicit invocation of any skill and does not override a skill's explicit-only "
         "or implicit-invocation policy. Apply the raw-Request explicit-token branch before "

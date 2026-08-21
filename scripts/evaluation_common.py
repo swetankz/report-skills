@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v3"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v4"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -55,7 +55,20 @@ CODEX_TIMEOUT_ENFORCEMENT_MODE = (
 TASK_IGNORE_USER_CONFIG_SCOPE = "config.toml_only"
 TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v1"
 TASK_COLLABORATION_GUARD = "no-collaboration-tool-events-v1"
-MODEL_MULTI_AGENT_GUARD = "disabled-cli-flag-v1"
+MODEL_MULTI_AGENT_FEATURES = ("multi_agent", "multi_agent_v2")
+MODEL_AGENT_TOOLS_CONFIG = "agents.enabled=false"
+MODEL_MULTI_AGENT_GUARD = "feature-and-agent-tools-disabled-v2"
+MODEL_PROMPT_ISOLATION_PROBE_METHOD = "debug-prompt-input-no-agent-context-v2"
+MODEL_PROMPT_ISOLATION_PROBE_SCHEMA = "prompt-input-list-with-sentinel-v1"
+MODEL_PROMPT_ISOLATION_SENTINEL = (
+    "Report Skills model-isolation preflight sentinel v1."
+)
+MODEL_PROMPT_ISOLATION_MARKERS = (
+    "<multi_agent_mode>",
+    "primary agent in a team of agents",
+    "all agents in the team",
+    "collaboration tools cannot be called from inside",
+)
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
 TASK_OUTPUT_SAFETY_GUARD = "task-output-safety-v1"
@@ -69,6 +82,9 @@ PROFILE_IDENTITY_KEYS = (
     "codex_implementation_sha256",
     "codex_managed_environment_sha256",
     "selected_model_sha256",
+    "model_isolation_prompt_probe",
+    "model_isolation_prompt_schema",
+    "model_isolation_prompt_probe_sha256",
     "python_version",
     "platform",
 )
@@ -507,7 +523,17 @@ def canonical_model_isolation_receipt() -> dict[str, Any]:
 
     return {
         "multi_agent": False,
+        "agents_enabled": False,
         "multi_agent_guard": MODEL_MULTI_AGENT_GUARD,
+        "feature_overrides": [
+            f"--disable {feature}" for feature in MODEL_MULTI_AGENT_FEATURES
+        ],
+        "agent_tools_override": f"--config {MODEL_AGENT_TOOLS_CONFIG}",
+        "prompt_context_probe": {
+            "method": MODEL_PROMPT_ISOLATION_PROBE_METHOD,
+            "schema": MODEL_PROMPT_ISOLATION_PROBE_SCHEMA,
+            "profile_receipt": "normalized-developer-context-sha256-v1",
+        },
         "collaboration_guard": TASK_COLLABORATION_GUARD,
     }
 
@@ -695,6 +721,24 @@ def model_isolation_receipt_validation_errors(
     if document.get("model_isolation") != canonical_model_isolation_receipt():
         return [f"{label} has a missing or unsupported model isolation receipt"]
     return []
+
+
+def model_isolation_profile_validation_errors(
+    profile: Any, label: str
+) -> list[str]:
+    """Require the model-free prompt probe method, schema, and output hash."""
+
+    if not isinstance(profile, dict):
+        return [f"{label} has no execution profile for model-isolation probing"]
+    errors: list[str] = []
+    if profile.get("model_isolation_prompt_probe") != MODEL_PROMPT_ISOLATION_PROBE_METHOD:
+        errors.append(f"{label} has a missing or unsupported prompt-isolation probe")
+    if profile.get("model_isolation_prompt_schema") != MODEL_PROMPT_ISOLATION_PROBE_SCHEMA:
+        errors.append(f"{label} has a missing or unsupported prompt-isolation schema")
+    probe_hash = profile.get("model_isolation_prompt_probe_sha256")
+    if not isinstance(probe_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", probe_hash):
+        errors.append(f"{label} has an invalid prompt-isolation probe hash")
+    return errors
 
 
 def task_isolation_receipt_validation_errors(
@@ -2109,6 +2153,137 @@ def _codex_package_manager(package_root: Path, entrypoint: Path) -> str:
     return "npm"
 
 
+def model_isolation_prompt_receipt_sha256(
+    prompt_input: list[dict[str, Any]],
+) -> str:
+    """Hash stable isolation-relevant prompt semantics, excluding volatile message data."""
+
+    receipt = {
+        "probe_method": MODEL_PROMPT_ISOLATION_PROBE_METHOD,
+        "schema": MODEL_PROMPT_ISOLATION_PROBE_SCHEMA,
+        "developer_content": [
+            item.get("content") for item in prompt_input if item.get("role") == "developer"
+        ],
+        "sentinel": MODEL_PROMPT_ISOLATION_SENTINEL,
+    }
+    return canonical_json_sha256(receipt)
+
+
+def _nonempty_prompt_text_content(content: Any) -> bool:
+    if isinstance(content, str):
+        return bool(content.strip())
+    return (
+        isinstance(content, list)
+        and bool(content)
+        and all(
+            isinstance(item, dict)
+            and item.get("type") == "input_text"
+            and isinstance(item.get("text"), str)
+            and bool(item["text"].strip())
+            for item in content
+        )
+    )
+
+
+def _codex_model_isolation_prompt_probe(
+    implementation: Path,
+    model: str,
+    reasoning_effort: str,
+    environment: dict[str, str],
+) -> dict[str, str]:
+    """Inspect the model-visible prompt locally before any evaluated model call."""
+
+    command = [str(implementation), "debug", "prompt-input"]
+    for feature in MODEL_MULTI_AGENT_FEATURES:
+        command.extend(["--disable", feature])
+    command.extend(
+        [
+            "--config",
+            MODEL_AGENT_TOOLS_CONFIG,
+            "--config",
+            f"model={json.dumps(model)}",
+            "--config",
+            f"model_reasoning_effort={json.dumps(reasoning_effort)}",
+            MODEL_PROMPT_ISOLATION_SENTINEL,
+        ]
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="report-skills-prompt-probe-"
+    ) as probe_directory:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            check=False,
+            timeout=60,
+            env=environment,
+            cwd=probe_directory,
+        )
+    if result.returncode != 0:
+        raise EvaluationError(
+            "Cannot inspect the model-visible Codex prompt before evaluation: "
+            + (result.stderr.strip() or "prompt inspection exited nonzero")
+        )
+    try:
+        prompt_input = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise EvaluationError(
+            f"Codex returned invalid JSON for the model-isolation prompt probe: {error}"
+        ) from error
+    if (
+        not isinstance(prompt_input, list)
+        or not prompt_input
+        or not all(isinstance(item, dict) for item in prompt_input)
+    ):
+        raise EvaluationError(
+            "Codex model-isolation prompt probe returned an unsupported prompt-list schema"
+        )
+    roles = [item.get("role") for item in prompt_input]
+    developer_items = [item for item in prompt_input if item.get("role") == "developer"]
+    exact_sentinel_indexes: list[int] = []
+    sentinel_mention_indexes: list[int] = []
+    for index, item in enumerate(prompt_input):
+        serialized_item = json.dumps(item, ensure_ascii=True, sort_keys=True)
+        if MODEL_PROMPT_ISOLATION_SENTINEL in serialized_item:
+            sentinel_mention_indexes.append(index)
+        content = item.get("content")
+        if item.get("role") == "user" and content in (
+            MODEL_PROMPT_ISOLATION_SENTINEL,
+            [{"type": "input_text", "text": MODEL_PROMPT_ISOLATION_SENTINEL}],
+        ):
+            exact_sentinel_indexes.append(index)
+    if (
+        "developer" not in roles
+        or any(
+            not _nonempty_prompt_text_content(item.get("content"))
+            for item in developer_items
+        )
+        or len(exact_sentinel_indexes) != 1
+        or sentinel_mention_indexes != exact_sentinel_indexes
+    ):
+        raise EvaluationError(
+            "Codex model-isolation prompt probe did not bind the expected developer and sentinel inputs"
+        )
+    normalized = json.dumps(
+        prompt_input, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).casefold()
+    exposed_markers = [
+        marker for marker in MODEL_PROMPT_ISOLATION_MARKERS if marker in normalized
+    ]
+    if exposed_markers:
+        raise EvaluationError(
+            "Codex model-isolation prompt probe still exposes collaboration context: "
+            + ", ".join(exposed_markers)
+        )
+    return {
+        "method": MODEL_PROMPT_ISOLATION_PROBE_METHOD,
+        "schema": MODEL_PROMPT_ISOLATION_PROBE_SCHEMA,
+        "sha256": model_isolation_prompt_receipt_sha256(prompt_input),
+    }
+
+
 def codex_execution_profile(codex_command: str, model: str, reasoning_effort: str) -> dict[str, Any]:
     """Verify and record the exact Codex CLI/model profile used for live calls."""
 
@@ -2230,6 +2405,12 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
             f"Reasoning effort {reasoning_effort!r} is not supported by {model}; "
             f"available efforts: {sorted(value for value in supported if value)}"
         )
+    isolation_prompt_probe = _codex_model_isolation_prompt_probe(
+        implementation,
+        model,
+        reasoning_effort,
+        probe_environment,
+    )
     command_hash = hashlib.sha256(resolved_command.read_bytes()).hexdigest()
     final_implementation_hash = hashlib.sha256(implementation.read_bytes()).hexdigest()
     if final_implementation_hash != implementation_hash:
@@ -2266,6 +2447,9 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
         "selected_model_sha256": hashlib.sha256(selected_json.encode("utf-8")).hexdigest(),
         "model_default_reasoning_effort": str(selected.get("default_reasoning_level")),
         "model_supported_reasoning_efforts": sorted(value for value in supported if value),
+        "model_isolation_prompt_probe": isolation_prompt_probe["method"],
+        "model_isolation_prompt_schema": isolation_prompt_probe["schema"],
+        "model_isolation_prompt_probe_sha256": isolation_prompt_probe["sha256"],
         "python_version": platform.python_version(),
         "platform": f"{platform.system()}-{platform.release()}-{platform.machine()}",
     }
@@ -2444,6 +2628,125 @@ def normalized_path_disclosure_text(value: object) -> str:
     return str(value).replace("\\", "/").rstrip("/").casefold()
 
 
+def model_invocation_isolation_validation_errors(
+    command: list[str], label: str
+) -> list[str]:
+    """Require both feature-level and agent-tool-level collaboration controls."""
+
+    def option_values(option: str) -> list[str]:
+        values: list[str] = []
+        for index, argument in enumerate(command):
+            if argument == option:
+                if index + 1 < len(command):
+                    values.append(command[index + 1])
+            elif argument.startswith(f"{option}="):
+                values.append(argument.split("=", 1)[1])
+            elif (
+                option.startswith("-")
+                and not option.startswith("--")
+                and argument.startswith(option)
+                and len(argument) > len(option)
+            ):
+                values.append(argument[len(option) :])
+        return values
+
+    errors: list[str] = []
+    disabled_features = option_values("--disable")
+    enabled_features = option_values("--enable")
+    invalid_feature_controls = [
+        feature
+        for feature in MODEL_MULTI_AGENT_FEATURES
+        if disabled_features.count(feature) != 1 or feature in enabled_features
+    ]
+    if invalid_feature_controls:
+        errors.append(
+            f"{label} must disable each multi-agent feature exactly once: "
+            + ", ".join(MODEL_MULTI_AGENT_FEATURES)
+        )
+
+    profile_arguments = [
+        argument
+        for argument in command
+        if argument == "--profile"
+        or argument.startswith("--profile=")
+        or argument == "-p"
+        or (
+            argument.startswith("-p")
+            and not argument.startswith("--")
+            and len(argument) > 2
+        )
+    ]
+    if profile_arguments:
+        errors.append(f"{label} must not load an unprobed configuration profile")
+
+    long_config_values = option_values("--config")
+    short_config_values = option_values("-c")
+    config_values = [*long_config_values, *short_config_values]
+    if short_config_values:
+        errors.append(f"{label} must not use short-form config overrides")
+
+    allowed_config_values = {
+        MODEL_AGENT_TOOLS_CONFIG,
+        *(f'model_reasoning_effort="{effort}"' for effort in REASONING_EFFORTS),
+    }
+    unsupported_config_values = [
+        value for value in config_values if value not in allowed_config_values
+    ]
+    if unsupported_config_values:
+        errors.append(
+            f"{label} must not contain unsupported or compound config overrides"
+        )
+
+    def config_key(value: str) -> str:
+        return value.partition("=")[0].strip()
+
+    noncanonical_config_keys = [
+        value
+        for value in config_values
+        if "=" not in value
+        or not re.fullmatch(
+            r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*", config_key(value)
+        )
+    ]
+    if noncanonical_config_keys:
+        errors.append(
+            f"{label} must use unquoted canonical dotted keys for every config override"
+        )
+
+    conflicting_feature_overrides = [
+        value
+        for value in config_values
+        if config_key(value) == "features"
+        or any(
+            config_key(value) == f"features.{feature}"
+            or config_key(value).startswith(f"features.{feature}.")
+            for feature in MODEL_MULTI_AGENT_FEATURES
+        )
+    ]
+    if conflicting_feature_overrides:
+        errors.append(
+            f"{label} must not override canonical multi-agent feature controls via config"
+        )
+    agent_namespace_overrides = [
+        value
+        for value in config_values
+        if config_key(value) == "agents" or config_key(value).startswith("agents.")
+    ]
+    if agent_namespace_overrides != [MODEL_AGENT_TOOLS_CONFIG]:
+        errors.append(
+            f"{label} must set {MODEL_AGENT_TOOLS_CONFIG} exactly once"
+        )
+    return errors
+
+
+def require_model_invocation_isolation(command: list[str], label: str) -> None:
+    """Fail before a model call unless both collaboration controls are exact."""
+
+    errors = model_invocation_isolation_validation_errors(command, label)
+    if errors:
+        raise EvaluationError("; ".join(errors))
+
+
 def require_isolated_model_invocation(
     command: list[str],
     environment: dict[str, str],
@@ -2451,6 +2754,8 @@ def require_isolated_model_invocation(
     label: str,
 ) -> None:
     """Fail before a model call if argv or environment exposes durable paths."""
+
+    require_model_invocation_isolation(command, label)
 
     forbidden = tuple(
         normalized_path_disclosure_text(path.resolve()) for path in forbidden_paths
@@ -2505,6 +2810,9 @@ def require_clean_task_execution(
     """Refuse downstream calls for an incomplete, failed, or timed-out task."""
 
     profile = metadata.get("execution_profile")
+    profile_isolation_errors = model_isolation_profile_validation_errors(
+        profile, label
+    )
     receipt_errors = execution_receipt_validation_errors(
         metadata, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, label
     )
@@ -2531,6 +2839,7 @@ def require_clean_task_execution(
         or receipt_errors
         or evidence_errors
         or isolation_errors
+        or profile_isolation_errors
         or not isinstance(profile, dict)
         or profile.get("codex_invocation") != CODEX_INVOCATION_MODE
         or profile.get("codex_timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE
@@ -2546,11 +2855,15 @@ def require_clean_stage_execution(
     """Refuse continuation past any failed or noncanonical model-backed stage call."""
 
     profile = metadata.get("execution_profile")
+    profile_isolation_errors = model_isolation_profile_validation_errors(
+        profile, label
+    )
     if (
         metadata.get("validation_errors") != []
         or execution_receipt_validation_errors(metadata, expected_timeout, label)
         or model_isolation_receipt_validation_errors(metadata, label)
         or stage_method_receipt_validation_errors(metadata, stage, label)
+        or profile_isolation_errors
         or not isinstance(profile, dict)
         or profile.get("codex_invocation") != CODEX_INVOCATION_MODE
         or profile.get("codex_timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE
@@ -2643,6 +2956,16 @@ def require_matching_context(
     actual_repository: dict[str, Any],
     label: str,
 ) -> None:
+    profile_errors = model_isolation_profile_validation_errors(
+        expected_profile, f"Expected {label} profile"
+    )
+    profile_errors.extend(
+        model_isolation_profile_validation_errors(
+            actual_profile, f"Actual {label} profile"
+        )
+    )
+    if profile_errors:
+        raise EvaluationError("; ".join(profile_errors))
     expected_profile_identity = {key: expected_profile.get(key) for key in PROFILE_IDENTITY_KEYS}
     actual_profile_identity = {key: actual_profile.get(key) for key in PROFILE_IDENTITY_KEYS}
     if actual_profile_identity != expected_profile_identity or any(
@@ -2914,7 +3237,11 @@ def codex_base_command(
         codex_command,
         "exec",
         "--disable",
-        "multi_agent",
+        MODEL_MULTI_AGENT_FEATURES[0],
+        "--disable",
+        MODEL_MULTI_AGENT_FEATURES[1],
+        "--config",
+        MODEL_AGENT_TOOLS_CONFIG,
         "--ephemeral",
         "--ignore-user-config",
         "--ignore-rules",

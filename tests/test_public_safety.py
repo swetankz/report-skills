@@ -73,6 +73,79 @@ class PublicSafetyTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("Public-safety scan passed", result.stdout)
 
+    def test_scanner_ignores_untracked_local_graphify_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+            private_path = "C:" + "\\Users\\sample-person\\private"
+            placeholder = "<" + "path>"
+            files = {
+                Path(".codex/hooks.json"): private_path,
+                Path(".codex/skills/graphify/SKILL.md"): f"Use {placeholder} locally.",
+                Path(".agents/rules/graphify.md"): f"Use {placeholder} locally.",
+                Path(".agents/skills/graphify/SKILL.md"): f"Use {placeholder} locally.",
+                Path(".agents/workflows/graphify.md"): f"Use {placeholder} locally.",
+                Path("graphify-out/graph.json"): json.dumps({"root": private_path}),
+            }
+            for relative, content in files.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+
+            result = run_scanner(root)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Public-safety scan passed", result.stdout)
+
+    def test_scanner_rejects_tracked_local_graphify_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+            paths = (
+                Path(".codex/hooks.json"),
+                Path(".codex/skills/graphify/SKILL.md"),
+                Path(".agents/rules/graphify.md"),
+                Path(".agents/skills/graphify/SKILL.md"),
+                Path(".agents/workflows/graphify.md"),
+                Path("graphify-out/graph.json"),
+            )
+            for relative in paths:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("local Graphify state\n", encoding="utf-8")
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    f"safe.directory={root}",
+                    "-C",
+                    str(root),
+                    "add",
+                    "-f",
+                    "--",
+                    *(path.as_posix() for path in paths),
+                ],
+                check=True,
+            )
+
+            result = run_scanner(root)
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.count("tracked-local-graphify-artifact"), 6)
+
+    def test_scanner_rejects_graphify_artifacts_in_non_git_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            artifact = root / "graphify-out" / "graph.json"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("{}\n", encoding="utf-8")
+
+            result = run_scanner(root)
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("local-graphify-artifact-outside-worktree", result.stdout)
+            self.assertIn("graphify-out/graph.json", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

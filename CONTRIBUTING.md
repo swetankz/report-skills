@@ -23,3 +23,6 @@ Edit canonical material under `source/`. Do not hand-edit generated files under 
 
 Behavioral changes need standalone and router-level evaluation. Changes affecting publication, deployment, live editors, or provenance need negative tests that prove missing approval or ambiguous state causes a safe stop.
 
+## Graph-assisted development
+
+Contributors may use Graphify for local code navigation and change-impact analysis. Graphify output is advisory, remains untracked, and cannot replace any required validator, evaluation, or approval. See [Graphify contributor workflow](docs/graphify.md).

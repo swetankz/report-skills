@@ -11,6 +11,7 @@ import tomllib
 from pathlib import Path
 
 from evaluation_common import EvaluationError, repository_csv_validation_errors
+from validate_graphify_integration import validate_graphify_integration
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -218,6 +219,7 @@ def validate_repository_csvs(errors: list[str]) -> None:
 def main() -> int:
     errors: list[str] = []
     validate_plugin(errors)
+    errors.extend(validate_graphify_integration(REPO_ROOT))
     validate_repository_links(errors)
     validate_repository_csvs(errors)
     mapping_config: dict[str, dict] = {}

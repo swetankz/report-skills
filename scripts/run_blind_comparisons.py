@@ -37,6 +37,7 @@ from evaluation_common import (
     load_json,
     repository_receipt,
     require_matching_context,
+    require_model_invocation_isolation,
     require_clean_task_execution,
     require_complete_task_evidence,
     require_clean_stage_execution,
@@ -436,6 +437,7 @@ def scrub_and_validate_comparison_environment(
 ) -> dict[str, str]:
     """Build the Git-fenced environment and remove durable path disclosures."""
 
+    require_model_invocation_isolation(command, "Comparator model invocation")
     environment = task_runtime_environment(execution_profile, workspace)
     forbidden = tuple(
         _normalized_path_text(str(path.resolve())) for path in forbidden_paths
