@@ -161,7 +161,7 @@
     "source/skills/report-visual-system/SKILL.md": "f0bd4953187c69a9c703bcd3e39363acc7f7aa60f1badc86de8a76f7e2984cf3",
     "source/skills/report-visual-system/agents/openai.yaml": "9fa85ffe021853b27eaf1762d012c1020e8743bc42a83cb39ef8eef43830b573",
     "source/skills/report-visual-system/references/publication-system-protocol.md": "55a60b3f6abcb9f83fd43e2230446c2b8efd9097b15ce3f9c9b6a03f1bc8aa27",
-    "source/skills/sites-release-manager/SKILL.md": "8a850a171207b68552faf256da92b522dc139e9a4188fcc73ae1e9a345a81134",
+    "source/skills/sites-release-manager/SKILL.md": "7e5f415c4ce6daa88ceef6430a564bdc1fdd582d7961c7492a99656b10be18dc",
     "source/skills/sites-release-manager/agents/openai.yaml": "5d9a5e465578a452f8cd06898632a1143952b0501618ecf57f67970f081b2fca",
     "source/skills/sites-release-manager/references/sites-release-protocol.md": "2872c42c864d4276b80a1452d0ad87fb4f276a23162f66c8ef8517edc1c48c3d",
     "source/skills/visual-hygiene-auditor/SKILL.md": "360147003b5b19ab1ba14dd03e7a4aecd39bf96a05853adad8636fe16db9eeb3",

@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v5"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v6"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -71,7 +71,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v2"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v3"
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",
@@ -1760,6 +1760,30 @@ def task_trace_isolation_validation_errors(
             )
         )
 
+    def contains_git_metadata_path(command: str) -> bool:
+        """Detect Git metadata access without rejecting an exclusion glob as access."""
+
+        normalized = command.replace("\\", "/")
+        safe_exclusion_glob = re.compile(
+            r"(?:^|\s)(?:-g|--glob)(?:\s+|=)['\"]*"
+            r"!(?:\*\*/)?\.git(?:/\*\*)?/?['\"]*(?=$|\s|[;&|)])",
+            re.IGNORECASE,
+        )
+        exclusion_spans = [
+            match.span() for match in safe_exclusion_glob.finditer(normalized)
+        ]
+        metadata_path = re.compile(
+            r"(?:^|[/\s'\"])\.git(?:$|[/\s'\"])",
+            re.IGNORECASE,
+        )
+        return any(
+            not any(
+                start <= match.start() and match.end() <= end
+                for start, end in exclusion_spans
+            )
+            for match in metadata_path.finditer(normalized)
+        )
+
     for item in items:
         if item.get("type") != "command_execution":
             continue
@@ -1773,9 +1797,7 @@ def task_trace_isolation_validation_errors(
             command_violations.add("Git command")
         if contains_host_capability_discovery(command):
             command_violations.add("host capability discovery")
-        if re.search(
-            r"(?:^|[/\s'\"])\.git(?:$|[/\s'\"])", normalized_command, re.IGNORECASE
-        ):
+        if contains_git_metadata_path(command):
             command_violations.add("Git metadata path")
         if re.search(
             r"(?:^|[/\s'\";(),=])[.][.](?=$|[/\s'\";(),])",
