@@ -43,13 +43,13 @@ Also validate every `skills/*` folder with the current Codex skill validator and
 
 ## Evaluation
 
-Repository CI validates the evaluation contracts and expands the complete benchmark plan without starting a model. Gate 1 prepares a `v0.2.0` release candidate with a tracked 25-call, no-retry routing and adversarial/security sequence that grades each task before the next begins; it does not claim the full benchmark verdict. Gate 2 is separate final qualification with three fresh paired runs per case (`with_skill` versus `without_skill`), blind comparison, adversarial safety checks, and the complete trigger suite. Live model evaluation stays outside public CI because it requires authentication and incurs usage. See the [evaluation protocol and release thresholds](docs/evaluation.md).
+Repository CI validates evaluation contracts and expands benchmark plans without starting a model. The evaluation suite supports focused routing and adversarial canaries, paired behavioral runs, schema-constrained grading, blind comparison, trigger coverage, and full release qualification. Live model evaluation stays outside public CI because it requires authentication and incurs usage. See the [evaluation protocol and release thresholds](docs/evaluation.md).
 
 ## Installation
 
-The canonical repository is [swetankz/report-skills](https://github.com/swetankz/report-skills). Use `v0.2.0` only after its [GitHub release](https://github.com/swetankz/report-skills/releases/tag/v0.2.0) and assets are published; until then, use the latest published release rather than the moving `main` development branch.
+The canonical repository is [swetankz/report-skills](https://github.com/swetankz/report-skills). Install from the [latest published GitHub release](https://github.com/swetankz/report-skills/releases) rather than the moving `main` development branch.
 
-For the complete suite, download `report-skills-0.2.0.zip` and its checksum from the release, verify the SHA-256 value, extract it, and use the extracted root as the Codex plugin source. For one specialist, give Codex's skill installer the repository `swetankz/report-skills`, ref `v0.2.0`, and path `skills/<skill-name>`. See the [installation guide](docs/installation.md).
+For the complete suite, download the versioned `report-skills-<version>.zip` archive and its SHA-256 sidecar, verify the checksum, extract it, and use the extracted root as the Codex plugin source. For one specialist, give Codex's skill installer the repository `swetankz/report-skills`, a published release tag, and path `skills/<skill-name>`. See the [installation guide](docs/installation.md).
 
 ## Safety boundary
 
@@ -57,8 +57,8 @@ Public examples are synthetic. This repository must not contain private report c
 
 No skill treats drafting, design, testing, or packaging approval as authorization to publish. External release always requires explicit human approval for the exact candidate and destination.
 
-## Project status
+## Releases and reproducibility
 
-This tree identifies the MIT-licensed `0.2.0` release candidate by Swetank Gawde; release availability is authoritative on [GitHub Releases](https://github.com/swetankz/report-skills/releases), and the initial `v0.1.0` release remains immutable. Public contact details are intentionally omitted; see [Security](SECURITY.md) for responsible reporting guidance.
+Report Skills is MIT-licensed and maintained by Swetank Gawde. Published versions, assets, checksums, and release notes are available on [GitHub Releases](https://github.com/swetankz/report-skills/releases). Public contact details are intentionally omitted; see [Security](SECURITY.md) for responsible reporting guidance.
 
-Maintainers can reproduce two deterministic artifacts after validation: `scripts/create_release_package.py` builds the installable plugin package, and `scripts/create_source_snapshot.py` builds a history-free snapshot of the public repository tree. Run `scripts/verify_release_artifacts.py` against two clean builds to verify their checksums, archive metadata, manifests, inventories, and byte-for-byte reproducibility. A published `v0.2.0` release consists of both ZIPs with their SHA-256 sidecars.
+Maintainers can reproduce two deterministic artifacts after validation: `scripts/create_release_package.py` builds the installable plugin package, and `scripts/create_source_snapshot.py` builds a history-free snapshot of the public repository tree. Run `scripts/verify_release_artifacts.py` against two clean builds to verify checksums, archive metadata, manifests, inventories, and byte-for-byte reproducibility. Each release publishes both ZIPs with their SHA-256 sidecars.
