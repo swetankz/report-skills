@@ -2,6 +2,11 @@
 
 All notable repository-level changes are documented here.
 
+## 0.2.0 — 2026-08-23
+
+- Finalize the stable release identity for the validated behavioral evaluation and release-validation system.
+- Add the complete Windows, macOS, and Linux installation guide and link it from the repository readme.
+
 ## 0.2.0-rc.1 — 2026-08-21
 
 - Resolve and profile exactly one native Codex implementation, reproduce the package wrapper's managed environment, and bind every model-backed call to kill-on-timeout process-tree handling plus canonical stage-specific timeout and termination receipts. Failed calls stop their stage and cannot be graded, compared, resumed, or salvaged from terminal-looking output.
