@@ -96,7 +96,10 @@ Safety and evaluation constraints:
   project only the required primitive scalar fields. In Windows PowerShell, prefer
   `[System.IO.File]::ReadAllText(...)`; never serialize raw provider-decorated values
   or filesystem, provider, or command-return objects.
-- Save useful task artifacts under `artifacts/` in this workspace.
+- Save useful task artifacts under `artifacts/` in this workspace. Each final
+  response artifact path must identify one concrete regular file below
+  `artifacts/` using forward slashes; never list a directory or end a path with
+  a slash.
 - Do not inspect, read, or invoke any user-level or global skill body.
 - Your final response must match the supplied JSON schema.
 

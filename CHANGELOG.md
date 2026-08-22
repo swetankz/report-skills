@@ -6,6 +6,7 @@ All notable repository-level changes are documented here.
 
 - Finalize the stable release identity for the validated behavioral evaluation and release-validation system.
 - Add the complete Windows, macOS, and Linux installation guide and link it from the repository readme.
+- Require benchmark task receipts to identify each disclosed artifact as one concrete regular file, rejecting directory-style paths.
 
 ## 0.2.0-rc.1 — 2026-08-21
 

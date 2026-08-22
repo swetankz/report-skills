@@ -14,7 +14,10 @@
         "required": ["path", "status", "description"],
         "additionalProperties": false,
         "properties": {
-          "path": {"type": "string"},
+          "path": {
+            "type": "string",
+            "pattern": "^artifacts/[^/]+(?:/[^/]+)*$"
+          },
           "status": {"type": "string"},
           "description": {"type": "string"}
         }

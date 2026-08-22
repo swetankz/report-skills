@@ -1108,6 +1108,20 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertEqual(task_trace_isolation_validation_errors(transcript_path), [])
 
             contaminated = safe_task_output()
+            contaminated["artifacts"] = [
+                {
+                    "path": "artifacts/evidence/",
+                    "status": "verified",
+                    "description": "A directory is not an inspectable file.",
+                }
+            ]
+            output_path.write_text(json.dumps(contaminated) + "\n", encoding="utf-8")
+            self.assertIn(
+                "task output artifact path is unsafe: artifacts/evidence/",
+                task_output_safety_validation_errors(output_path),
+            )
+
+            contaminated = safe_task_output()
             contaminated["integrity_events"] = [
                 {"type": "scope_boundary_read", "evidence": "Parent Git metadata was read."}
             ]
