@@ -30,8 +30,40 @@ jobs:
       - name: Scan public content
         run: python scripts/scan_public_content.py
 
+      - name: Validate evaluation contracts
+        run: python scripts/validate_eval_suite.py
+
+      - name: Validate behavioral benchmark plan without model calls
+        run: python scripts/run_behavioral_benchmark.py --dry-run
+
+      - name: Validate trigger-evaluation plan without model calls
+        run: python scripts/run_trigger_evals.py --dry-run
+
       - name: Run unit tests
         run: python -m unittest discover -s tests
 
       - name: Validate isolated standalone packages
         run: python scripts/test_standalone_packages.py
+
+  windows-process-lifecycle:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate cross-platform host-discovery classification
+        run: >-
+          python -m unittest
+          tests.test_evaluation_tooling.EvaluationToolingTests.test_task_trace_rejects_host_capability_discovery
+
+      - name: Validate Windows process-tree and terminal receipts without model calls
+        run: >-
+          python -m unittest
+          tests.test_evaluation_tooling.EvaluationToolingTests.test_run_codex_timeout_kills_descendants_and_never_salvages_terminal_event
+          tests.test_evaluation_tooling.EvaluationToolingTests.test_run_codex_clean_exit_has_terminal_receipt
+          tests.test_evaluation_tooling.EvaluationToolingTests.test_execution_receipt_rejects_failed_and_completed_terminal_events

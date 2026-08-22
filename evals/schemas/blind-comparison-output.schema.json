@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Blind paired comparison",
+  "type": "object",
+  "required": ["winner", "rubric", "output_quality", "expectation_results", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "winner": {"type": "string", "enum": ["A", "B", "tie"]},
+    "rubric": {"type": "string"},
+    "output_quality": {
+      "type": "object",
+      "required": ["A", "B"],
+      "additionalProperties": false,
+      "properties": {"A": {"type": "string"}, "B": {"type": "string"}}
+    },
+    "expectation_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["assertion_id", "better", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "assertion_id": {"type": "string"},
+          "better": {"type": "string", "enum": ["A", "B", "tie"]},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "rationale": {"type": "string"}
+  }
+}

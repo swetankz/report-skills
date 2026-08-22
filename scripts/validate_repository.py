@@ -7,7 +7,11 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
+
+from evaluation_common import EvaluationError, repository_csv_validation_errors
+from validate_graphify_integration import validate_graphify_integration
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +33,16 @@ EXPECTED_SKILLS = {
 }
 EXPLICIT_ONLY = {"report-skills", "sites-release-manager", "pencil-safe-editor"}
 FORBIDDEN_SKILL_DOCS = {"README.md", "CHANGELOG.md", "INSTALLATION_GUIDE.md", "QUICK_REFERENCE.md"}
+PLUGIN_VERSION_PATTERN = re.compile(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-rc\.(?:0|[1-9][0-9]*))?"
+)
+
+
+def valid_plugin_version(value: object) -> bool:
+    """Accept stable versions and numeric release candidates without ambiguity."""
+
+    return bool(PLUGIN_VERSION_PATTERN.fullmatch(str(value)))
 
 
 def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
@@ -70,8 +84,22 @@ def validate_plugin(errors: list[str]) -> None:
         return
     if data.get("name") != "report-skills":
         errors.append("plugin name must be report-skills")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", str(data.get("version", ""))):
-        errors.append("plugin version must use strict semantic versioning")
+    if not valid_plugin_version(data.get("version", "")):
+        errors.append(
+            "plugin version must be stable semantic versioning or a numeric -rc.N prerelease"
+        )
+    project_path = REPO_ROOT / "pyproject.toml"
+    try:
+        project = tomllib.loads(project_path.read_text(encoding="utf-8"))
+        project_version = str(project.get("project", {}).get("version", ""))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        errors.append(f"pyproject.toml cannot be read: {exc}")
+    else:
+        if project_version != str(data.get("version", "")):
+            errors.append(
+                "plugin and pyproject versions must match: "
+                f"{data.get('version')!r} != {project_version!r}"
+            )
     for key in ("description",):
         if not str(data.get(key, "")).strip():
             errors.append(f"plugin {key} is required")
@@ -112,6 +140,12 @@ def validate_skill(name: str, root: Path, errors: list[str], injected_targets: s
     description = frontmatter.get("description", "")
     if not description or len(description) > 1024 or "<" in description or ">" in description:
         errors.append(f"{prefix}/SKILL.md: invalid description")
+    if name in EXPLICIT_ONLY and (
+        not description.startswith("Explicit invocation only:") or f"${name}" not in description
+    ):
+        errors.append(
+            f"{prefix}/SKILL.md: explicit-only description must state the activation boundary and exact ${name} token"
+        )
     if len(text.splitlines()) > 500:
         errors.append(f"{prefix}/SKILL.md: exceeds 500 lines")
     for target in local_markdown_targets(text):
@@ -140,6 +174,14 @@ def validate_skill(name: str, root: Path, errors: list[str], injected_targets: s
         implicit_false = bool(re.search(r"^\s*allow_implicit_invocation:\s*false\s*$", metadata, re.MULTILINE))
         if name in EXPLICIT_ONLY and not implicit_false:
             errors.append(f"{prefix}/agents/openai.yaml: sensitive skill must disable implicit invocation")
+        if name in EXPLICIT_ONLY and (
+            not short
+            or not short.group(1).startswith("Explicit-only:")
+            or f"${name}" not in short.group(1)
+        ):
+            errors.append(
+                f"{prefix}/agents/openai.yaml: explicit-only short_description must state exact ${name} invocation"
+            )
 
 
 def validate_repository_links(errors: list[str]) -> None:
@@ -167,10 +209,19 @@ def validate_repository_links(errors: list[str]) -> None:
                 errors.append(f"{path.relative_to(REPO_ROOT).as_posix()}: broken local link {raw_target}")
 
 
+def validate_repository_csvs(errors: list[str]) -> None:
+    try:
+        errors.extend(repository_csv_validation_errors())
+    except EvaluationError as exc:
+        errors.append(str(exc))
+
+
 def main() -> int:
     errors: list[str] = []
     validate_plugin(errors)
+    errors.extend(validate_graphify_integration(REPO_ROOT))
     validate_repository_links(errors)
+    validate_repository_csvs(errors)
     mapping_config: dict[str, dict] = {}
     try:
         mapping = json.loads(MAP_PATH.read_text(encoding="utf-8"))

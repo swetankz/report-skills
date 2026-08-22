@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/swetankz/report-skills/evals/schemas/trigger-evals.schema.json",
+  "title": "Report Skills trigger evaluation suite",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "description_source",
+    "release_policy",
+    "protocol",
+    "expected_case_count",
+    "cases"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "1.0" },
+    "suite_id": { "type": "string", "minLength": 1 },
+    "description_source": { "type": "string", "minLength": 1 },
+    "release_policy": { "type": "string", "minLength": 1 },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evaluation_mode",
+        "repetitions_per_case",
+        "fresh_context_per_run",
+        "prediction_field",
+        "positive_definition",
+        "negative_definition",
+        "aggregate_metrics",
+        "aggregate_scope",
+        "per_skill_metrics",
+        "invocation_policies",
+        "minimum_distribution"
+      ],
+      "properties": {
+        "evaluation_mode": { "const": "binary_candidate_skill_selection_with_invocation_policy" },
+        "repetitions_per_case": { "const": 3 },
+        "fresh_context_per_run": { "const": true },
+        "prediction_field": { "const": "triggered" },
+        "positive_definition": { "type": "string", "minLength": 1 },
+        "negative_definition": { "type": "string", "minLength": 1 },
+        "aggregate_metrics": {
+          "type": "array",
+          "prefixItems": [{ "const": "precision" }, { "const": "recall" }],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "aggregate_scope": { "type": "string", "minLength": 1 },
+        "per_skill_metrics": { "type": "string", "minLength": 1 },
+        "invocation_policies": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["implicit_selection", "explicit_invocation"],
+          "properties": {
+            "implicit_selection": { "$ref": "#/$defs/invocationPolicy" },
+            "explicit_invocation": { "$ref": "#/$defs/invocationPolicy" }
+          }
+        },
+        "minimum_distribution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "skills",
+            "positive_cases_per_skill",
+            "negative_cases_per_implicit_skill",
+            "negative_cases_per_explicit_skill"
+          ],
+          "properties": {
+            "skills": { "const": 11 },
+            "positive_cases_per_skill": { "type": "integer", "minimum": 1 },
+            "negative_cases_per_implicit_skill": { "type": "integer", "minimum": 1 },
+            "negative_cases_per_explicit_skill": { "type": "integer", "minimum": 2 }
+          }
+        }
+      }
+    },
+    "expected_case_count": { "const": 25 },
+    "cases": {
+      "type": "array",
+      "minItems": 25,
+      "maxItems": 25,
+      "items": { "$ref": "#/$defs/triggerCase" }
+    }
+  },
+  "$defs": {
+    "invocationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skills", "positive_rule", "negative_rule"],
+      "properties": {
+        "skills": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "positive_rule": { "type": "string", "minLength": 10 },
+        "negative_rule": { "type": "string", "minLength": 10 }
+      }
+    },
+    "triggerCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "candidate_skill",
+        "invocation_policy",
+        "query_names_candidate_skill",
+        "query",
+        "should_trigger",
+        "expected_alternative",
+        "near_miss_reason"
+      ],
+      "properties": {
+        "case_id": { "type": "string", "pattern": "^trigger-[a-z0-9-]+$" },
+        "candidate_skill": { "type": "string", "minLength": 1 },
+        "invocation_policy": { "enum": ["implicit_selection", "explicit_invocation"] },
+        "query_names_candidate_skill": { "type": "boolean" },
+        "query": { "type": "string", "minLength": 30 },
+        "should_trigger": { "type": "boolean" },
+        "expected_alternative": { "type": ["string", "null"] },
+        "near_miss_reason": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "should_trigger": { "const": true } },
+            "required": ["should_trigger"]
+          },
+          "then": {
+            "properties": {
+              "near_miss_reason": { "type": "null" }
+            }
+          },
+          "else": {
+            "properties": {
+              "near_miss_reason": { "type": "string", "minLength": 10 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "invocation_policy": { "const": "implicit_selection" } },
+            "required": ["invocation_policy"]
+          },
+          "then": {
+            "properties": { "query_names_candidate_skill": { "const": false } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "invocation_policy": { "const": "explicit_invocation" },
+              "should_trigger": { "const": true }
+            },
+            "required": ["invocation_policy", "should_trigger"]
+          },
+          "then": {
+            "properties": { "query_names_candidate_skill": { "const": true } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "invocation_policy": { "const": "explicit_invocation" },
+              "should_trigger": { "const": false }
+            },
+            "required": ["invocation_policy", "should_trigger"]
+          },
+          "then": {
+            "properties": { "query_names_candidate_skill": { "const": false } }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 ---
 name: report-skills
-description: Orchestrate auditable multi-stage research-to-publication workflows by selecting Report Skills specialists, defining versioned handoffs, enforcing evidence and approval gates, and reporting completion without publishing automatically. Use for end-to-end or multi-stage requests that combine analytical report creation, evidence visualization, publication design, responsive web production, quality assurance, derivatives, provenance, or release preparation. Do not use for one bounded specialist task, a simple prose answer, or skill installation.
+description: "Explicit invocation only: activate this skill only when the user's request contains the exact token `$report-skills`; topical requests without that token must not activate it. Orchestrate auditable multi-stage research-to-publication workflows by selecting Report Skills specialists, defining versioned handoffs, enforcing evidence and approval gates, and reporting completion without publishing automatically. Use for end-to-end or multi-stage requests that combine analytical report creation, evidence visualization, publication design, responsive web production, quality assurance, derivatives, provenance, or release preparation. Do not use for one bounded specialist task, a simple prose answer, or skill installation."
 ---
 
 # Report Skills

@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
+import re
 import subprocess
 import sys
 import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+from release_inventory import copy_inventory, select_inventory, tracked_head_inventory
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -20,11 +22,16 @@ MANIFEST_PATH = REPO_ROOT / ".codex-plugin" / "plugin.json"
 ROOT_FILES = ["README.md", "LICENSE", "CHANGELOG.md", "SECURITY.md"]
 DOC_FILES = [
     "docs/architecture.md",
+    "docs/evaluation.md",
     "docs/skill-catalogue.md",
     "docs/installation.md",
     "docs/limitations.md",
     "docs/asset-license-ledger.csv",
 ]
+PUBLIC_FILES = {PurePosixPath(path) for path in ROOT_FILES + DOC_FILES}
+PLUGIN_PREFIXES = {".codex-plugin", "skills"}
+MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+EXTERNAL_LINK_PATTERN = re.compile(r"^(?:https?://|mailto:)", re.IGNORECASE)
 
 
 def sha256(path: Path) -> str:
@@ -35,26 +42,92 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def release_artifact_paths(version: str) -> tuple[Path, Path]:
+    archive = DIST / f"report-skills-{version}.zip"
+    return archive, archive.with_suffix(".zip.sha256")
+
+
 def run_check(*arguments: str) -> None:
     result = subprocess.run([sys.executable, *arguments], cwd=REPO_ROOT, check=False)
     if result.returncode:
         raise SystemExit(result.returncode)
 
 
+def plugin_inventory():
+    inventory = tracked_head_inventory(REPO_ROOT)
+    selected = select_inventory(
+        inventory,
+        lambda path: path in PUBLIC_FILES or (path.parts and path.parts[0] in PLUGIN_PREFIXES),
+    )
+    selected_paths = {item.path for item in selected}
+    missing = sorted(path.as_posix() for path in PUBLIC_FILES - selected_paths)
+    if missing:
+        raise SystemExit(f"Required tracked plugin release files are missing: {missing}")
+    for prefix in sorted(PLUGIN_PREFIXES):
+        if not any(item.path.parts and item.path.parts[0] == prefix for item in selected):
+            raise SystemExit(f"Tracked plugin release tree is missing: {prefix}/")
+    return selected
+
+
+def packaged_local_markdown_targets(text: str) -> list[str]:
+    targets: list[str] = []
+    for match in MARKDOWN_LINK_PATTERN.finditer(text):
+        raw_target = match.group(1).strip()
+        if not raw_target or raw_target.startswith("#") or EXTERNAL_LINK_PATTERN.match(raw_target):
+            continue
+        if raw_target.startswith("<") and ">" in raw_target:
+            target = raw_target[1 : raw_target.index(">")]
+        else:
+            target = raw_target.split(maxsplit=1)[0]
+        target = target.split("#", 1)[0].strip()
+        if target:
+            targets.append(target)
+    return targets
+
+
+def validate_packaged_local_links(stage: Path) -> None:
+    stage_root = stage.resolve()
+    errors: list[str] = []
+    for document in sorted(
+        stage.rglob("*.md"), key=lambda path: path.relative_to(stage).as_posix()
+    ):
+        relative_document = document.relative_to(stage).as_posix()
+        try:
+            text = document.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            errors.append(f"{relative_document}: cannot read packaged Markdown: {error}")
+            continue
+        for target in packaged_local_markdown_targets(text):
+            candidate = document.parent / target
+            try:
+                resolved = candidate.resolve()
+                resolved.relative_to(stage_root)
+            except (OSError, ValueError):
+                errors.append(
+                    f"{relative_document}: packaged local Markdown target leaves the archive: {target}"
+                )
+                continue
+            if not resolved.is_file():
+                errors.append(
+                    f"{relative_document}: missing packaged local Markdown target: {target}"
+                )
+    if errors:
+        raise SystemExit(
+            "Plugin package Markdown link closure failed:\n- " + "\n- ".join(errors)
+        )
+
+
 def copy_candidate(stage: Path) -> None:
-    shutil.copytree(REPO_ROOT / ".codex-plugin", stage / ".codex-plugin")
-    shutil.copytree(REPO_ROOT / "skills", stage / "skills")
-    for relative in ROOT_FILES + DOC_FILES:
-        source = REPO_ROOT / relative
-        target = stage / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+    copy_inventory(REPO_ROOT, stage, plugin_inventory())
+    validate_packaged_local_links(stage)
 
 
 def write_release_manifest(stage: Path, version: str, authorized_tag: str | None) -> None:
     files = {
         path.relative_to(stage).as_posix(): sha256(path)
-        for path in sorted(stage.rglob("*"))
+        for path in sorted(
+            stage.rglob("*"), key=lambda item: item.relative_to(stage).as_posix()
+        )
         if path.is_file()
     }
     manifest = {
@@ -76,7 +149,9 @@ def write_release_manifest(stage: Path, version: str, authorized_tag: str | None
 
 def deterministic_zip(stage: Path, archive: Path) -> None:
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as output:
-        for path in sorted(stage.rglob("*")):
+        for path in sorted(
+            stage.rglob("*"), key=lambda item: item.relative_to(stage).as_posix()
+        ):
             if not path.is_file():
                 continue
             relative = path.relative_to(stage).as_posix()
@@ -110,8 +185,7 @@ def main() -> int:
     run_check(str(REPO_ROOT / "scripts" / "test_standalone_packages.py"))
 
     DIST.mkdir(exist_ok=True)
-    archive = DIST / f"report-skills-{version}.zip"
-    checksum = archive.with_suffix(".zip.sha256")
+    archive, checksum = release_artifact_paths(version)
     with tempfile.TemporaryDirectory(prefix="report-skills-release-") as temp_name:
         stage = Path(temp_name) / "report-skills"
         stage.mkdir()

@@ -1,2 +1,1 @@
-claim_id,claim_text,claim_type,importance,status,source_ids,location,quantitative,cutoff_status,conflict_status,confidence,review_notes
-
+claim_id,claim_text,claim_type,importance,status,source_ids,evidence_ids,location,quantitative,cutoff_status,conflict_status,confidence,review_notes

@@ -1,6 +1,6 @@
 ---
 name: pencil-safe-editor
-description: "Verify and preserve a specific Pencil design before applying structured edits to it. Use when a user asks to create, recover, or modify components, tokens, frames, or layouts in a `.pen` file and the live editor or supported authoring connection must be checked; stop without writing whenever connectivity, active-target identity, preservation, or edit authorization is ambiguous."
+description: "Explicit invocation only: activate this skill only when the user's request contains the exact token `$pencil-safe-editor`; topical requests without that token must not activate it. Verify and preserve a specific Pencil design before applying structured edits to it. Use when a user asks to create, recover, or modify components, tokens, frames, or layouts in a `.pen` file and the live editor or supported authoring connection must be checked; stop without writing whenever connectivity, active-target identity, preservation, or edit authorization is ambiguous."
 ---
 
 # Pencil Safe Editor

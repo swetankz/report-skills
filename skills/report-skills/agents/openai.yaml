@@ -1,6 +1,6 @@
 interface:
   display_name: "Report Skills Orchestrator"
-  short_description: "Coordinate evidence-led report publication"
+  short_description: "Explicit-only: use $report-skills to coordinate publication"
   default_prompt: "Use $report-skills to coordinate a complete evidence-led report workflow and stop before external publication."
 policy:
   allow_implicit_invocation: false

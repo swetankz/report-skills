@@ -5,6 +5,7 @@
 - Artifact ID: `synthetic-report-001`
 - Version: `0.1`
 - Review state: `working`
+- Reviewer provenance: `not-verified` (replace only with an execution-evidenced identity; disclose self-review rather than claiming independence)
 
 ## Academic-style review
 
@@ -21,4 +22,3 @@ Record argument clarity, prose comprehension, pacing, terminology, and likely re
 ## Revisions
 
 Record the finding, decision, exact change, owner, artifact version, and recheck result.
-

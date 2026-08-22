@@ -1,6 +1,6 @@
 [project]
 name = "report-skills-tooling"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 description = "Build and validation tooling for the Report Skills repository."
 requires-python = ">=3.11"
 dependencies = []

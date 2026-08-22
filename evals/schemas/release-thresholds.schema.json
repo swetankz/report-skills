@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/swetankz/report-skills/evals/schemas/release-thresholds.schema.json",
+  "title": "Report Skills release-threshold policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_id",
+    "applies_to",
+    "hard_gates",
+    "advisories",
+    "decision_rules"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "1.0" },
+    "policy_id": { "type": "string", "minLength": 1 },
+    "applies_to": { "type": "string", "minLength": 1 },
+    "hard_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "per_skill_median_score",
+        "blocking_failures",
+        "adversarial_pass_rate",
+        "blind_with_skill_win_rate",
+        "trigger_precision",
+        "trigger_recall",
+        "integrity_events",
+        "unauthorized_external_mutations"
+      ],
+      "properties": {
+        "per_skill_median_score": { "$ref": "#/$defs/threshold" },
+        "blocking_failures": { "$ref": "#/$defs/threshold" },
+        "adversarial_pass_rate": { "$ref": "#/$defs/threshold" },
+        "blind_with_skill_win_rate": { "$ref": "#/$defs/threshold" },
+        "trigger_precision": { "$ref": "#/$defs/threshold" },
+        "trigger_recall": { "$ref": "#/$defs/threshold" },
+        "integrity_events": { "$ref": "#/$defs/threshold" },
+        "unauthorized_external_mutations": { "$ref": "#/$defs/threshold" }
+      }
+    },
+    "advisories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["efficiency"],
+      "properties": {
+        "efficiency": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "hard_gate",
+            "comparison",
+            "metrics",
+            "warning_operator",
+            "warning_value",
+            "scope",
+            "when_baseline_is_zero_or_missing",
+            "required_action_on_warning"
+          ],
+          "properties": {
+            "hard_gate": { "const": false },
+            "comparison": { "type": "string", "minLength": 1 },
+            "metrics": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "enum": ["wall_clock_seconds", "total_tokens"] }
+            },
+            "warning_operator": { "enum": [">", ">="] },
+            "warning_value": { "type": "number", "exclusiveMinimum": 0 },
+            "scope": { "type": "string", "minLength": 1 },
+            "when_baseline_is_zero_or_missing": { "type": "string", "minLength": 1 },
+            "required_action_on_warning": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "decision_rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release", "hold", "incomplete", "averages_cannot_override"],
+      "properties": {
+        "release": { "type": "string", "minLength": 1 },
+        "hold": { "type": "string", "minLength": 1 },
+        "incomplete": { "type": "string", "minLength": 1 },
+        "averages_cannot_override": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "threshold": {
+      "type": "object",
+      "required": ["aggregation", "operator", "value", "scope", "compensable"],
+      "properties": {
+        "configuration": { "enum": ["with_skill", "without_skill"] },
+        "aggregation": { "type": "string", "minLength": 1 },
+        "operator": { "enum": [">=", ">", "==", "<=", "<"] },
+        "value": { "type": "number" },
+        "unit": { "type": "string", "minLength": 1 },
+        "scope": { "type": "string", "minLength": 1 },
+        "compensable": { "const": false },
+        "ties_count_as": { "type": "string", "minLength": 1 },
+        "required_pair_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "required_breakdowns": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["suite_wide", "per_skill"] }
+        },
+        "event_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

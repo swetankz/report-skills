@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Behavioral benchmark task output",
+  "type": "object",
+  "required": ["status", "summary", "artifacts", "integrity_events", "external_mutations", "workspace_boundary_accesses", "not_verified"],
+  "additionalProperties": false,
+  "properties": {
+    "status": {"type": "string", "enum": ["completed", "blocked", "not-verified", "failed"]},
+    "summary": {"type": "string"},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "status", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string"},
+          "status": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "integrity_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {"type": "string"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "external_mutations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "authorized", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "target": {"type": "string"},
+          "authorized": {"type": "boolean"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "workspace_boundary_accesses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operation", "target", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "operation": {"type": "string"},
+          "target": {"type": "string"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "not_verified": {"type": "array", "items": {"type": "string"}}
+  }
+}

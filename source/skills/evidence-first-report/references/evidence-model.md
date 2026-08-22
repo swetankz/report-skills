@@ -34,6 +34,9 @@ evidence_id,source_id,locator,evidence_kind,observation,method,population,geogra
 ```
 
 Keep `observation` concise and faithful. Use `locator` to let a reviewer reopen the exact support. Record `not stated` when the source omits a material field; do not infer it.
+Where a supplied source- or dataset-level period demonstrably applies to row-level, subgroup, aggregate, or derived evidence, carry it into every affected evidence record and separately state any missing finer-grained dates. Never substitute the report window, cutoff, publication date, or retrieval date. If no defensible evidence period exists, treat the quantitative support as incomplete and withhold the quantitative claim from the draft or record it only as an unresolved blocker without asserting the value.
+
+Write every register with a CSV serializer or equivalent standards-compliant escaping. Quote fields containing a comma, double quote, carriage return, or line break, and double embedded quotes. Re-open each written CSV with a parser and require every data row to have exactly the header's column count. Treat any mismatch as a blocking artifact error: do not draft from the malformed register or mark the package ready.
 
 ## Claim ledger
 
@@ -64,6 +67,8 @@ For every reported number, capture:
 
 Treat a percentage without a defined base as incomplete. Treat a change without a baseline and interval as incomplete. Preserve appropriate significant digits.
 
+Treat every computed or comparative number as a quantitative claim, including totals, rates, ranges, differences, durations, date intervals, and relative-time statements. This rule also applies to quantitative wording introduced during any review or revision. Before the wording enters the draft, register every input under source and evidence identifiers and record the reproducible calculation with an explicit unit, population (use `not applicable` only when genuinely inapplicable), and period. Otherwise omit the number or retain it only as an unresolved blocker without asserting it.
+
 ## Conflict handling
 
 Set `conflict_status` to `none`, `resolved`, or `unresolved`. Record all affected source and evidence identifiers. Resolve only through an explainable difference in definition, method, population, period, version, or source fitness. Keep an unresolved conflict visible in the draft and limitations.
@@ -71,4 +76,3 @@ Set `conflict_status` to `none`, `resolved`, or `unresolved`. Record all affecte
 ## Cutoff handling
 
 Use publication date for cutoff eligibility unless the research design establishes a different explicit rule. Record undated sources as uncertain rather than silently placing them inside the cutoff. Never let later knowledge rewrite an as-of-date conclusion without a disclosed exception.
-

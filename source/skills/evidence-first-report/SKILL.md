@@ -1,6 +1,6 @@
 ---
 name: evidence-first-report
-description: Produce or revise source-backed analytical reports with an evidence cutoff, source and evidence registers, claim traceability, linked citations, explicit limitations, and documented academic-style, factual, and reader review passes. Use when asked to create an analytical or academia-level report from supplied or authorized evidence, build a claim ledger before drafting, fact-check or revise a report, or prepare a report package for approval. Do not use for visual-only redesign, citation formatting without claim review, or open-ended source discovery without evidence-access authority.
+description: Produce, fact-check, or substantively revise a complete source-backed analytical report and its evidence package. Use when the requested deliverable includes report text, an evidence cutoff, source or evidence registers, a claim ledger, citation-to-claim review, limitations, or documented academic-style, factual, and reader review passes. Do not use when a completed report and verified claims are already supplied and the requested deliverable is only charts or figure specifications, visual layout, a website, or promotional derivatives; route those tasks to the corresponding publication skill. Do not use for open-ended source discovery without evidence-access authority.
 ---
 
 # Evidence-First Report
@@ -99,6 +99,8 @@ Run the passes in sequence and record them in `review-log.md`. Start from `asset
 3. **Reader review:** assess comprehension, terminology, pacing, context, decision relevance, transitions, and whether a non-specialist reader can distinguish findings from implications and recommendations.
 
 Record every resulting change in `revision-log.md` with finding identifier, pass, location, severity, evidence, action, affected claim identifiers, and verification state. Reopen earlier checks after a material revision.
+Create at least one `revision-log.md` entry linked to a finding from each of the three passes. If a pass warrants no artifact change, record a verified no-change disposition with its evidence instead of inventing a revision.
+After every review pass, rescan changed prose for newly introduced numbers, date comparisons, durations, and other computed quantities. Update the source, evidence, and claim registers before accepting the revision, or remove the quantitative wording when it is not fully registered.
 
 Keep visual layout, optical density, and responsive presentation outside the reader-review pass; hand those concerns to a presentation-quality audit when requested.
 

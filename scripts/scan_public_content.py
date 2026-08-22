@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -18,6 +19,26 @@ TEXT_EXTENSIONS = {
 }
 BLOCKED_BINARY_EXTENSIONS = {".pen", ".pdf", ".docx", ".pptx", ".zip", ".7z", ".mov", ".mp4", ".webm", ".ttf", ".otf", ".woff", ".woff2"}
 SKIP_DIRS = {".git", ".build", "__pycache__", ".venv", "dist"}
+SKIP_PREFIXES = {("evals", "runs"), ("evals", "review")}
+RAW_EVAL_PATHSPECS = ("evals/runs", "evals/review")
+LOCAL_GRAPHIFY_PREFIXES = {
+    (".agents", "skills", "graphify"),
+    (".codex", "skills", "graphify"),
+    ("graphify-out",),
+}
+LOCAL_GRAPHIFY_FILES = {
+    (".agents", "rules", "graphify.md"),
+    (".agents", "workflows", "graphify.md"),
+    (".codex", "hooks.json"),
+}
+LOCAL_GRAPHIFY_PATHSPECS = (
+    ".agents/rules/graphify.md",
+    ".agents/skills/graphify",
+    ".agents/workflows/graphify.md",
+    ".codex/hooks.json",
+    ".codex/skills/graphify",
+    "graphify-out",
+)
 INTENTIONAL_DEFECT_PARTS = {"intentional-defects"}
 PATTERNS = {
     "windows-user-path": re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s]+", re.IGNORECASE),
@@ -45,7 +66,138 @@ class Finding:
     detail: str
 
 
-def text_files(root: Path):
+def tracked_raw_eval_findings(root: Path) -> list[Finding]:
+    """Reject raw evaluation material that was force-added to a Git index."""
+
+    probe = subprocess.run(
+        ["git", "-c", f"safe.directory={root}", "-C", str(root), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if probe.returncode != 0:
+        return []
+    git_root = Path(probe.stdout.strip()).resolve()
+    if git_root != root.resolve():
+        return []
+    tracked = subprocess.run(
+        [
+            "git",
+            "-c",
+            f"safe.directory={git_root}",
+            "-C",
+            str(git_root),
+            "ls-files",
+            "-z",
+            "--",
+            *RAW_EVAL_PATHSPECS,
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if tracked.returncode != 0:
+        return [
+            Finding(
+                "git-index-check-failed",
+                ".git",
+                0,
+                "could not verify that raw evaluation directories are untracked",
+            )
+        ]
+    paths = sorted(
+        value.decode("utf-8", errors="replace").replace("\\", "/")
+        for value in tracked.stdout.split(b"\0")
+        if value
+    )
+    return [
+        Finding(
+            "tracked-raw-eval-artifact",
+            path,
+            0,
+            "raw evaluation runs and reviews must remain local and untracked",
+        )
+        for path in paths
+    ]
+
+
+def exact_git_root(root: Path) -> Path | None:
+    probe = subprocess.run(
+        ["git", "-c", f"safe.directory={root}", "-C", str(root), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if probe.returncode != 0:
+        return None
+    git_root = Path(probe.stdout.strip()).resolve()
+    if git_root != root.resolve():
+        return None
+    return git_root
+
+
+def tracked_local_graphify_findings(root: Path) -> list[Finding]:
+    """Reject machine-specific Graphify state that was force-added to Git."""
+
+    git_root = exact_git_root(root)
+    if git_root is None:
+        return []
+    tracked = subprocess.run(
+        [
+            "git",
+            "-c",
+            f"safe.directory={git_root}",
+            "-C",
+            str(git_root),
+            "ls-files",
+            "-z",
+            "--",
+            *LOCAL_GRAPHIFY_PATHSPECS,
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if tracked.returncode != 0:
+        return [
+            Finding(
+                "git-index-check-failed",
+                ".git",
+                0,
+                "could not verify that local Graphify artifacts are untracked",
+            )
+        ]
+    paths = sorted(
+        value.decode("utf-8", errors="replace").replace("\\", "/")
+        for value in tracked.stdout.split(b"\0")
+        if value
+    )
+    return [
+        Finding(
+            "tracked-local-graphify-artifact",
+            path,
+            0,
+            "Graphify adapters, hooks, graphs, and caches must remain local and untracked",
+        )
+        for path in paths
+    ]
+
+
+def is_local_graphify_path(relative: Path) -> bool:
+    parts = tuple(relative.parts)
+    if parts in LOCAL_GRAPHIFY_FILES:
+        return True
+    return any(parts[: len(prefix)] == prefix for prefix in LOCAL_GRAPHIFY_PREFIXES)
+
+
+def local_graphify_artifact_paths(root: Path) -> list[str]:
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if (path.is_file() or path.is_symlink())
+        and is_local_graphify_path(path.relative_to(root))
+    )
+
+
+def text_files(root: Path, *, skip_local_graphify: bool):
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
         copied_scanner = relative.as_posix() == "scripts/scan_public_content.py"
@@ -53,12 +205,29 @@ def text_files(root: Path):
             continue
         if any(part in SKIP_DIRS for part in relative.parts):
             continue
+        if tuple(relative.parts[:2]) in SKIP_PREFIXES:
+            continue
+        if skip_local_graphify and is_local_graphify_path(relative):
+            continue
         yield path
 
 
 def scan(root: Path) -> list[Finding]:
-    findings: list[Finding] = []
-    for path in text_files(root):
+    findings = tracked_raw_eval_findings(root)
+    git_root = exact_git_root(root)
+    if git_root is None:
+        findings.extend(
+            Finding(
+                "local-graphify-artifact-outside-worktree",
+                path,
+                0,
+                "Graphify local state is not allowed in a non-Git archive or staged copy",
+            )
+            for path in local_graphify_artifact_paths(root)
+        )
+    else:
+        findings.extend(tracked_local_graphify_findings(root))
+    for path in text_files(root, skip_local_graphify=git_root is not None):
         relative = path.relative_to(root)
         suffix = path.suffix.casefold()
         if suffix in BLOCKED_BINARY_EXTENSIONS:

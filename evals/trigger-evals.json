@@ -1,0 +1,302 @@
+{
+  "$schema": "./schemas/trigger-evals.schema.json",
+  "schema_version": "1.0",
+  "suite_id": "report-skills-triggering-v1",
+  "description_source": "../skills/{candidate_skill}/SKILL.md frontmatter description",
+  "release_policy": "release-thresholds.json",
+  "protocol": {
+    "evaluation_mode": "binary_candidate_skill_selection_with_invocation_policy",
+    "repetitions_per_case": 3,
+    "fresh_context_per_run": true,
+    "prediction_field": "triggered",
+    "positive_definition": "triggered is true when the observation's unique candidate body-only sentinel marker appears anywhere in the model-visible transcript, or when selected_skill exactly identifies the candidate and rationale exactly equals that marker",
+    "negative_definition": "triggered is false only when the unique candidate body-only sentinel marker is absent from both the model-visible transcript and an exact candidate final rationale; correctness is evaluated separately as triggered equals should_trigger",
+    "aggregate_metrics": ["precision", "recall"],
+    "aggregate_scope": "all observations suite-wide and separately for every skill",
+    "per_skill_metrics": "hard release gates; both precision and recall must meet threshold for every skill",
+    "invocation_policies": {
+      "implicit_selection": {
+        "skills": [
+          "creative-artifact-provenance",
+          "editorial-data-storytelling",
+          "evidence-first-report",
+          "interactive-report-publisher",
+          "motion-performance-qa",
+          "report-content-repurposer",
+          "report-visual-system",
+          "visual-hygiene-auditor"
+        ],
+        "positive_rule": "A relevant natural-language query that does not name the skill should trigger it.",
+        "negative_rule": "A near-miss natural-language query that does not name the skill should not trigger it."
+      },
+      "explicit_invocation": {
+        "skills": [
+          "pencil-safe-editor",
+          "report-skills",
+          "sites-release-manager"
+        ],
+        "positive_rule": "A relevant query containing the exact $skill-name should trigger it.",
+        "negative_rule": "A query without the exact $skill-name should not trigger it, even when topically relevant."
+      }
+    },
+    "minimum_distribution": {
+      "skills": 11,
+      "positive_cases_per_skill": 1,
+      "negative_cases_per_implicit_skill": 1,
+      "negative_cases_per_explicit_skill": 2
+    }
+  },
+  "expected_case_count": 25,
+  "cases": [
+    {
+      "case_id": "trigger-router-relevant-without-explicit",
+      "candidate_skill": "report-skills",
+      "invocation_policy": "explicit_invocation",
+      "query_names_candidate_skill": false,
+      "query": "Coordinate an evidence-backed report, chart specifications, an editable visual system, a complete responsive site, three QA passes, and a release-ready package; stop before any external publication.",
+      "should_trigger": false,
+      "expected_alternative": null,
+      "near_miss_reason": "The router is explicit-only, so topical relevance without $report-skills must not auto-load it."
+    },
+    {
+      "case_id": "trigger-router-explicit-positive",
+      "candidate_skill": "report-skills",
+      "invocation_policy": "explicit_invocation",
+      "query_names_candidate_skill": true,
+      "query": "Use $report-skills to coordinate an evidence-backed report, evidence visuals, an editable system, a responsive site, QA, and a release-ready package; stop before publication.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-router-negative",
+      "candidate_skill": "report-skills",
+      "invocation_policy": "explicit_invocation",
+      "query_names_candidate_skill": false,
+      "query": "Rewrite this two-sentence project update as a concise email; no research, report, visual, website, or publishing workflow is involved.",
+      "should_trigger": false,
+      "expected_alternative": null,
+      "near_miss_reason": "This is ordinary copy editing rather than a research-to-publication workflow."
+    },
+    {
+      "case_id": "trigger-evidence-positive",
+      "candidate_skill": "evidence-first-report",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Using this outline and evidence folder, establish a cutoff, build source and claim ledgers, separate facts from interpretation, draft the full report, and document academic, factual, and reader reviews.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-evidence-negative",
+      "candidate_skill": "evidence-first-report",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "The report and claims are already approved; turn the verified statistics into annotated chart specifications with captions, alternative text, and provenance.",
+      "should_trigger": false,
+      "expected_alternative": "editorial-data-storytelling",
+      "near_miss_reason": "The evidence and report are complete; the task begins at visual evidence design."
+    },
+    {
+      "case_id": "trigger-story-positive",
+      "candidate_skill": "editorial-data-storytelling",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Convert these verified survey findings into meaningful charts and a timeline, preserving values, units, populations, dates, contextual annotations, accessible text, and linked provenance.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-story-negative",
+      "candidate_skill": "editorial-data-storytelling",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Create the analytical report itself from this research outline and evidence set, including a claim ledger, source cutoff, citations, limitations, and three review passes.",
+      "should_trigger": false,
+      "expected_alternative": "evidence-first-report",
+      "near_miss_reason": "The task is report research and drafting, not visualizing already verified findings."
+    },
+    {
+      "case_id": "trigger-visual-system-positive",
+      "candidate_skill": "report-visual-system",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Translate this approved long-form report into an editable neutral publication system with type and spacing tokens, reusable components, grids, layouts, hierarchy, and export constraints.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-visual-system-negative",
+      "candidate_skill": "report-visual-system",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Audit this already-built report website at desktop and narrow mobile widths for overflow, inconsistent spacing, chart legibility, cognitive load, and optical alignment.",
+      "should_trigger": false,
+      "expected_alternative": "visual-hygiene-auditor",
+      "near_miss_reason": "The artifact already exists and needs multi-pass visual QA rather than a new publication system."
+    },
+    {
+      "case_id": "trigger-interactive-positive",
+      "candidate_skill": "interactive-report-publisher",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Build the complete approved report as a responsive editorial website with chapter navigation, intact citations and limitations, mobile accessibility, metadata, restrained scroll interactions, and reduced-motion support.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-interactive-negative",
+      "candidate_skill": "interactive-report-publisher",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Define editable page templates, typography tokens, grids, and components for this report, but do not implement a website or interactive behavior.",
+      "should_trigger": false,
+      "expected_alternative": "report-visual-system",
+      "near_miss_reason": "The requested deliverable is an editable visual system rather than a responsive website."
+    },
+    {
+      "case_id": "trigger-visual-audit-positive",
+      "candidate_skill": "visual-hygiene-auditor",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Review this report publication in separate structural, typography and optical, and reader-comprehension passes across desktop and mobile, then return evidence-bound findings and a revision log.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-visual-audit-negative",
+      "candidate_skill": "visual-hygiene-auditor",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Diagnose the loader-to-first-reveal gap, ScrollTrigger startup order, reduced-motion behavior, and frame pacing with direct runtime measurements.",
+      "should_trigger": false,
+      "expected_alternative": "motion-performance-qa",
+      "near_miss_reason": "This is specialized animation startup and performance validation, not broad visual hygiene."
+    },
+    {
+      "case_id": "trigger-motion-positive",
+      "candidate_skill": "motion-performance-qa",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "The loader disappears before the first scroll reveal and the page flashes blank; verify font and asset readiness, animation initialization, reduced motion, and measured frame pacing.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-motion-negative",
+      "candidate_skill": "motion-performance-qa",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Check this static report layout for type hierarchy, spacing rhythm, chart clarity, overflow, and reader pacing; there are no loaders or animations.",
+      "should_trigger": false,
+      "expected_alternative": "visual-hygiene-auditor",
+      "near_miss_reason": "The task is static visual and reader QA with no motion system to validate."
+    },
+    {
+      "case_id": "trigger-repurpose-positive",
+      "candidate_skill": "report-content-repurposer",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "From this approved report, create a 4:5 launch post, a five-card carousel, and six video frames while preserving claim context, title conventions, accessibility copy, and derivative provenance.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-repurpose-negative",
+      "candidate_skill": "report-content-repurposer",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Implement the full report as a responsive local website with semantic chapter navigation, complete citations, SEO metadata, and reduced-motion interactions.",
+      "should_trigger": false,
+      "expected_alternative": "interactive-report-publisher",
+      "near_miss_reason": "The deliverable is the complete interactive publication, not derivative launch content."
+    },
+    {
+      "case_id": "trigger-sites-relevant-without-explicit",
+      "candidate_skill": "sites-release-manager",
+      "invocation_policy": "explicit_invocation",
+      "query_names_candidate_skill": false,
+      "query": "A validated candidate and a stale checkout both exist; identify the canonical source, record its ref and build hash, preserve access controls, prepare the release state, and stop before deployment approval.",
+      "should_trigger": false,
+      "expected_alternative": null,
+      "near_miss_reason": "The release manager is explicit-only, so a relevant request without $sites-release-manager must not auto-load it."
+    },
+    {
+      "case_id": "trigger-sites-explicit-positive",
+      "candidate_skill": "sites-release-manager",
+      "invocation_policy": "explicit_invocation",
+      "query_names_candidate_skill": true,
+      "query": "Use $sites-release-manager to identify the validated canonical candidate, record its ref and build hash, preserve access controls, prepare release state, and stop before deployment approval.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-sites-negative",
+      "candidate_skill": "sites-release-manager",
+      "invocation_policy": "explicit_invocation",
+      "query_names_candidate_skill": false,
+      "query": "Build the complete report as a local responsive editorial site and verify its mobile and reduced-motion behavior; no hosting or release management is requested.",
+      "should_trigger": false,
+      "expected_alternative": "interactive-report-publisher",
+      "near_miss_reason": "This is local site implementation and QA, not canonical-source release management."
+    },
+    {
+      "case_id": "trigger-pencil-relevant-without-explicit",
+      "candidate_skill": "pencil-safe-editor",
+      "invocation_policy": "explicit_invocation",
+      "query_names_candidate_skill": false,
+      "query": "Apply these component and token changes to the requested Pencil board, but first prove which file is active and editable, preserve the original, and stop if the active target differs.",
+      "should_trigger": false,
+      "expected_alternative": null,
+      "near_miss_reason": "The Pencil editor is explicit-only, so a relevant request without $pencil-safe-editor must not auto-load it."
+    },
+    {
+      "case_id": "trigger-pencil-explicit-positive",
+      "candidate_skill": "pencil-safe-editor",
+      "invocation_policy": "explicit_invocation",
+      "query_names_candidate_skill": true,
+      "query": "Use $pencil-safe-editor to apply these component and token changes after proving the active Pencil file is the requested editable target and preserving the original.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-pencil-negative",
+      "candidate_skill": "pencil-safe-editor",
+      "invocation_policy": "explicit_invocation",
+      "query_names_candidate_skill": false,
+      "query": "Write a tool-neutral specification for report typography, grids, spacing tokens, and reusable components; there is no open design editor or live file to modify.",
+      "should_trigger": false,
+      "expected_alternative": "report-visual-system",
+      "near_miss_reason": "No Pencil file or live editor operation is in scope."
+    },
+    {
+      "case_id": "trigger-provenance-positive",
+      "candidate_skill": "creative-artifact-provenance",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Reconcile provider outputs, local derivatives, diagnostic renders, and final exports into a lineage register with model and job metadata, dimensions, parent relationships, status, and a redacted public projection.",
+      "should_trigger": true,
+      "expected_alternative": null,
+      "near_miss_reason": null
+    },
+    {
+      "case_id": "trigger-provenance-negative",
+      "candidate_skill": "creative-artifact-provenance",
+      "invocation_policy": "implicit_selection",
+      "query_names_candidate_skill": false,
+      "query": "Turn the approved report into a social post and carousel, shortening copy carefully and retaining claim context and accessibility captions.",
+      "should_trigger": false,
+      "expected_alternative": "report-content-repurposer",
+      "near_miss_reason": "The primary task is content adaptation; a provenance record is only a supporting output."
+    }
+  ]
+}

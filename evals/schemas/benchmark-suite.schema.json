@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/swetankz/report-skills/evals/schemas/benchmark-suite.schema.json",
+  "title": "Report Skills paired behavioral benchmark",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "description",
+    "legacy_source",
+    "fixture",
+    "release_policy",
+    "protocol",
+    "expected_primary_case_count",
+    "expected_adversarial_case_count",
+    "primary_cases",
+    "adversarial_cases"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "1.0" },
+    "suite_id": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "legacy_source": { "type": "string", "minLength": 1 },
+    "fixture": { "type": "string", "minLength": 1 },
+    "release_policy": { "type": "string", "minLength": 1 },
+    "protocol": { "$ref": "#/$defs/protocol" },
+    "expected_primary_case_count": { "const": 11 },
+    "expected_adversarial_case_count": { "const": 5 },
+    "primary_cases": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 11,
+      "items": { "$ref": "#/$defs/primaryCase" }
+    },
+    "adversarial_cases": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/adversarialCase" }
+    }
+  },
+  "$defs": {
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "skill_loading", "skill_path_template"],
+      "properties": {
+        "id": { "enum": ["with_skill", "without_skill"] },
+        "skill_loading": { "enum": ["explicit_from_repository", "none"] },
+        "skill_path_template": { "type": ["string", "null"] }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repetitions_per_configuration",
+        "fresh_context_per_run",
+        "configurations",
+        "pairing",
+        "grading",
+        "blind_comparison",
+        "integrity_event_types",
+        "external_mutation_policy"
+      ],
+      "properties": {
+        "repetitions_per_configuration": { "const": 3 },
+        "fresh_context_per_run": { "const": true },
+        "configurations": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/configuration" }
+        },
+        "pairing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pair_key",
+            "same_fixture",
+            "same_user_prompt",
+            "same_model_and_reasoning",
+            "same_tool_access",
+            "independent_contexts"
+          ],
+          "properties": {
+            "pair_key": { "type": "string", "minLength": 1 },
+            "same_fixture": { "const": true },
+            "same_user_prompt": { "const": true },
+            "same_model_and_reasoning": { "const": true },
+            "same_tool_access": { "const": true },
+            "independent_contexts": { "const": true }
+          }
+        },
+        "grading": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "score_range",
+            "score_formula",
+            "assertion_result_fields",
+            "blocking_rule",
+            "missing_evidence_result",
+            "unavailable_runtime_label"
+          ],
+          "properties": {
+            "score_range": {
+              "type": "array",
+              "prefixItems": [{ "const": 0 }, { "const": 100 }],
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "score_formula": { "type": "string", "minLength": 1 },
+            "assertion_result_fields": {
+              "type": "array",
+              "prefixItems": [
+                { "const": "text" },
+                { "const": "passed" },
+                { "const": "evidence" }
+              ],
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "blocking_rule": { "type": "string", "minLength": 1 },
+            "missing_evidence_result": { "const": "failed" },
+            "unavailable_runtime_label": { "const": "not-verified" }
+          }
+        },
+        "blind_comparison": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "applies_to",
+            "randomize_a_b_labels",
+            "hide_configuration_and_skill_loading",
+            "compare_each_paired_repetition",
+            "tie_handling"
+          ],
+          "properties": {
+            "enabled": { "const": true },
+            "applies_to": { "const": "primary_cases" },
+            "randomize_a_b_labels": { "const": true },
+            "hide_configuration_and_skill_loading": { "const": true },
+            "compare_each_paired_repetition": { "const": true },
+            "tie_handling": { "type": "string", "minLength": 1 }
+          }
+        },
+        "integrity_event_types": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "fabricated_evidence",
+              "fabricated_approval",
+              "fabricated_runtime_observation",
+              "fabricated_provenance"
+            ]
+          }
+        },
+        "external_mutation_policy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assertion_id", "category", "text", "weight", "blocking"],
+      "properties": {
+        "assertion_id": { "type": "string", "pattern": "^[a-z0-9-]+\\.a[0-9]{2}$" },
+        "category": {
+          "enum": [
+            "scope_and_routing",
+            "artifact_completeness",
+            "evidence_or_runtime_fidelity",
+            "stop_and_approval_behavior",
+            "public_safety_and_provenance",
+            "clarity_and_inspectability"
+          ]
+        },
+        "text": { "type": "string", "minLength": 20 },
+        "weight": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "blocking": { "type": "boolean" }
+      }
+    },
+    "artifactCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path", "header"],
+      "properties": {
+        "type": { "const": "csv_rectangular" },
+        "path": { "type": "string", "pattern": "^artifacts/[A-Za-z0-9._/-]+\\.csv$" },
+        "header": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "min_rows": { "type": "integer", "minimum": 0 },
+        "unique_key": { "type": "string", "minLength": 1 },
+        "configurations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["with_skill", "without_skill"] }
+        }
+      }
+    },
+    "primaryCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "skill", "prompt", "assertions"],
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "skill": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string", "minLength": 20 },
+        "artifact_checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifactCheck" }
+        },
+        "assertions": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/assertion" }
+        }
+      }
+    },
+    "adversarialCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "skill", "prompt", "required_result", "assertions"],
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "skill": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string", "minLength": 20 },
+        "required_result": { "type": "string", "minLength": 20 },
+        "artifact_checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifactCheck" }
+        },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/assertion" }
+        }
+      }
+    }
+  }
+}
