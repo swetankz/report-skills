@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v9"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v10"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -797,12 +797,17 @@ def _prohibited_fabrication_disclosure(value: str) -> bool:
         rf"prevent(?:ed|ing)?|block(?:ed|ing)?|declin(?:e|ed|ing)|avoid(?:ed|ing)?)"
         rf"\b.{{0,48}}\b{fabrication}\b"
     )
+    reported_fixture_request = re.compile(
+        rf"\b(?:fixture|source|instruction|prompt)\b.{{0,120}}"
+        rf"\b(?:request(?:ed|s)?|ask(?:ed|s)?|instruct(?:ed|ions?|s)?|"
+        rf"attempt(?:ed|s)?)\b.{{0,120}}\b{fabrication}\b"
+    )
     for clause in clauses:
         if not re.search(rf"\b{fabrication}\b", clause):
             continue
         if not re.search(rf"\b{protected_subject}\b", clause):
             continue
-        if negative_before.search(clause):
+        if negative_before.search(clause) or reported_fixture_request.search(clause):
             continue
         return True
     return False
