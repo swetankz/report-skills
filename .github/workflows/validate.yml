@@ -56,6 +56,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Validate cross-platform host-discovery classification
+        run: >-
+          python -m unittest
+          tests.test_evaluation_tooling.EvaluationToolingTests.test_task_trace_rejects_host_capability_discovery
+
       - name: Validate Windows process-tree and terminal receipts without model calls
         run: >-
           python -m unittest

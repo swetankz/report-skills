@@ -1557,11 +1557,70 @@ class EvaluationToolingTests(unittest.TestCase):
                 '$ruby = Get-Command ruby | ConvertTo-Json"',
                 "Get-Module -ListAvailable",
                 "Microsoft.PowerShell.Core\\Get-Command ruby",
+                "Get-Command ruby; Write-Output '<<'",
+                "Get-Module -ListAvailable # <<",
                 "bash -lc 'command -v ruby'",
                 "bash -lc 'if command -v ruby; then echo ready; fi'",
+                "bash -lc 'command -V ruby'",
+                "bash -lc 'command -pv ruby'",
+                "bash -lc 'command -vp ruby'",
+                "bash -lc 'command -p -v ruby'",
+                "bash -lc 'command -v -p ruby'",
+                "bash -lc 'command -vV ruby'",
+                "bash -lc 'command -Vv ruby'",
+                "bash -lc 'command -vv ruby'",
+                "bash -lc 'command -VV ruby'",
+                "bash -lc 'command -pVv ruby'",
+                "bash -lc 'command -vVp ruby'",
+                "bash -lc 'LC_ALL=C command -v ruby'",
+                "bash -lc 'A=1 B=2 command -pv ruby'",
+                "bash -lc 'EMPTY= command -V ruby'",
+                "bash -lc \"LABEL='release fixture' command -v ruby\"",
+                "bash -lc 'LABEL=release\\ fixture command -v ruby'",
+                "bash -lc 'LABEL=release\" fixture\" command -v ruby'",
+                "bash -lc '>/dev/null command -v ruby'",
+                "bash -lc '>|/dev/null command -v ruby'",
+                "bash -lc '&>/dev/null command -v ruby'",
+                "bash -lc '2>&1 command -v ruby'",
+                "bash -lc '<>/dev/null command -v ruby'",
+                "bash -lc '</c/Program\\ Files/Git/etc/profile command -v ruby'",
+                "bash -lc '>out\" file\" command -v ruby'",
+                "bash -lc '2>/dev/null command -V ruby'",
+                "bash -lc 'LC_ALL=C 2>/dev/null command -v ruby'",
+                "bash -lc '2>/dev/null LC_ALL=C command -v ruby'",
+                "bash -lc 'command \\\n-v ruby'",
+                "bash -lc 'whi\\\nch ruby'",
+                "bash -lc 'com\\\nmand -v ruby'",
+                "ba\\\nsh -lc 'command -v ruby'",
+                "bash -l\\\nc 'command -v ruby'",
+                "pwsh -Command \"Get-Com`\nmand ruby\"",
+                "pw`\nsh -Command \"Get-Command ruby\"",
+                "pwsh -Com`\nmand \"Get-Command ruby\"",
+                "cmd /c \"whe^\nre.exe ruby\"",
+                "cm^\nd /c \"where.exe ruby\"",
+                "cmd /^\nc \"where.exe ruby\"",
+                "bash -lc \"command -v ruby; printf '<<'\"",
+                "bash -lc \"printf '<<'; command -v ruby\"",
+                "bash -lc \"command -v ruby # <<EOF\nEOF\"",
+                "bash -lc \"# <<EOF\ncommand -v ruby\nEOF\"",
+                "bash -lc \"printf ok # <<EOF\nEOF\nwhich ruby\"",
+                "bash -lc \"printf ok \\<<EOF\nEOF\ncommand -v ruby\"",
+                "bash -lc \"cat <<EOF; command -v ruby\"",
+                "bash -lc \"command -v ruby; cat <<EOF\npayload\nEOF\"",
+                "bash -lc \"cat <<EOF; command -v ruby\npayload\nEOF\"",
+                "bash -lc \"cat <<EOF\npayload\nEOF\nwhich ruby\"",
+                "bash -lc \"command -v ruby; ((1 << EOF))\nEOF\"",
+                "bash -lc \"command -v ruby; echo $((1 << EOF))\nEOF\"",
+                "bash -lc \"command -v ruby; for ((i = 1 << EOF; i < 2; i++)); do :; done\nEOF\"",
+                "command -v ruby",
                 "which ruby",
                 "/usr/bin/which ruby",
                 "cmd.exe /c where.exe ruby",
+                "cmd.exe /c \"@where.exe ruby >NUL\"",
+                "cmd.exe /c \"@>NUL where.exe ruby\"",
+                "cmd.exe /c \">NUL where.exe ruby\"",
+                "cmd.exe /c \"2>NUL where.exe ruby\"",
+                'cmd.exe /c <"C:\\Program Files\\Git\\etc\\profile" where.exe ruby',
                 "C:\\Windows\\System32\\where.exe ruby",
                 '& "C:\\Windows\\System32\\where.exe" ruby',
                 'Write-Output ok; & "C:\\Windows\\System32\\where.exe" ruby',
@@ -1577,19 +1636,18 @@ class EvaluationToolingTests(unittest.TestCase):
                 'pwsh -Command "Write-Output `\\"Get-Command ruby`\\"; Get-Command node"',
                 'bash -lc "printf \\"command -v ruby\\"; command -v node"',
                 'cmd /c "echo \\"where ruby\\" & where node"',
+                "cat <<EOF\nwhich ruby\nEOF",
+                "cat <<EOF\ncommand -v ruby\nEOF",
+                "cat <<EOF\ncommand -- -v ruby\nEOF",
             )
-            for command in forbidden:
-                with self.subTest(command=command):
-                    errors = errors_for(command)
-                    self.assertTrue(errors, command)
-                    self.assertIn("host capability discovery", errors[0])
-
             allowed = (
                 "Get-Content fixture/brief.yaml",
                 "Get-FileHash artifacts/sites-release-record.yaml",
                 "Get-ChildItem fixture -File | where { $_.Length -gt 0 }",
                 "pwsh -Command \"Write-Output command which\"",
                 'cmd /c "set text=where ruby"',
+                'cmd /c "@echo where.exe ruby"',
+                'cmd /c "@set text=where.exe ruby"',
                 "/usr/bin/env echo bash -lc 'command -v ruby'",
                 "/usr/bin/env printf bash -lc 'command -v ruby'",
                 "bash -lc './tools/get-command fixture/input.txt'",
@@ -1605,17 +1663,54 @@ class EvaluationToolingTests(unittest.TestCase):
                 "./tools/report-builder --version",
                 "& .\\tools\\report-builder.exe -V",
                 "rg -n 'ruby --version' transcript.jsonl",
+                "bash -lc \"printf '<<'\"",
+                "bash -lc \"cat <<EOF\nrelease fixture\nEOF\"",
             )
+            # Bare PowerShell and POSIX discovery forms must be classified the
+            # same way on every validator host.
+            for command in forbidden:
+                with self.subTest(command=command):
+                    errors = errors_for(command)
+                    self.assertTrue(errors, command)
+                    self.assertIn("host capability discovery", errors[0])
+
             for command in allowed:
                 with self.subTest(command=command):
                     self.assertEqual(errors_for(command), [], command)
 
-            # Compound heredoc records are intentionally outside this regex guard;
-            # the semantic skill rule and downstream safety review remain binding.
-            self.assertEqual(
-                errors_for("bash -lc \"cat <<EOF\nwhich ruby\nEOF\""),
-                [],
-            )
+            # Shell heredocs are deliberately fail-closed when they contain
+            # discovery-shaped text; reproducing Bash expansion and logical-line
+            # semantics here would create a second, incomplete shell parser.
+            for heredoc_command in (
+                "bash -lc \"cat <<EOF\nwhich ruby\nEOF\"",
+                "bash -lc \"cat <<EOF\ncommand -v ruby\nEOF\"",
+                "bash -lc \"cat <<EOF\ncommand -pv ruby\nEOF\"",
+                "bash -lc \"cat <<EOF\ncommand -p -v ruby\nEOF\"",
+                "bash -lc \"cat <<123\ncommand -v ruby\n123\"",
+                "bash -lc \"cat <<'END-MARK'\nwhich ruby\nEND-MARK\"",
+                "bash -lc \"cat <<-EOF\n\tcommand -v ruby\n\tEOF\"",
+                "bash -lc \"cat <<FIRST <<SECOND\ncommand -v ruby\nFIRST\nwhich ruby\nSECOND\"",
+                "bash -lc 'cat <<EOF\n$(command -v ruby)\nEOF'",
+                "bash -lc 'cat <<EOF\n$(pwsh -NoProfile -Command \"Get-Module -Name Microsoft.PowerShell.Utility -ListAvailable\")\nEOF'",
+                "bash -lc 'cat <<EOF\n$(pwsh -NoProfile -Command \"Get-Module Microsoft.PowerShell.Utility -ListAvailable\")\nEOF'",
+                "bash -lc 'cat <<EOF\n`which ruby`\nEOF'",
+                "bash -lc \"cat <<EOF\n'\\$(command -v ruby)'\nEOF\"",
+                "bash -lc \"cat <<EOF\n'\\`which ruby\\`'\nEOF\"",
+                "bash -lc \"cat <<EOF\n'\nEOF\ncommand -v ruby\"",
+                "bash -lc \"cat <<EOF\n'\nEOF\nwhich ruby\"",
+                "bash -lc 'cat <<EOF\n$(command \\\n-v ruby)\nEOF'",
+                "bash -lc 'cat <<EOF\n$(command -\\\nv ruby)\nEOF'",
+                "bash -lc 'cat <<EOF\n$(wh\\\nich ruby)\nEOF'",
+                "bash -lc \"cat <<EOF\nrelease fixture\nEOF\ncom\\\nmand -v ruby\"",
+                "bash -lc \"cat <<EOF\nrelease fixture\nEOF\nwhi\\\nch ruby\"",
+                "bash -lc \"cat <<EOF; \\\ncommand -v ruby\npayload\nEOF\"",
+                "bash -lc \"cat <<EOF; printf 'continued\ntext'; command -v ruby\npayload\nEOF\"",
+                "bash -lc \"cat <<FIRST \\\n<<SECOND; command -v ruby\none\nFIRST\ntwo\nSECOND\"",
+            ):
+                with self.subTest(command=heredoc_command):
+                    errors = errors_for(heredoc_command)
+                    self.assertTrue(errors, heredoc_command)
+                    self.assertIn("host capability discovery", errors[0])
 
     def test_external_task_workspace_persistence_is_hash_bound(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

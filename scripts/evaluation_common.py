@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v7"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v8"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -71,7 +71,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v4"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v5"
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",
@@ -1693,8 +1693,15 @@ def task_trace_isolation_validation_errors(
             or any(outside_quoted_literal(match) for match in split_name.finditer(command))
         )
 
-    def contains_host_capability_discovery(command: str) -> bool:
-        """Detect executed host-tool discovery without matching quoted search text."""
+    def contains_host_capability_discovery(
+        command: str, default_shell_context: str
+    ) -> bool:
+        """Detect executed host-tool discovery without matching quoted search text.
+
+        Explicit shell launchers override the supplied default. The caller checks
+        unwrapped commands with both PowerShell and POSIX defaults so validation
+        does not depend on the operating system that reads the transcript.
+        """
 
         def shell_payload(value: str) -> tuple[str, str]:
             env_option = (
@@ -1749,7 +1756,7 @@ def task_trace_isolation_validation_errors(
                 if payload and payload[-1] in {"'", '"'}:
                     payload = payload[:-1]
                 return payload, context
-            return value, "powershell" if os.name == "nt" else "posix"
+            return value, default_shell_context
 
         def quoted_ranges(value: str) -> list[tuple[int, int, str]]:
             def escaped_quote(index: int) -> bool:
@@ -1789,12 +1796,36 @@ def task_trace_isolation_validation_errors(
                 ranges.append((start, len(value), quote))
             return ranges
 
-        payload, shell_context = shell_payload(command)
-        # Heredoc records require shell-aware semantic review. Classifying their
-        # bodies with regexes creates both false positives and executable bypasses,
-        # so this mechanical guard is intentionally limited to direct commands.
-        if shell_context == "posix" and "<<" in payload:
-            return False
+        normalized_command = command
+        for continuation_pattern in (
+            r"\\\r?\n",
+            r"`\r?\n",
+            r"\^\r?\n",
+        ):
+            normalized_command = re.sub(
+                continuation_pattern, "", normalized_command
+            )
+        payload, shell_context = shell_payload(normalized_command)
+        posix_command_discovery_options = (
+            r"(?=(?:-[pVv]+[ \t]+)*-[pVv]*[vV])"
+            r"(?:-[pVv]+[ \t]+)*-[pVv]+"
+        )
+        # Quote characters inside heredoc bodies are data, and unquoted bodies can
+        # execute substitutions. Pre-screen multiline heredoc-shaped records before
+        # ordinary command-line quote handling so the guard fails closed without
+        # attempting to duplicate shell parsing.
+        if "<<" in payload and ("\n" in payload or "\r" in payload):
+            heredoc_discovery = re.compile(
+                r"(?:\bget-command\b"
+                r"|\bget-module\b"
+                rf"|\bcommand\s+(?:--\s+)?{posix_command_discovery_options}\b"
+                r"|(?:(?:/usr(?:/local)?/bin|/bin)/)?\bwhich(?:\.exe)?\b"
+                r"|(?:[A-Za-z]:[/\\]Windows[/\\]System32[/\\])?"
+                r"\bwhere(?:\.exe)?\b)",
+                re.IGNORECASE,
+            )
+            if heredoc_discovery.search(payload):
+                return True
         ranges = quoted_ranges(payload)
 
         def outside_quoted_literal(match: re.Match[str]) -> bool:
@@ -1826,7 +1857,8 @@ def task_trace_isolation_validation_errors(
             )
         elif shell_context == "posix":
             discovery_tool = (
-                rf"(?:command\s+(?:--\s+)?-v{terminator}"
+                rf"(?:command\s+(?:--\s+)?"
+                rf"{posix_command_discovery_options}{terminator}"
                 rf"|{posix_host_prefix}which(?:\.exe)?{terminator})"
             )
             quoted_discovery_tool = rf"{posix_host_prefix}which(?:\.exe)?"
@@ -1844,7 +1876,35 @@ def task_trace_isolation_validation_errors(
         control_prefix = (
             rf"(?:(?:{'|'.join(control_words)})\s+)?" if control_words else ""
         )
-        boundary = rf"(?:^|{separator_characters}\s*){control_prefix}"
+        simple_command_prefix = ""
+        if shell_context == "posix":
+            shell_word_piece = (
+                r"(?:[^\s'\";&|()\\]|\\[^\r\n]"
+                r"|'[^']*'|\"[^\"]*\")"
+            )
+            assignment_word = (
+                rf"[A-Za-z_][A-Za-z0-9_]*=(?:{shell_word_piece})*"
+            )
+            redirection_word = (
+                r"(?:(?:\d*(?:<<<|<<|<>|>>|<&|>&|>\||<|>)|&>>?)\s*"
+                r"(?:&[0-9-]+"
+                rf"|(?:{shell_word_piece})+))"
+            )
+            simple_command_prefix = (
+                rf"(?:(?:{assignment_word}|{redirection_word})\s+)*"
+            )
+        elif shell_context == "cmd":
+            cmd_redirection_word = (
+                r"(?:\d*(?:>>?|<<?)\s*"
+                r"(?:&[0-9]+|[^\s'\";&|()]+|'[^']*'|\"[^\"]*\"))"
+            )
+            simple_command_prefix = (
+                rf"@?\s*(?:(?:{cmd_redirection_word})\s+)*"
+            )
+        boundary = (
+            rf"(?:^|{separator_characters}\s*)"
+            rf"{control_prefix}{simple_command_prefix}"
+        )
 
         invocation = re.compile(
             rf"{boundary}(?:&\s*)?{discovery_tool}",
@@ -1938,7 +1998,10 @@ def task_trace_isolation_validation_errors(
         folded_command = normalized_command.casefold()
         if contains_git_invocation(command):
             command_violations.add("Git command")
-        if contains_host_capability_discovery(command):
+        if any(
+            contains_host_capability_discovery(command, shell_context)
+            for shell_context in ("powershell", "posix")
+        ):
             command_violations.add("host capability discovery")
         if contains_git_metadata_path(command):
             command_violations.add("Git metadata path")
