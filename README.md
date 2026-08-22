@@ -51,7 +51,7 @@ The canonical repository is [swetankz/report-skills](https://github.com/swetankz
 
 Use the latest stable release for normal installation. GitHub pre-releases are opt-in candidates for evaluation and should not be treated as final qualification.
 
-For the complete suite, download the versioned `report-skills-<version>.zip` archive and its SHA-256 sidecar, verify the checksum, extract it, and use the extracted root as the Codex plugin source. For one specialist, give Codex's skill installer the repository `swetankz/report-skills`, a published release tag, and path `skills/<skill-name>`. See the [installation guide](docs/installation.md).
+For the complete suite, download the versioned `report-skills-<version>.zip` archive and its SHA-256 sidecar, verify the checksum, extract it, and use the extracted root as the Codex plugin source. For one specialist, give Codex's skill installer the repository `swetankz/report-skills`, a published release tag, and path `skills/<skill-name>`. See the [complete Windows, macOS, and Linux installation guide](docs/installation.md).
 
 ## Safety boundary
 
