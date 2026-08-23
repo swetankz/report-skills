@@ -4,6 +4,7 @@ All notable repository-level changes are documented here.
 
 ## 0.2.0 — 2026-08-23
 
+- Require an explicit result verb before treating a scheduled action followed by “done” or “successful” as an external-action disclosure, while preserving rejection of affirmative publication language.
 - Finalize the stable release identity for the validated behavioral evaluation and release-validation system.
 - Add the complete Windows, macOS, and Linux installation guide and link it from the repository readme.
 - Require benchmark task receipts to identify each disclosed artifact as one concrete regular file, rejecting directory-style paths.

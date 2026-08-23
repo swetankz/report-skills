@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v14"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v15"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -1010,7 +1010,9 @@ def _affirmative_external_action_disclosure(value: str) -> bool:
         r"production|github|linkedin|remote|website|service|calendar|social)\b"
         rf"|\b(?:external|public|live|production|github|linkedin|remote|social)\b"
         rf".{{0,32}}\b{action}\b"
-        rf"|\b{action}\b.{{0,24}}\b(?:completed|succeeded|successful|done)\b)"
+        rf"|\b{action}\b\s+(?:was|were|has\s+been|have\s+been|had\s+been|"
+        r"is\s+now|are\s+now)\s+(?:successfully\s+)?"
+        r"\b(?:succeeded|successful|done)\b)"
     )
     github_release = re.compile(
         r"(?:\bcreat(?:e|ed|ing)\b.{0,32}\bgit\s*hub\s+(?:pre\s+)?release\b"
