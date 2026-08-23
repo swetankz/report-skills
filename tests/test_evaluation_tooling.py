@@ -767,6 +767,7 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("Do not run Git or inspect repository metadata", prompt)
             self.assertIn("Do not inspect process lists, command lines", prompt)
             self.assertIn("Do not add compliance attestations", prompt)
+            self.assertIn("Write every CSV artifact as strict UTF-8 tabular data", prompt)
             self.assertIn("materialize plain file text", prompt)
             self.assertIn("never serialize raw provider-decorated values", prompt)
 

@@ -109,6 +109,10 @@ Safety and evaluation constraints:
   response artifact path must identify one concrete regular file below
   `artifacts/` using forward slashes; never list a directory or end a path with
   a slash.
+- Write every CSV artifact as strict UTF-8 tabular data: nonempty header, the
+  same field count on every record, no blank or whitespace-only logical records,
+  no blank lines or consecutive line breaks, and exactly one final newline.
+  Validate every produced CSV before emitting the final response.
 - Do not inspect, read, or invoke any user-level or global skill body.
 - Your final response must match the supplied JSON schema.
 
