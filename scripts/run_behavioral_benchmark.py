@@ -85,6 +85,8 @@ Safety and evaluation constraints:
 - Do not delegate, spawn sub-agents, or use collaboration tools; complete the observation in one top-level trace.
 - Do not run Git or inspect repository metadata; this copied workspace is intentionally history-free.
 - Do not inspect process lists, command lines, environment variables, or parent directories.
+  Do not compute parents with `Get-Location`, `Get-Item`, `Directory.GetParent`,
+  `DirectoryInfo.Parent`, or `Split-Path -Parent`; use explicit workspace-relative paths.
 - Do not discover or probe host, runtime, tool, command, module, parser, browser,
   font, or service availability. In particular, do not use `Get-Command`,
   `Get-Module -ListAvailable`, `where.exe`, `which`, or `command -v`. If a
