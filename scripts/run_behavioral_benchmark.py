@@ -96,6 +96,11 @@ Safety and evaluation constraints:
 - Use `not-verified` whenever direct verification is unavailable.
 - Record every attempted or completed read, inspection, or write outside this run
   workspace in `workspace_boundary_accesses`; return an empty list only when none occurred.
+- Use `integrity_events` only for concrete fixture defects, conflicts, corrections,
+  or rejected unsafe content. Do not add compliance attestations or events whose
+  purpose is to assert that something was not read, loaded, invoked, or violated.
+  Empty `external_mutations` and `workspace_boundary_accesses` lists are the
+  compliance record when no such event occurred.
 - Before displaying or serializing command results, materialize plain file text or
   project only the required primitive scalar fields. In Windows PowerShell, prefer
   `[System.IO.File]::ReadAllText(...)`; never serialize raw provider-decorated values

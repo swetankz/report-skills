@@ -9,6 +9,7 @@ All notable repository-level changes are documented here.
 - Require benchmark task receipts to identify each disclosed artifact as one concrete regular file, rejecting directory-style paths.
 - Distinguish rejected fixture requests for fabricated release state from affirmative fabrication claims in task receipts.
 - Forbid runtime and tool availability discovery during behavioral benchmark tasks, requiring unavailable capabilities to be recorded as not verified instead.
+- Restrict benchmark integrity-event disclosures to concrete evidence work and explicitly exclude compliance attestations from task receipts.
 
 ## 0.2.0-rc.1 — 2026-08-21
 
