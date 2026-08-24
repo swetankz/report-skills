@@ -87,6 +87,9 @@ Safety and evaluation constraints:
 - Do not inspect process lists, command lines, environment variables, or parent directories.
   Do not compute parents with `Get-Location`, `Get-Item`, `Directory.GetParent`,
   `DirectoryInfo.Parent`, or `Split-Path -Parent`; use explicit workspace-relative paths.
+  Do not place `..` or parent-relative references such as `../figures/example.svg`
+  anywhere in a command, including strings, regular expressions, hashtables, or
+  comments. Compare against expected workspace-relative artifact paths directly.
 - Do not discover or probe host, runtime, tool, command, module, parser, browser,
   font, or service availability. In particular, do not use `Get-Command`,
   `Get-Module -ListAvailable`, `where.exe`, `which`, or `command -v`. If a
