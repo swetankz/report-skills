@@ -9,10 +9,15 @@ reporting_period:
 evidence_cutoff: "2030-06-30"
 visibility: "private"
 requested_outputs: []
+# Required for every identified fixture/source defect:
+# - defect_id, source, finding, disposition, and affected_stage_ids
+evidence_defects: []
 selected_skills: []
+# Every stage, including blocked/not-started work, requires exact input_contracts
+# (artifact_id, artifact_type, version, location, hash when available) and
+# expected_outputs with concrete artifact_id and version values.
 stages: []
 approval_gates: []
 blockers: []
 external_actions:
   publication_authorized: false
-

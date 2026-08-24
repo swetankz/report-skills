@@ -4,6 +4,7 @@ All notable repository-level changes are documented here.
 
 ## 0.2.0 — 2026-08-23
 
+- Require workflow manifests to carry a complete evidence-defect register and exact per-stage input/output contracts, including blocked future stages, so handoffs remain inspectable without consulting side files.
 - Run graders, blind comparators, and trigger observations in disposable reviewed workspace sandboxes on the pinned Windows runtime, while immutable input/output hashes and cleanup validation continue to fail closed on staged-evidence mutation.
 - Prohibit parent-relative reference literals in every behavioral command, including lookup tables and regular expressions, while preserving fail-closed traversal detection.
 - Name the prohibited parent-directory computation forms in behavioral task contracts, preserving fail-closed rejection of computed parent paths while making the workspace-relative path requirement explicit.

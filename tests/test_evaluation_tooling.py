@@ -759,6 +759,28 @@ class EvaluationToolingTests(unittest.TestCase):
         for stage in ("grader", "blind_comparator", "trigger"):
             self.assertEqual(methods[stage]["sandbox"], "workspace-write", stage)
 
+    def test_router_skill_requires_exact_manifest_handoffs_and_defects(self) -> None:
+        skill = (REPO_ROOT / "skills" / "report-skills" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        routing = (
+            REPO_ROOT / "skills" / "report-skills" / "references" / "routing-and-lifecycle.md"
+        ).read_text(encoding="utf-8")
+        template = (
+            REPO_ROOT
+            / "skills"
+            / "report-skills"
+            / "assets"
+            / "templates"
+            / "workflow-manifest.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("top-level `evidence_defects`", skill)
+        self.assertIn("For every stage—including a blocked or not-yet-started stage", skill)
+        self.assertIn("| `evidence_defects` |", routing)
+        self.assertIn("`input_contracts` naming exact upstream artifact", routing)
+        self.assertIn("evidence_defects: []", template)
+        self.assertIn("input_contracts", template)
+
     def test_behavioral_prompt_limits_skill_bodies_to_the_candidate(self) -> None:
         with_skill = {"configuration": "with_skill", "skill": "evidence-first-report", "prompt": "Task"}
         baseline = {"configuration": "without_skill", "skill": "evidence-first-report", "prompt": "Task"}

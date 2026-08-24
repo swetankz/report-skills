@@ -155,9 +155,9 @@
     "source/skills/report-content-repurposer/SKILL.md": "b25b64bb8104139990d34c3fd12eea46ebc69a87936a92086969f4589cd64a12",
     "source/skills/report-content-repurposer/agents/openai.yaml": "7ab1f13f486e6151406c8339b315c43290e41e637a4a8b9b9e1ee8498e7540d6",
     "source/skills/report-content-repurposer/references/derivative-workflow.md": "1873fe65a3edfb4d3e576acd466577843eb1e72757f26408fc17b57406cca895",
-    "source/skills/report-skills/SKILL.md": "ab8ab04a0b2b5e51119c971f8c2db27b48db8123021bfbacf918e99ef3d9414d",
+    "source/skills/report-skills/SKILL.md": "b72f84ba712af8465d7f4b53b507d31a7bd143934798e9035fe79e2c12bb4620",
     "source/skills/report-skills/agents/openai.yaml": "136b5c9572b38556c09c1d28a1fefed04cb28c18abe9c2254ed645688e40b0aa",
-    "source/skills/report-skills/references/routing-and-lifecycle.md": "853b8df6a28adce74e18bef0108556ad116c51eb5efb5e21c69d9756bc0b988a",
+    "source/skills/report-skills/references/routing-and-lifecycle.md": "8cf26844cb668b3ca7398e6a57d091414090f9141fa9cb34a1538775f9cdba1a",
     "source/skills/report-visual-system/SKILL.md": "f0bd4953187c69a9c703bcd3e39363acc7f7aa60f1badc86de8a76f7e2984cf3",
     "source/skills/report-visual-system/agents/openai.yaml": "9fa85ffe021853b27eaf1762d012c1020e8743bc42a83cb39ef8eef43830b573",
     "source/skills/report-visual-system/references/publication-system-protocol.md": "55a60b3f6abcb9f83fd43e2230446c2b8efd9097b15ce3f9c9b6a03f1bc8aa27",
@@ -179,6 +179,6 @@
     "templates/source-register.csv": "bb0e621db847f8c6b3c9f025cfe0922f04ed276324c0bf09126c76c7b6da826c",
     "templates/visual-qa-report.md": "afec516e09104b2b7c7c25dba8d6f2ce3ed53af93c5b103a8dc52837f78cde65",
     "templates/web-candidate.yaml": "33e4c4c0acf8e9be863b4257e4bb233044caec9a0749eb41af987d209c777081",
-    "templates/workflow-manifest.yaml": "6510dc92a2efffa58fbf53bc332d55f1761d012f0539bbdfa3d8a83366269767"
+    "templates/workflow-manifest.yaml": "8f7b57deb061c2cbe148d53db2be8fd19567098390521d82b3e839fbaab3ed04"
   }
 }

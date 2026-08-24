@@ -48,8 +48,11 @@ Create `workflow-manifest.yaml` before multi-stage execution. Start from `assets
 - Requested outputs and visibility.
 - Selected skills and stages in dependency order.
 - Exact input and expected output artifacts for every stage.
+- A top-level `evidence_defects` register that names every supplied evidence defect, its source, disposition, and affected stages. Keep this register synchronized with detailed stage findings; do not leave defects only in a separate assessment file.
 - Versioned handoffs, approval gates, blockers, and skipped stages with reasons.
 - `publication_authorized: false` unless an explicit, scoped human record proves otherwise.
+
+For every stage—including a blocked or not-yet-started stage—record an `input_contracts` list naming the exact upstream artifacts it will consume: artifact identifier, type, version, location, and hash when available. Also name the exact expected downstream artifact identifiers and versions. Do not substitute a bare stage dependency or an empty input list merely because the stage is blocked or its specialist is unavailable.
 
 Use the schema and routing rules in [Routing and lifecycle](references/routing-and-lifecycle.md). Keep the manifest current after every accepted handoff or changed blocker.
 
