@@ -514,7 +514,7 @@ def main() -> int:
                 command = codex_base_command(
                     codex_runtime_command(execution_profile),
                     workspace,
-                    "read-only",
+                    "workspace-write",
                     staged_schema,
                     staged_prediction,
                     execution_profile["model"],

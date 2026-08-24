@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v17"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v18"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -597,7 +597,7 @@ def canonical_grader_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "grader",
-        "sandbox": "read-only",
+        "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
             "task-output",
@@ -623,7 +623,7 @@ def canonical_blind_comparator_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "blind_comparator",
-        "sandbox": "read-only",
+        "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
             "blind-bundle-a",
@@ -646,7 +646,7 @@ def canonical_trigger_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "trigger",
-        "sandbox": "read-only",
+        "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
             "single-sentinel-candidate-skill",

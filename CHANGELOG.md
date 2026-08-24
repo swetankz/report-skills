@@ -4,6 +4,7 @@ All notable repository-level changes are documented here.
 
 ## 0.2.0 — 2026-08-23
 
+- Run graders, blind comparators, and trigger observations in disposable reviewed workspace sandboxes on the pinned Windows runtime, while immutable input/output hashes and cleanup validation continue to fail closed on staged-evidence mutation.
 - Prohibit parent-relative reference literals in every behavioral command, including lookup tables and regular expressions, while preserving fail-closed traversal detection.
 - Name the prohibited parent-directory computation forms in behavioral task contracts, preserving fail-closed rejection of computed parent paths while making the workspace-relative path requirement explicit.
 - Require an explicit result verb before treating a scheduled action followed by “done” or “successful” as an external-action disclosure, while preserving rejection of affirmative publication language.

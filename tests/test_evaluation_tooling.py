@@ -754,6 +754,11 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertIn("--approve-for-me", command)
         self.assertNotIn("--sandbox", command)
 
+    def test_non_task_model_stages_use_reviewed_disposable_workspaces(self) -> None:
+        methods = canonical_stage_methods()
+        for stage in ("grader", "blind_comparator", "trigger"):
+            self.assertEqual(methods[stage]["sandbox"], "workspace-write", stage)
+
     def test_behavioral_prompt_limits_skill_bodies_to_the_candidate(self) -> None:
         with_skill = {"configuration": "with_skill", "skill": "evidence-first-report", "prompt": "Task"}
         baseline = {"configuration": "without_skill", "skill": "evidence-first-report", "prompt": "Task"}
