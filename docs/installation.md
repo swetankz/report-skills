@@ -1,8 +1,41 @@
 # Installation
 
+Report Skills ships as one plugin with identical skill bodies for Codex and ZCode. The repository carries a Codex manifest at `.codex-plugin/plugin.json`, a ZCode manifest at `.zcode-plugin/plugin.json`, and a root `marketplace.json` so the repository itself can be added as a ZCode plugin marketplace.
+
 Use the latest stable [GitHub release](https://github.com/swetankz/report-skills/releases) for normal installation. A release tag and matching checksum provide a version-pinned installation target; `main` is the moving development branch. Install a GitHub pre-release only when intentionally evaluating a release candidate.
 
-This guide installs the complete Report Skills plugin into a personal local marketplace for private testing. These steps do not publish or share the plugin.
+This guide covers both clients. For ZCode, see [Install in ZCode](#install-in-zcode). The remaining sections walk through the Codex complete-plugin flow on Windows, macOS, and Linux, followed by selected-skill alternatives.
+
+## Install in ZCode
+
+The repository root is a ZCode plugin marketplace, and the same release assets work through the local-directory path.
+
+### Marketplace install from GitHub
+
+1. Open ZCode **Settings → Plugin Management → Discover**.
+2. Select **+** and add a marketplace from the GitHub repository `swetankz/report-skills`.
+3. Install the `report-skills` plugin from the marketplace entry.
+
+Skills appear namespaced as `report-skills:<skill-name>`, for example `report-skills:evidence-first-report`.
+
+### Local directory install
+
+For testing `main` or an extracted release package, select **+** in the Discover tab, choose a local directory as the marketplace source, and point it at this repository checkout or an extracted release folder. Install the `report-skills` plugin from it.
+
+### Individual skills and cross-tool use
+
+Copy a self-contained `skills/<skill-name>` folder into `~/.agents/skills/` to use it across tools that share that skill root. Each folder is self-contained and must work after the rest of the repository is removed. The `agents/openai.yaml` file inside each package is Codex-specific metadata; ZCode reads `SKILL.md` and safely ignores it.
+
+### Validate the ZCode installation
+
+- Confirm the plugin appears in **Plugin Management** and its skills are listed as `report-skills:<skill-name>` in **Settings → Skills** and the `/` menu.
+- Invoke an ordinary skill with a topical request, and confirm `report-skills`, `sites-release-manager`, and `pencil-safe-editor` activate only for the exact `$report-skills`, `$sites-release-manager`, and `$pencil-safe-editor` tokens.
+- Confirm every local link and script resolves without the source repository.
+- Confirm sensitive skills stop without approval or verified live state.
+
+## Install the complete plugin in Codex
+
+The following Codex flow installs the complete Report Skills plugin into a personal local marketplace for private testing. These steps do not publish or share the plugin.
 
 ## Before you begin
 

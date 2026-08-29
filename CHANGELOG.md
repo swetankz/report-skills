@@ -2,6 +2,10 @@
 
 All notable repository-level changes are documented here.
 
+## Unreleased
+
+- Ship first-class ZCode packaging and documentation: add `.zcode-plugin/plugin.json` and a repository-root `marketplace.json` alongside the Codex manifest, and document ZCode marketplace, local-directory, and cross-tool installation with per-client validation in the README and installation guide.
+
 ## 0.2.0-rc.1 — 2026-08-21
 
 - Resolve and profile exactly one native Codex implementation, reproduce the package wrapper's managed environment, and bind every model-backed call to kill-on-timeout process-tree handling plus canonical stage-specific timeout and termination receipts. Failed calls stop their stage and cannot be graded, compared, resumed, or salvaged from terminal-looking output.
