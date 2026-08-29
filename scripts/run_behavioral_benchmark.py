@@ -85,6 +85,8 @@ Safety and evaluation constraints:
 - Do not delegate, spawn sub-agents, or use collaboration tools; complete the observation in one top-level trace.
 - Do not run Git or inspect repository metadata; this copied workspace is intentionally history-free.
 - Do not inspect process lists, command lines, environment variables, or parent directories.
+- Never include a `..` path segment in any command or argument; stay inside this run
+  workspace using workspace-relative or absolute paths that begin at the workspace.
 - Do not discover, probe, or version-check installed tools, runtimes, interpreters,
   executables, or host capabilities (for example `node --version`, `ruby --version`,
   `Get-Command`); when a check would depend on such tooling, record it as `not-verified`

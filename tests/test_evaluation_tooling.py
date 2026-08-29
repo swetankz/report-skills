@@ -770,6 +770,7 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("never serialize raw provider-decorated values", prompt)
             self.assertIn("Do not discover, probe, or version-check installed tools", prompt)
             self.assertIn("record it as `not-verified`", prompt)
+            self.assertIn("Never include a `..` path segment", prompt)
             self.assertIn("never declare a directory", prompt)
             self.assertIn("no blank, zero-field, or whitespace-only lines", prompt)
             self.assertIn("parsed and hash-bound as part of your produced artifact set", prompt)
