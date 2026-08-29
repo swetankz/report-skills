@@ -1,0 +1,31 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "report-skills",
+  "description": "Evidence-led research-to-publication skills: source-backed reports, evidence visuals, publication systems, quality assurance, derivatives, provenance, and controlled release workflows.",
+  "owner": {
+    "name": "Swetank Gawde",
+    "url": "https://github.com/swetankz"
+  },
+  "plugins": [
+    {
+      "name": "report-skills",
+      "description": "A modular, evidence-led research-to-publication skill system: orchestrate source-backed reports, evidence visuals, editable publication systems, responsive report websites, quality assurance, derivatives, provenance, and controlled release workflows.",
+      "author": {
+        "name": "Swetank Gawde",
+        "url": "https://github.com/swetankz"
+      },
+      "category": "productivity",
+      "source": "./",
+      "version": "0.2.0-rc.1",
+      "homepage": "https://github.com/swetankz/report-skills#readme",
+      "keywords": [
+        "research",
+        "reports",
+        "citations",
+        "data-storytelling",
+        "publication",
+        "quality-assurance"
+      ]
+    }
+  ]
+}
