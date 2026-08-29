@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v19"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v20"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -71,7 +71,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v5"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v6"
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",
@@ -1005,11 +1005,19 @@ def _affirmative_external_action_disclosure(value: str) -> bool:
         r"(?:the|a|an|this|that|report|release|artifact|site|build|branch|tag|"
         r"launch|post|file|asset|meeting|package|version)\b"
     )
+    # Verbal-only action forms for context-window matching: bare "post",
+    # "release", or "publishing copy" describe deliverables, not actions, so
+    # only completed forms or gerunds with an explicit external target count.
+    verbal_action = (
+        r"(?:published|deployed|pushed|posted|uploaded|scheduled|released\b"
+        r"|(?:publishing|deploying|pushing|posting|uploading|scheduling|"
+        r"releasing)\s+(?:to|on|into|at|with)\b)"
+    )
     external_context = re.compile(
         rf"(?:\b{completed_action}\b.{{0,48}}\b(?:externally|publicly|live|"
         r"production|github|linkedin|remote|website|service|calendar|social)\b"
         rf"|\b(?:external|public|live|production|github|linkedin|remote|social)\b"
-        rf".{{0,32}}\b{action}\b"
+        rf".{{0,32}}\b{verbal_action}\b"
         rf"|\b{action}\b\s+(?:was|were|has\s+been|have\s+been|had\s+been|"
         r"is\s+now|are\s+now)\s+(?:successfully\s+)?"
         r"\b(?:succeeded|successful|done)\b)"
