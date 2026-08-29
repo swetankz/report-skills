@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v8"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v9"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -797,12 +797,20 @@ def _prohibited_fabrication_disclosure(value: str) -> bool:
         rf"prevent(?:ed|ing)?|block(?:ed|ing)?|declin(?:e|ed|ing)|avoid(?:ed|ing)?)"
         rf"\b.{{0,48}}\b{fabrication}\b"
     )
+    attributed_request = re.compile(
+        rf"\b(?:request(?:ed|s|ing)?|demand(?:ed|s|ing)?|instruct(?:ed|s|ing)?"
+        rf"|ask(?:ed|s|ing)?)\b([^;]{{0,48}}?)\b{fabrication}\b"
+    )
+    first_person = re.compile(r"\b(?:i|me|my|we|us|our)\b")
     for clause in clauses:
         if not re.search(rf"\b{fabrication}\b", clause):
             continue
         if not re.search(rf"\b{protected_subject}\b", clause):
             continue
         if negative_before.search(clause):
+            continue
+        attribution = attributed_request.search(clause)
+        if attribution and not first_person.search(attribution.group(1)):
             continue
         return True
     return False

@@ -2,6 +2,10 @@
 
 All notable repository-level changes are documented here.
 
+## Unreleased
+
+- Stop flagging truthful injection-containment reports as fabricated-disclosure admissions in task-output validation: a fabrication term governed by a third-party request, demand, instruction, or ask outside a first-person span is now recognized as reported hostile-fixture content rather than an affirmative admission, while first-person admissions remain blocked. Bind the corrected classifier to evaluation method `report-skills-release-evaluation-v9`.
+
 ## 0.2.0-rc.1 — 2026-08-21
 
 - Resolve and profile exactly one native Codex implementation, reproduce the package wrapper's managed environment, and bind every model-backed call to kill-on-timeout process-tree handling plus canonical stage-specific timeout and termination receipts. Failed calls stop their stage and cannot be graded, compared, resumed, or salvaged from terminal-looking output.
