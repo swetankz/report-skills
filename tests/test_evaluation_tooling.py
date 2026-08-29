@@ -768,6 +768,11 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("Do not inspect process lists, command lines", prompt)
             self.assertIn("materialize plain file text", prompt)
             self.assertIn("never serialize raw provider-decorated values", prompt)
+            self.assertIn("Do not discover, probe, or version-check installed tools", prompt)
+            self.assertIn("record it as `not-verified`", prompt)
+            self.assertIn("never declare a directory", prompt)
+            self.assertIn("no blank, zero-field, or whitespace-only lines", prompt)
+            self.assertIn("parsed and hash-bound as part of your produced artifact set", prompt)
 
     def test_every_model_prompt_forbids_collaboration(self) -> None:
         grader = grade_behavioral_benchmark.grader_prompt(
