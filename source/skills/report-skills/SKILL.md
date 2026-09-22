@@ -92,6 +92,8 @@ Assign only `working`, `reviewed`, `ready-for-approval`, or `blocked` from skill
 
 Keep content approval, design approval, quality review, packaging approval, and publication approval separate. Never infer one from another.
 
+Account for external actions precisely: include an item in `external_mutations` only when an action against an external system was actually attempted or completed. A planned, blocked, or unauthorized target is not an external mutation. When no external action was attempted, keep `external_mutations` empty and record the target, missing authorization, and next step in the workflow manifest's blocker fields. Do not use an `authorized: false` mutation entry to attest that nothing happened; any nonempty mutation list records an attempted or completed action and must be treated as such.
+
 Require a canonical-source receipt before release preparation. Record the source path or repository reference, timestamp, hash or commit, status, owner, and intended role. Treat a successful prior deployment as evidence of deployment only, not proof that the current candidate is canonical or release-ready.
 
 ## 7. Close the workflow honestly
