@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "evaluation_id": "report-skills-gate2-cd5419c-2026-09-12",
+  "candidate": {
+    "commit": "cd5419c0f0684e0f8cd3188534745dd24c0ba5a6",
+    "tree": "960a17528448fdd12ad52c55f071320a0b4c78b7"
+  },
+  "method": "report-skills-release-evaluation-v20",
+  "status": "incomplete",
+  "release_eligible": false,
+  "profile": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "codex_cli_version": "0.149.0"
+  },
+  "evidence": {
+    "run_id": "gate2-v020-cd5419c-b18-20260912-01",
+    "behavioral": {
+      "planned": 96,
+      "completed": 7,
+      "failed": 1,
+      "first_failed_run": "evidence-report__with_skill__r01",
+      "validation_errors": [
+        "artifact CSV artifacts/claim-ledger.csv row 8 has 14 fields; expected 13",
+        "artifact CSV artifacts/claim-ledger.csv row 9 has 14 fields; expected 13"
+      ],
+      "timed_out": false,
+      "termination": "natural-exit",
+      "failed_task_wall_clock_seconds": 357.0934063,
+      "failed_task_total_tokens": 499992
+    },
+    "graders": 0,
+    "blind_comparisons": 0,
+    "trigger_observations": 0
+  },
+  "required_counts": {
+    "behavioral_runs": 96,
+    "graders": 96,
+    "blind_comparisons": 33,
+    "trigger_observations": 75
+  },
+  "thresholds_evaluated": false,
+  "limitations": [
+    "The behavioral loop stopped at its first task validation failure.",
+    "The incomplete evidence set cannot support a Gate 2 release verdict or threshold assessment.",
+    "Raw transcripts, workspaces, and receipts are private and are not included in this public summary."
+  ]
+}
