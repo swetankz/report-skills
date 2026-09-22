@@ -110,6 +110,8 @@ Use actual execution time for artifact creation, review, revision, validation, r
 
 Audit the complete package before assigning `ready-for-approval`:
 
+- Validate the exact required CSV artifact paths, not merely a sibling candidate file. If a register fails, serialize the corrected rows back to that same canonical path and re-open those final bytes with the strict parser. A file named `*-fixed.csv` is only a diagnostic candidate and does not satisfy the required artifact contract. If one editing mechanism is unavailable, use another permitted write method within the task workspace; if the canonical file still cannot be corrected and verified, leave the package `blocked` and identify the exact unmet output.
+
 - Confirm every quantitative claim maps to registered evidence.
 - Confirm no consequential claim remains unsupported.
 - Confirm citations and identifiers resolve or carry an explicit access limitation.
