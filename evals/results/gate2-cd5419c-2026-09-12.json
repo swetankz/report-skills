@@ -33,6 +33,24 @@
     "blind_comparisons": 0,
     "trigger_observations": 0
   },
+  "fresh_confirmation_run": {
+    "run_id": "gate2-v020-cd5419c-b18-20260922-05",
+    "behavioral": {
+      "planned": 96,
+      "completed": 7,
+      "failed": 1,
+      "first_failed_run": "evidence-report__with_skill__r01",
+      "validation_errors": [
+        "artifact CSV artifacts/claim-ledger.csv row 11 has 14 fields; expected 13"
+      ],
+      "task_output_claimed_csv_validation": true,
+      "timed_out": false,
+      "termination": "natural-exit",
+      "failed_task_wall_clock_seconds": 401.9787888,
+      "failed_task_total_tokens": 559354
+    },
+    "receipts_spliced_with_other_attempts": false
+  },
   "required_counts": {
     "behavioral_runs": 96,
     "graders": 96,
@@ -42,6 +60,7 @@
   "thresholds_evaluated": false,
   "limitations": [
     "The behavioral loop stopped at its first task validation failure.",
+    "A fresh rerun on the same commit reproduced a claim-ledger CSV width failure; its partial receipts are not combined with the first attempt.",
     "The incomplete evidence set cannot support a Gate 2 release verdict or threshold assessment.",
     "Raw transcripts, workspaces, and receipts are private and are not included in this public summary."
   ]
