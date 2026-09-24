@@ -85,9 +85,67 @@
       "decision": "incomplete",
       "complete": false,
       "all_hard_gates_pass": false,
-      "threshold_metrics_available": false
+      "full_matrix_threshold_metrics_available": false,
+      "trigger_metrics_available": true
     },
     "receipts_spliced_with_other_attempts": false
+  },
+  "trigger_confirmation_run": {
+    "run_id": "gate2-cd5419c-luna-medium-20260924-trigger-01",
+    "candidate_commit": "cd5419c0f0684e0f8cd3188534745dd24c0ba5a6",
+    "candidate_tree": "960a17528448fdd12ad52c55f071320a0b4c78b7",
+    "candidate_skills_match_exactly": true,
+    "evaluation_harness_commit": "2c226a3a760949170ce816554c3aa8925cb2cbff",
+    "evaluation_harness_tree": "6103fd91958a6c870c44b1cbb37dffd30a36ec1e",
+    "method": "report-skills-release-evaluation-v29",
+    "profile": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium",
+      "codex_cli_version": "0.155.0-alpha.9.2"
+    },
+    "observations": 75,
+    "failed_observations": 0,
+    "suite_wide_metrics": {
+      "true_positives": 33,
+      "false_positives": 1,
+      "true_negatives": 41,
+      "false_negatives": 0,
+      "precision": 0.9705882353,
+      "recall": 1.0
+    },
+    "per_skill_metrics": {
+      "creative-artifact-provenance": {
+        "observations": 6,
+        "true_positives": 3,
+        "false_positives": 1,
+        "true_negatives": 2,
+        "false_negatives": 0,
+        "precision": 0.75,
+        "recall": 1.0,
+        "precision_threshold_passed": false,
+        "recall_threshold_passed": true
+      },
+      "other_ten_skills_each": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "precision_threshold_passed": true,
+        "recall_threshold_passed": true
+      }
+    },
+    "false_positive_observation": "trigger-provenance-negative__r02",
+    "thresholds": {
+      "minimum_precision": 0.9,
+      "minimum_recall": 0.9,
+      "trigger_precision_gate_passed": false,
+      "trigger_recall_gate_passed": true
+    },
+    "aggregate_verdict": {
+      "decision": "incomplete",
+      "complete": false,
+      "all_hard_gates_pass": false
+    },
+    "receipts_validated_by_aggregate": true,
+    "receipts_spliced_with_behavioral_attempts": false
   },
   "exact_payload_v29_confirmation_run": {
     "run_id": "gate2-cd5419c-luna-medium-20260924-07",
