@@ -133,6 +133,8 @@
       }
     },
     "false_positive_observation": "trigger-provenance-negative__r02",
+    "false_positive_expected_alternative": "report-content-repurposer",
+    "false_positive_selected_skill": "creative-artifact-provenance",
     "thresholds": {
       "minimum_precision": 0.9,
       "minimum_recall": 0.9,
