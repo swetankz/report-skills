@@ -1,11 +1,13 @@
 ---
 name: creative-artifact-provenance
-description: "Inventory and reconcile the origin, status, transformations, parent relationships, and deliverable role of generated, authored, exported, diagnostic, and final creative files. Use when distinguishing provider outputs from local derivatives, auditing missing metadata, building lineage manifests, or producing a sanitized public provenance projection without exposing private paths, URLs, job identifiers, or operational records."
+description: "Trace the provenance of creative files: identify their source, provider origin, parent/derivative relationships, export versions, missing metadata, or build a file-lineage manifest and sanitized provenance disclosure. Do not use for content-only transformation of a report into posts, slides, or a carousel when file lineage is not requested; use the relevant content-repurposing or design skill instead."
 ---
 
 # Creative Artifact Provenance
 
 Build evidence-backed lineage for creative files. Preserve the difference between what is known, unknown, not applicable, and deliberately withheld.
+
+Use this skill only when the task requests provenance or lineage of the creative files themselves: where a file came from, how exported derivatives relate to a parent, whether file metadata is missing, or how to document/disclose that lineage. Do not load this skill merely because the task transforms a report's content into a social post, carousel, slide, or other deliverable. If no file-lineage record is requested, use the appropriate content-repurposing or design skill.
 
 ## Load the operating rules
 

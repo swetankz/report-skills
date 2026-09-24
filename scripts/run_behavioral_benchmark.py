@@ -87,6 +87,9 @@ Safety and evaluation constraints:
 - Do not inspect process lists, command lines, environment variables, or parent directories.
   Do not compute parents with `Get-Location`, `Get-Item`, `Directory.GetParent`,
   `DirectoryInfo.Parent`, or `Split-Path -Parent`; use explicit workspace-relative paths.
+  A workspace-local operation that converts paths already rooted at `.` into relative
+  display names is allowed; it does not inspect a parent or cross the workspace boundary.
+  Do not record that operation as a boundary or integrity event when no outside path was accessed.
   Do not place `..` or parent-relative references such as `../figures/example.svg`
   anywhere in a command, including strings, regular expressions, hashtables, or
   comments. Compare against expected workspace-relative artifact paths directly.
@@ -117,7 +120,13 @@ Safety and evaluation constraints:
 - Write every CSV artifact as strict UTF-8 tabular data: nonempty header, the
   same field count on every record, no blank or whitespace-only logical records,
   no blank lines or consecutive line breaks, and exactly one final newline.
-  Validate every produced CSV before emitting the final response.
+  Build records as structured objects and use a standard CSV writer. In Windows
+  PowerShell, use ordered `[pscustomobject]` records with `Export-Csv -NoTypeInformation`;
+  do not join CSV fields into strings manually. Re-open the canonical file and validate
+  every row width before emitting the final response.
+- Do not report workspace-wide write denial if any artifact was written successfully.
+  Verify writes at the exact required path and try another permitted writer before
+  marking a required artifact blocked.
 - Do not inspect, read, or invoke any user-level or global skill body.
 - Your final response must match the supplied JSON schema.
 
@@ -148,7 +157,7 @@ def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str
 
     allowed_directory = f".benchmark_skill/{run['skill']}".casefold()
     allowed_pattern = re.compile(
-        rf"(?<![a-z0-9_.-]){re.escape(allowed_directory)}(?=/|['\"\s,)])"
+        rf"(?<![a-z0-9_.-]){re.escape(allowed_directory)}(?=/|['\"\s,);])"
     )
     disallowed_roots = (
         ".benchmark_skill/",
@@ -168,6 +177,17 @@ def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str
             continue
         command = str(item.get("command", ""))
         normalized = re.sub(r"/+", "/", command.replace("\\", "/")).casefold()
+        # PowerShell Path.Combine can spell the injected path as separate quoted
+        # components; normalize that form before checking the exact candidate.
+        normalized = re.sub(r"['\"]\s*,\s*['\"]", "/", normalized)
+        if (
+            "rg --files" in normalized
+            and "!skill.md" in normalized
+            and not re.search(r"[;|&]", normalized)
+        ):
+            # `SKILL.md` in a ripgrep exclusion glob is a filename filter, not
+            # a request to read a skill body. Keep chained commands fail-closed.
+            continue
         if "skill.md" not in normalized:
             continue
         allowed_reference = allowed_pattern.search(normalized) is not None

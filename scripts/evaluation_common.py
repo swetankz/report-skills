@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v20"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v29"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -53,7 +53,7 @@ CODEX_TIMEOUT_ENFORCEMENT_MODE = (
     else "posix-session-process-group-v1"
 )
 TASK_IGNORE_USER_CONFIG_SCOPE = "config.toml_only"
-TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v1"
+TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v4"
 TASK_COLLABORATION_GUARD = "no-collaboration-tool-events-v1"
 MODEL_MULTI_AGENT_FEATURES = ("multi_agent", "multi_agent_v2")
 MODEL_AGENT_TOOLS_CONFIG = "agents.enabled=false"
@@ -392,6 +392,11 @@ def csv_file_validation_errors(
     try:
         with path.open("r", encoding="utf-8", newline="") as handle:
             payload = handle.read()
+            # UTF-8 BOM is a valid signature commonly emitted by PowerShell CSV
+            # exporters. Strip it only at the start so the first quoted field
+            # is parsed normally; any later U+FEFF remains ordinary field data.
+            if payload.startswith("\ufeff"):
+                payload = payload[1:]
             quote_error = _csv_quote_error(payload)
             if quote_error:
                 return [f"{subject} {label} cannot be parsed: {quote_error}"]
@@ -577,6 +582,9 @@ def canonical_behavioral_task_stage_method() -> dict[str, Any]:
         "stage": "behavioral_task",
         "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
+        "workspace_relative_path_policy": "in-workspace-only-v1",
+        "csv_authoring_policy": "structured-writer-roundtrip-v1",
+        "write_failure_policy": "verify-exact-path-and-alternative-writer-v1",
         "model_visible_inputs": [
             "fixture",
             "candidate-skill-if-with-skill",
@@ -762,8 +770,7 @@ def _prohibited_boundary_disclosure(value: str) -> bool:
         r"(?:\b(?:parent|ancestor|candidate)\s+(?:git|repo(?:sitory)?|workspace|directory|path)\b"
         r"|\b(?:outside|beyond)\s+(?:the\s+)?(?:run\s+)?workspace\b"
         r"|\b(?:scope|workspace|isolation)\s+boundary\b"
-        r"|\b(?:external|other)\s+workspace\b"
-        r"|\bout[- ]of[- ]scope\b)"
+        r"|\b(?:external|other)\s+workspace\b)"
     )
     access = re.compile(
         r"\b(?:read|reads|reading|access|accessed|accessing|inspect|inspected|"
@@ -796,7 +803,7 @@ def _prohibited_fabrication_disclosure(value: str) -> bool:
         r"verification))?|provenance|evidence)"
     )
     negative_before = re.compile(
-        rf"\b(?:no|not|never|without|refus(?:e|ed|ing)|reject(?:ed|ing)?|"
+        rf"\b(?:no|not|never|without|instead\s+of|refus(?:e|ed|ing)|reject(?:ed|ing)?|"
         rf"prevent(?:ed|ing)?|block(?:ed|ing)?|declin(?:e|ed|ing)|avoid(?:ed|ing)?)"
         rf"\b.{{0,48}}\b{fabrication}\b"
     )
@@ -2045,7 +2052,7 @@ def task_trace_isolation_validation_errors(
         ):
             command_violations.add("Git isolation override")
         if re.search(
-            r"(?:get-location|get-item|\bpwd\b).*?\.parent|directory\]::getparent|directoryinfo.*?\.parent|split-path.*?-parent",
+            r"(?:get-location|get-item|\bpwd\b).*?\.parent\b|directory\]::getparent|directoryinfo.*?\.parent\b|split-path.*?-parent",
             command,
             re.IGNORECASE,
         ):

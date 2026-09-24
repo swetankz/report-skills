@@ -35,7 +35,8 @@
       "references/evidence-model.md",
       "references/public-safety.md",
       "references/review-and-release-protocol.md",
-      "references/validation-conventions.md"
+      "references/validation-conventions.md",
+      "scripts/write-register-csv.ps1"
     ],
     "interactive-report-publisher": [
       "SKILL.md",
@@ -132,7 +133,7 @@
     "source/shared/public-safety.md": "958844e621c4be0d1c7ec264603c20ededc26a5222b7c1c6ab622b2ad6cc3de0",
     "source/shared/validation-conventions.md": "69a5a776ad4acb339632b97c7317a9a6c612c491c6d1cec3d630037fe8f3bbc1",
     "source/skill-map.yaml": "3559a2ee854ccffcf0af3db3c1ca09d8554bae8f441f672cd085144d1105f764",
-    "source/skills/creative-artifact-provenance/SKILL.md": "aec0485acfd7bb520eed3a20a25b2ae733f5a4ba656b1002dfcd7e0f00018604",
+    "source/skills/creative-artifact-provenance/SKILL.md": "27e492af7e3b044a26e4a51c68e342ddf3ca878bf514a95994f262a23b21fa94",
     "source/skills/creative-artifact-provenance/agents/openai.yaml": "21229024135788d0ae41548973436ae469fc954a83450ab056a58bf6b1d2f450",
     "source/skills/creative-artifact-provenance/references/provenance-schema.md": "488061ef145c5bc7b9c6d2f00b86ce1eb713c36726b0d7a341f9c0a187d1e8c6",
     "source/skills/editorial-data-storytelling/SKILL.md": "43d1edd255c53bc61a61ef0cf45c1320413ab8983c40e13deec37b928220920a",
@@ -142,6 +143,7 @@
     "source/skills/evidence-first-report/agents/openai.yaml": "6667b41acf0fe02d5e3f7cf518794aa64fc50410cc2bbffc66c930515ffc5ca9",
     "source/skills/evidence-first-report/references/evidence-model.md": "a9203e187d6aedaa8388419f69e4798f72cf45943fd1cf9addde7b0795f969c3",
     "source/skills/evidence-first-report/references/review-and-release-protocol.md": "0b444b482a626871dd25a1dbd0e32e121641362052e943d63e06f6eb7494abf3",
+    "source/skills/evidence-first-report/scripts/write-register-csv.ps1": "0a5e72a4b3cc4b419284483a80112a07a3823569812a3532f28f8fd92c02c68d",
     "source/skills/interactive-report-publisher/SKILL.md": "ca8710720135de399510c18b3a567e3fb16352897035434afa4507e49f497e8c",
     "source/skills/interactive-report-publisher/agents/openai.yaml": "a502f0984b679bb5d899439257c59bc12b64a0ee2c717d4e807ee35db4e15187",
     "source/skills/interactive-report-publisher/references/web-publication-checklist.md": "4188e2586764d4280f484be202cfb9ae54068ad3c5ab9082eef981b36b26ab81",
