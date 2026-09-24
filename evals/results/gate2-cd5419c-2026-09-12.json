@@ -103,6 +103,23 @@
       "reasoning_effort": "medium",
       "codex_cli_version": "0.155.0-alpha.9.2"
     },
+    "environment": {
+      "python_version": "3.12.13",
+      "platform": "Windows-11-ARM64"
+    },
+    "skill_hashes_sha256": {
+      "creative-artifact-provenance": "cbc01fae9983b0682c22b9ed6c070952771677d398661a606193ee664bfaf58c",
+      "editorial-data-storytelling": "f5ad0c2f96643ce10bc9001e69f4a2d16fde3d51d10d148b164a145ecf7bc0a2",
+      "evidence-first-report": "004870946f659a31e68ed61f706939da316a8aaf4daf3a450c45edbe485ace02",
+      "interactive-report-publisher": "7789ff81951da043393e84964328888985611e74a085587540e9fa06ece49d2b",
+      "motion-performance-qa": "61740872f0f50811fe09da8793f9a72abb1be3eba78dcd95a48f34e8444abee4",
+      "pencil-safe-editor": "e55ac13cfee7aa56ef969aef65a755567886dce13a5cbac3ad7f418c6ca8bcbf",
+      "report-content-repurposer": "17de017b551315adb03b29688a6530ec32a87063feafc0aa1d0ebecca67354f8",
+      "report-skills": "edd711e09613d0b5fe5a5be5b3ef384f6999c674cb0b8b86c26b59e7efafd9c9",
+      "report-visual-system": "bfbc9158e32046e5c5aa3361a23046cf5a05ac7d5e3411fdb12ba0c48324b26f",
+      "sites-release-manager": "dc1bec66481e881dce09161038bf68141e1f24166642ddc8c02c30317bbee05b",
+      "visual-hygiene-auditor": "6c054d8e87afdc752ec5a2acbd49cb848f9e0e52bf6369f4fd82f1b8f051c609"
+    },
     "observations": 75,
     "failed_observations": 0,
     "suite_wide_metrics": {
