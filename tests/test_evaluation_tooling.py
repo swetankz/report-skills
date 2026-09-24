@@ -1551,6 +1551,7 @@ class EvaluationToolingTests(unittest.TestCase):
             for command in (
                 "rg --files -g '!**/.git/**'",
                 "rg --files --glob='!.git/**'",
+                "rg --files -g '! .git/**'",
                 '"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
                 '-Command "rg --files -g \'"\'!**/.git/**\'"\'"',
             ):

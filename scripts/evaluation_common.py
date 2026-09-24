@@ -1987,7 +1987,10 @@ def task_trace_isolation_validation_errors(
         normalized = command.replace("\\", "/")
         safe_exclusion_glob = re.compile(
             r"(?:^|\s)(?:-g|--glob)(?:\s+|=)['\"]*"
-            r"!(?:\*\*/)?\.git(?:/\*\*)?/?['\"]*(?=$|\s|[;&|)])",
+            # Tolerate whitespace after ripgrep's exclusion marker. Some shell
+            # serializers preserve a space in the quoted glob; it still names
+            # a file-selection pattern, not a read of Git metadata.
+            r"!\s*(?:\*\*/)?\.git(?:/\*\*)?/?['\"]*(?=$|\s|[;&|)])",
             re.IGNORECASE,
         )
         exclusion_spans = [
