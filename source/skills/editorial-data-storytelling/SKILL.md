@@ -75,7 +75,7 @@ Write alternative text that identifies the figure type, subject, axes or categor
 
 ## 6. Register every figure
 
-Create `figure-register.csv`, starting from `assets/templates/figure-register.csv` when present, with these columns:
+Create `figure-register.csv`, starting from `assets/templates/figure-register.csv` when present, with these columns. Treat these 16 columns as an exact schema. Build every figure as a structured object with exactly one value per header; never compose rows by joining fields with commas or infer width by splitting CSV text. On Windows, pass a JSON payload with the exact `header` array and structured `rows` objects to `.benchmark_skill/editorial-data-storytelling/scripts/write-register-csv.ps1`, using `-OutputPath artifacts/figure-register.csv`. The helper writes and strictly reparses the canonical file, rejecting unescaped commas, quotes, blank records, or any width mismatch. If validation fails, correct the structured source record and regenerate the same canonical path; do not import and re-export malformed CSV content. If the helper cannot be used, use ordered `[pscustomobject]` records and `Export-Csv -NoTypeInformation`, then strictly parse the final canonical file and verify every row has exactly 16 fields before continuing.
 
 ```text
 figure_id,title,figure_type,claim_ids,source_ids,data_path,unit,population,geography,period,transformation,editorial_takeaway,caption,alt_text,output_path,status
