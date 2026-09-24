@@ -34,7 +34,7 @@ Record any permitted post-cutoff source as a named exception with its reason and
 
 ## 2. Register sources and evidence
 
-Create `source-register.csv` and `evidence-register.csv` before drafting. Start from the applicable files in `assets/templates/` when bundled templates are present.
+Create `source-register.csv` and `evidence-register.csv` before drafting. Start from the applicable files in `assets/templates/` when bundled templates are present. Treat each template header as an exact schema: construct every data row as a structured object with exactly one value per header, and never assemble CSV rows by joining field strings with commas. On Windows, use the bundled strict writer at `.benchmark_skill/evidence-first-report/scripts/write-register-csv.ps1` for every register CSV. Give it a JSON payload containing the exact `header` array and structured `rows` objects, and pass the required canonical `artifacts/<register-name>.csv` path as `-OutputPath`. The writer reopens that exact file and rejects malformed quoting, blank records, and any header or row-width mismatch. If it rejects a row, fix the structured source record and regenerate the same canonical file; do not repair by importing and re-exporting a malformed CSV. If the helper cannot be used, use ordered `[pscustomobject]` rows with a standard CSV writer, then strictly parse the canonical output and verify every logical row width before proceeding.
 
 For every source:
 
@@ -52,7 +52,7 @@ For every material evidence item:
 
 ## 3. Build the claim ledger before prose
 
-Create `claim-ledger.csv` before writing `report-draft.md`. Start from `assets/templates/claim-ledger.csv` when present. Register every consequential claim and every quantitative claim.
+Create `claim-ledger.csv` before writing `report-draft.md`. Start from `assets/templates/claim-ledger.csv` when present. Register every consequential claim and every quantitative claim. Build each claim as a structured record keyed by the exact template header names, then serialize it with the bundled strict writer described above; never type or concatenate CSV rows manually. A claim or review note containing a comma, quote, or newline must remain a single correctly escaped field. Reopen `artifacts/claim-ledger.csv` with a strict CSV parser and verify that every record has exactly the template header's 13 fields before drafting or marking claims complete.
 
 For each claim:
 
