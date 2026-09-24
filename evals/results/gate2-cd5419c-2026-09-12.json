@@ -81,6 +81,12 @@
     "graders": 0,
     "blind_comparisons": 0,
     "trigger_observations": 0,
+    "aggregate_verdict": {
+      "decision": "incomplete",
+      "complete": false,
+      "all_hard_gates_pass": false,
+      "threshold_metrics_available": false
+    },
     "receipts_spliced_with_other_attempts": false
   },
   "exact_payload_v29_confirmation_run": {
