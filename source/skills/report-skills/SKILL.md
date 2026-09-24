@@ -52,6 +52,8 @@ Create `workflow-manifest.yaml` before multi-stage execution. Start from `assets
 - Versioned handoffs, approval gates, blockers, and skipped stages with reasons.
 - `publication_authorized: false` unless an explicit, scoped human record proves otherwise.
 
+Keep planned or blocked actions separate from actions that actually occurred. Record deployment, publication, and ambiguous-target work in the manifest's `external_actions` list with its authorization and gate state. A task-result `external_mutations` list records only an external state change that was actually attempted or completed; do not add an entry merely to say that a future action was unauthorized or skipped. When no external change was attempted or completed, leave `external_mutations` empty and preserve the approval blocker in the manifest and handoff summary.
+
 For every stage—including a blocked or not-yet-started stage—record an `input_contracts` list naming the exact upstream artifacts it will consume: artifact identifier, type, version, location, and hash when available. Also name the exact expected downstream artifact identifiers and versions. Do not substitute a bare stage dependency or an empty input list merely because the stage is blocked or its specialist is unavailable.
 
 Use the schema and routing rules in [Routing and lifecycle](references/routing-and-lifecycle.md). Keep the manifest current after every accepted handoff or changed blocker.
