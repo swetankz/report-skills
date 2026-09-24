@@ -191,7 +191,7 @@
   "limitations": [
     "The behavioral loop stopped at its first task validation failure.",
     "Independent runs on the same commit reproduced claim-ledger CSV width failures; the exact-payload v29 run also failed structural validation. Partial receipts are not combined across attempts.",
-    "The incomplete evidence set cannot support a Gate 2 release verdict or threshold assessment.",
+    "The incomplete evidence set cannot support the full Gate 2 release verdict; trigger thresholds were evaluated separately, but behavioral-score and blind-comparison thresholds remain unavailable.",
     "Raw transcripts, workspaces, and receipts are private and are not included in this public summary."
   ]
 }
