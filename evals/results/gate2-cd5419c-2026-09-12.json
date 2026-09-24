@@ -83,6 +83,40 @@
     "trigger_observations": 0,
     "receipts_spliced_with_other_attempts": false
   },
+  "exact_payload_v29_confirmation_run": {
+    "run_id": "gate2-cd5419c-luna-medium-20260924-07",
+    "candidate_commit": "cd5419c0f0684e0f8cd3188534745dd24c0ba5a6",
+    "candidate_tree": "960a17528448fdd12ad52c55f071320a0b4c78b7",
+    "candidate_skills_match_exactly": true,
+    "evaluation_harness_commit": "2c226a3a760949170ce816554c3aa8925cb2cbff",
+    "evaluation_harness_tree": "6103fd91958a6c870c44b1cbb37dffd30a36ec1e",
+    "method": "report-skills-release-evaluation-v29",
+    "profile": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium",
+      "codex_cli_version": "0.155.0-alpha.9.2"
+    },
+    "behavioral": {
+      "planned": 96,
+      "completed": 73,
+      "structurally_valid_ungraded": 72,
+      "failed": 1,
+      "not_run": 23,
+      "first_failed_run": "unsupported-claim-pressure__with_skill__r01",
+      "validation_errors": [
+        "artifact CSV artifacts/claim-ledger.csv row 6 has 15 fields; expected 13",
+        "artifact CSV artifacts/claim-ledger.csv row 10 has 14 fields; expected 13"
+      ],
+      "timed_out": false,
+      "termination": "natural-exit",
+      "failed_task_wall_clock_seconds": 357.6583661,
+      "failed_task_total_tokens": 377775
+    },
+    "graders": 0,
+    "blind_comparisons": 0,
+    "trigger_observations": 0,
+    "receipts_spliced_with_other_attempts": false
+  },
   "required_counts": {
     "behavioral_runs": 96,
     "graders": 96,
@@ -92,7 +126,7 @@
   "thresholds_evaluated": false,
   "limitations": [
     "The behavioral loop stopped at its first task validation failure.",
-    "Independent runs on the same commit reproduced claim-ledger CSV width failures, including under the current Codex CLI runtime; partial receipts are not combined across attempts.",
+    "Independent runs on the same commit reproduced claim-ledger CSV width failures; the exact-payload v29 run also failed structural validation. Partial receipts are not combined across attempts.",
     "The incomplete evidence set cannot support a Gate 2 release verdict or threshold assessment.",
     "Raw transcripts, workspaces, and receipts are private and are not included in this public summary."
   ]
