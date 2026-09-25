@@ -182,7 +182,10 @@ def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str
         normalized = re.sub(r"['\"]\s*,\s*['\"]", "/", normalized)
         if (
             "rg --files" in normalized
-            and "!skill.md" in normalized
+            and re.search(
+                r"(?:-g|--glob)\s*=?\s*['\"]?![^'\";\s]*skill\.md['\"]?",
+                normalized,
+            )
             and not re.search(r"[;|&]", normalized)
         ):
             # `SKILL.md` in a ripgrep exclusion glob is a filename filter, not
