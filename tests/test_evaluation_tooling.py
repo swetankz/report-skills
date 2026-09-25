@@ -2247,6 +2247,9 @@ class EvaluationToolingTests(unittest.TestCase):
         skill_extension_exclusion_glob = transcript(
             'rg --files . -g "!*.skill.md" -g "!.benchmark_skill/**"'
         )
+        powershell_serialized_skill_exclusion_glob = transcript(
+            r'''pwsh -Command "rg --files -g '"'!*SKILL.md'"' -g '"'!artifacts/**'"'"'''
+        )
         skill_exclusion_then_read = transcript(
             "rg --files . -g '!SKILL.md'; Get-Content Q:/outside/SKILL.md"
         )
@@ -2272,6 +2275,12 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertEqual(
             run_behavioral_benchmark.skill_body_read_violations(
                 skill_extension_exclusion_glob, run
+            ),
+            [],
+        )
+        self.assertEqual(
+            run_behavioral_benchmark.skill_body_read_violations(
+                powershell_serialized_skill_exclusion_glob, run
             ),
             [],
         )

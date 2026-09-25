@@ -177,6 +177,12 @@ def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str
             continue
         command = str(item.get("command", ""))
         normalized = re.sub(r"/+", "/", command.replace("\\", "/")).casefold()
+        # PowerShell transcript serialization can surround an argument with
+        # adjacent quote tokens (`'"'!*SKILL.md'"'`). Collapse those wrappers
+        # before checking exclusions; otherwise a safe `rg` glob looks like a
+        # named skill-body reference. This is only used for the single-command
+        # exclusion fast path below; chained commands remain fail-closed.
+        normalized = re.sub(r"['\"]{2,}", "", normalized)
         # PowerShell Path.Combine can spell the injected path as separate quoted
         # components; normalize that form before checking the exact candidate.
         normalized = re.sub(r"['\"]\s*,\s*['\"]", "/", normalized)
