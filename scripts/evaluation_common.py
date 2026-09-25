@@ -619,6 +619,7 @@ def canonical_grader_stage_method() -> dict[str, Any]:
         "input_binding": "source-staged-post-execution-sha256-v1",
         "output_persistence": "regular-nonlink-sha256-copyback-v1",
         "attempt_receipt": "immutable-pre-invocation-v2",
+        "summary_normalization": "contract-derived-summary-v1",
         "cleanup": "verified-before-final-metadata-v1",
         "workspace_environment_guard": TASK_GIT_DISCOVERY_GUARD,
         "model_isolation": canonical_model_isolation_receipt(),

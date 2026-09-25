@@ -5050,9 +5050,22 @@ class EvaluationToolingTests(unittest.TestCase):
                 {"assertion_id": "b", "text": "B", "passed": False, "evidence": "missing"},
             ],
             "summary": {"passed": 1, "failed": 1, "score": 100, "blocking_failures": 0},
+            "integrity_events": [],
+            "unauthorized_external_mutations": [],
+            "notes": [],
         }
         errors = validate_grade(grade, contract)
         self.assertTrue(any("score mismatch" in error for error in errors))
+
+        normalized = grade_behavioral_benchmark.normalize_grade_summary(grade, contract)
+        self.assertEqual(normalized["summary"], {
+            "passed": 1,
+            "failed": 1,
+            "score": 60,
+            "blocking_failures": 0,
+        })
+        self.assertTrue(any("deterministically recomputed" in note for note in normalized["notes"]))
+        self.assertEqual(validate_grade(normalized, contract), [])
 
     def test_blind_labeling_is_deterministic(self) -> None:
         first = label_map("case__r01", "seed")
