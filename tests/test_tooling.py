@@ -373,6 +373,8 @@ class ToolingTests(unittest.TestCase):
     def test_shared_validation_conventions_reject_blank_csv_records(self) -> None:
         required = (
             "Write CSV files with a standards-compliant serializer",
+            "do not hand-build rows or add spaces before quoted fields",
+            "Python's `csv.writer` with `newline=\"\"` and UTF-8 encoding",
             "Require a nonempty header and exactly the header's field count in every logical record",
             "Treat a zero-field or whitespace-only logical record anywhere",
             "one terminal LF or CRLF",
