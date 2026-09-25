@@ -1990,7 +1990,11 @@ def task_trace_isolation_validation_errors(
             # Tolerate whitespace after ripgrep's exclusion marker. Some shell
             # serializers preserve a space in the quoted glob; it still names
             # a file-selection pattern, not a read of Git metadata.
-            r"!\s*(?:\*\*/)?\.git(?:/\*\*)?/?['\"]*(?=$|\s|[;&|)])",
+            # Windows command serialization may split an escaped leading
+            # slash into quote tokens (for example, `!'"//.git`). Once
+            # separators are normalized, this still names the root `.git`
+            # exclusion rather than reading Git metadata.
+            r"!\s*['\"]*(?:\*\*/)?/*\.git(?:/\*\*)?/?['\"]*(?=$|\s|[;&|)])",
             re.IGNORECASE,
         )
         exclusion_spans = [
