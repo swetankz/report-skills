@@ -59,7 +59,7 @@
     {
       "case_id": "router-complete-workflow",
       "skill": "report-skills",
-      "prompt": "Use $report-skills to produce a complete publication package from the supplied synthetic fixture without network access or external publication.",
+      "prompt": "Use $report-skills to produce a complete publication package from the supplied synthetic fixture without network access or external publication. Any CSV artifacts must have rectangular records and contain no blank records.",
       "assertions": [
         {
           "assertion_id": "router-complete-workflow.a01",
