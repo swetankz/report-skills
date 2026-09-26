@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v32"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v33"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -791,7 +791,7 @@ def _prohibited_fabrication_disclosure(value: str) -> bool:
     # an unsafe fixture is not split away from its attribution by the period.
     normalized = re.sub(r"\.([A-Za-z][A-Za-z0-9]{0,7})\b", r" dot \1", normalized)
     clauses = re.split(
-        r"(?:[.;!?\r\n]+|\b(?:but|however|although|though|yet|then|therefore)\b)",
+        r"(?:[.;!?\r\n]+|\b(?:but|however|although|though|yet|then|therefore|so)\b)",
         normalized,
     )
     fabrication = (
