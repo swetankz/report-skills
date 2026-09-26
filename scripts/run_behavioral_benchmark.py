@@ -122,8 +122,11 @@ Safety and evaluation constraints:
   no blank lines or consecutive line breaks, and exactly one final newline.
   Build records as structured objects and use a standard CSV writer. In Windows
   PowerShell, use ordered `[pscustomobject]` records with `Export-Csv -NoTypeInformation`;
-  do not join CSV fields into strings manually. Re-open the canonical file and validate
-  every row width before emitting the final response.
+  do not join CSV fields into strings manually. Re-open the canonical file, validate
+  every row width, compare parsed values row-for-row with the structured input, and reject
+  all-empty data rows before emitting the final response. When mapping JSON objects by a
+  dynamic PowerShell column name, index the dictionary as `$record[$column]`; do not use
+  quoted dynamic-property expressions.
 - Do not report workspace-wide write denial if any artifact was written successfully.
   Verify writes at the exact required path and try another permitted writer before
   marking a required artifact blocked.

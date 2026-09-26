@@ -784,6 +784,10 @@ class EvaluationToolingTests(unittest.TestCase):
     def test_behavioral_prompt_limits_skill_bodies_to_the_candidate(self) -> None:
         with_skill = {"configuration": "with_skill", "skill": "evidence-first-report", "prompt": "Task"}
         baseline = {"configuration": "without_skill", "skill": "evidence-first-report", "prompt": "Task"}
+        skill_body = (REPO_ROOT / "skills" / "evidence-first-report" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("$record[$column]", skill_body)
+        self.assertIn("compare it field-for-field and row-for-row", skill_body)
+        self.assertIn("reject any all-empty/whitespace-only data row", skill_body)
         self.assertIn("only skill package you may read or use", run_behavioral_benchmark.task_prompt(with_skill))
         self.assertIn("Do not read or invoke any other skill body", run_behavioral_benchmark.task_prompt(baseline))
         for prompt in (
@@ -800,6 +804,9 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("Do not add compliance attestations", prompt)
             self.assertIn("Write every CSV artifact as strict UTF-8 tabular data", prompt)
             self.assertIn("use a standard CSV writer", prompt)
+            self.assertIn("$record[$column]", prompt)
+            self.assertIn("compare parsed values row-for-row with the structured input", prompt)
+            self.assertIn("all-empty data rows", prompt)
             self.assertIn("Do not report workspace-wide write denial if any artifact was written successfully", prompt)
             self.assertIn("materialize plain file text", prompt)
             self.assertIn("never serialize raw provider-decorated values", prompt)

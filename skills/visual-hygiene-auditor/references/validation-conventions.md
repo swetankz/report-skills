@@ -43,7 +43,7 @@ Do not infer a successful build, browser behavior, smooth motion, connectivity, 
 
 ## Tabular artifacts
 
-Write CSV files with a standards-compliant serializer; do not hand-build rows or add spaces before quoted fields. For example, use Python's `csv.writer` with `newline=""` and UTF-8 encoding, then re-open the file with a strict UTF-8 CSV parser before accepting it. Require a nonempty header and exactly the header's field count in every logical record. Treat a zero-field or whitespace-only logical record anywhere, including after the final data row, as a blocking artifact error. A file may have no terminal line ending or one terminal LF or CRLF; preserve embedded line breaks and blank physical lines only inside properly quoted fields. Do not rely on importers that silently drop empty records.
+Write CSV files with a standards-compliant serializer; do not hand-build rows or add spaces before quoted fields. For example, use Python's `csv.writer` with `newline=""` and UTF-8 encoding, then re-open the file with a strict UTF-8 CSV parser before accepting it. Require a nonempty header and exactly the header's field count in every logical record. Compare parsed records to the structured input row-for-row and field-for-field, and verify the expected number of data rows; correct width alone does not prove that values were serialized. Treat a zero-field, all-empty, or whitespace-only data record anywhere, including after the final data row, as a blocking artifact error. A file may have no terminal line ending or one terminal LF or CRLF; preserve embedded line breaks and blank physical lines only inside properly quoted fields. Do not rely on importers that silently drop empty records.
 
 ## Negative tests
 
