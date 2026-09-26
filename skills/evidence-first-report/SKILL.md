@@ -106,7 +106,7 @@ After every review pass, rescan changed prose for newly introduced numbers, date
 
 Keep visual layout, optical density, and responsive presentation outside the reader-review pass; hand those concerns to a presentation-quality audit when requested.
 
-Use actual execution time for artifact creation, review, revision, validation, retrieval, and observation provenance. Keep reporting-period dates, publication dates, the evidence cutoff, and `last_fact_checked` as evidence metadata only. In a synthetic or future-dated scenario, record the in-world date separately as `scenario_as_of` or `synthetic_test_clock`; never copy it into an operational timestamp unless the run explicitly establishes that simulated clock. If actual time cannot be observed, use `not-verified` rather than inventing it.
+Use actual execution time for artifact creation, review, revision, validation, retrieval, and observation provenance only when the time is explicitly supplied by the task context or a permitted in-workspace source. Do not query the host/system clock (for example, with `Get-Date`) or inspect outside the run workspace to obtain it. Keep reporting-period dates, publication dates, the evidence cutoff, and `last_fact_checked` as evidence metadata only. In a synthetic or future-dated scenario, record the in-world date separately as `scenario_as_of` or `synthetic_test_clock`; never copy it into an operational timestamp unless the run explicitly establishes that simulated clock. If actual time is not supplied by an authorized source, use `not-verified` rather than probing for it or inventing it.
 
 ## 7. Determine readiness
 

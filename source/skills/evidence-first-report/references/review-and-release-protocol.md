@@ -72,7 +72,7 @@ revision_id,review_id,artifact_version,claim_ids,location,change_summary,reason,
 
 Preserve rejected review findings with their rationale. Recheck claim mappings and citations after every material change.
 
-`reviewed_at`, `updated_at`, `created_at`, validation time, retrieval time, and observation time are operational provenance. Use the actual execution clock when observable. Do not substitute an evidence cutoff, source publication date, reporting-period date, or `last_fact_checked`. If a synthetic fixture needs an in-world date, add `scenario_as_of` or `synthetic_test_clock` and retain the real operational timestamp separately; otherwise mark the operational time `not-verified`.
+`reviewed_at`, `updated_at`, `created_at`, validation time, retrieval time, and observation time are operational provenance. Use actual execution time only when explicitly supplied by the task context or a permitted in-workspace source. Do not query the host/system clock (for example, with `Get-Date`) or inspect outside the run workspace to obtain it. Do not substitute an evidence cutoff, source publication date, reporting-period date, or `last_fact_checked`. If a synthetic fixture needs an in-world date, add `scenario_as_of` or `synthetic_test_clock` and retain the real operational timestamp separately; otherwise mark the operational time `not-verified` without probing for it.
 
 ## Readiness gate
 
