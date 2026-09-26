@@ -1184,6 +1184,26 @@ class EvaluationToolingTests(unittest.TestCase):
             output_path.write_text(json.dumps(corrected_evidence) + "\n", encoding="utf-8")
             self.assertEqual(task_output_safety_validation_errors(output_path), [])
 
+            excluded_source_evidence = safe_task_output()
+            excluded_source_evidence["integrity_events"] = [
+                {
+                    "type": "excluded-out-of-scope-evidence",
+                    "evidence": "Excluded post-cutoff source SYN-S3 from the assessment.",
+                }
+            ]
+            output_path.write_text(
+                json.dumps(excluded_source_evidence) + "\n", encoding="utf-8"
+            )
+            self.assertEqual(task_output_safety_validation_errors(output_path), [])
+
+            excluded_source_evidence["integrity_events"][0]["evidence"] = (
+                "Read the parent repository outside the isolated workspace."
+            )
+            output_path.write_text(
+                json.dumps(excluded_source_evidence) + "\n", encoding="utf-8"
+            )
+            self.assertTrue(task_output_safety_validation_errors(output_path))
+
             source_evidence_boundary = safe_task_output()
             source_evidence_boundary["integrity_events"] = [
                 {

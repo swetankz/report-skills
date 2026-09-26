@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v33"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v34"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -1164,7 +1164,11 @@ def task_output_safety_validation_errors(path: Path) -> list[str]:
             # Source-evidence qualification can be a valid fixture correction,
             # not an actual workspace-boundary breach. Keep disclosure scanning
             # below active for its evidence text and allow only these exact labels.
-            if normalized in {"evidence_boundary", "evidence_boundary_correction"}:
+            if normalized in {
+                "evidence_boundary",
+                "evidence_boundary_correction",
+                "excluded_out_of_scope_evidence",
+            }:
                 return False
             if normalized == "fabricated" or normalized.startswith("fabricated_"):
                 return True
