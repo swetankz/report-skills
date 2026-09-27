@@ -1,0 +1,92 @@
+{
+  "report_id": "report-skills-gate2-5363af9-v35",
+  "evaluation_method_version": "report-skills-release-evaluation-v35",
+  "evaluated_candidate": {
+    "repository": "swetankz/report-skills",
+    "commit": "5363af99e5c95504921bf5fd1257ab5f02b6991f",
+    "tree": "c855cb973a8f0ac1530ebb8d0e76638463d8fbf1",
+    "working_tree_clean": true
+  },
+  "profile": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "repetitions": 3
+  },
+  "evidence_coverage": {
+    "behavioral_tasks": { "completed": 96, "required": 96, "execution_failures": 0 },
+    "grades": { "completed": 96, "required": 96, "invalid_or_failed": 0 },
+    "blind_comparisons": { "completed": 33, "required": 33, "execution_failures": 0, "with_skill_wins": 22, "without_skill_wins": 11, "ties": 0 },
+    "trigger_observations": { "completed": 75, "required": 75, "execution_failures": 0, "true_positive": 32, "false_positive": 0, "true_negative": 42, "false_negative": 1 }
+  },
+  "release_verdict": {
+    "decision": "hold",
+    "complete": true,
+    "all_hard_gates_pass": false,
+    "thresholds": {
+      "per_skill_median_score_minimum": 85,
+      "blocking_failures_maximum": 0,
+      "adversarial_pass_rate_minimum": 1.0,
+      "blind_with_skill_win_rate_minimum": 0.7,
+      "trigger_precision_minimum_suite_wide_and_per_skill": 0.9,
+      "trigger_recall_minimum_suite_wide_and_per_skill": 0.9,
+      "fabricated_integrity_events_maximum": 0,
+      "unauthorized_external_mutations_maximum": 0
+    },
+    "observed": {
+      "per_skill_median_scores": {
+        "creative-artifact-provenance": 45,
+        "editorial-data-storytelling": 90,
+        "evidence-first-report": 100,
+        "interactive-report-publisher": 35,
+        "motion-performance-qa": 90,
+        "pencil-safe-editor": 90,
+        "report-content-repurposer": 20,
+        "report-skills": 75,
+        "report-visual-system": 90,
+        "sites-release-manager": 50,
+        "visual-hygiene-auditor": 45
+      },
+      "blocking_failures": 36,
+      "adversarial_pass_rate": 1.0,
+      "blind_with_skill_win_rate": 0.6666666667,
+      "with_skill_blind_wins": 22,
+      "blind_comparison_pairs": 33,
+      "trigger_precision_suite_wide": 1.0,
+      "trigger_recall_suite_wide": 0.9696969697,
+      "motion-performance-qa_trigger_precision": 1.0,
+      "motion-performance-qa_trigger_recall": 0.6666666667,
+      "with_skill_fabricated_integrity_events": 1,
+      "unauthorized_external_mutations": 0
+    },
+    "hard_gate_failures": [
+      "Six skills had per-skill median scores below 85.",
+      "36 blocking failures were recorded across with-skill observations.",
+      "The with-skill blind win rate was 66.7%, below 70%.",
+      "One fabricated-evidence integrity event was recorded in a with-skill observation.",
+      "motion-performance-qa trigger recall was 66.7%, below the 90% per-skill minimum."
+    ],
+    "passing_hard_gates": [
+      "Adversarial pass rate: 100%.",
+      "Trigger precision: 100% suite-wide and for every skill.",
+      "Unauthorized external mutations: 0."
+    ],
+    "missing_evidence": []
+  },
+  "efficiency_advisories": {
+    "suite_wall_clock_with_skill_to_baseline_ratio": 1.6894,
+    "suite_total_tokens_with_skill_to_baseline_ratio": 1.874,
+    "per_skill_over_2x_wall_clock_or_token_ratio": [
+      "editorial-data-storytelling",
+      "evidence-first-report",
+      "interactive-report-publisher",
+      "pencil-safe-editor",
+      "report-visual-system"
+    ],
+    "note": "Efficiency ratios are advisory, not hard gates; the release policy asks maintainers to record a concrete quality or safety justification for ratios above 2x."
+  },
+  "publication_scope": {
+    "raw_transcripts_workspaces_grades_comparisons_and_trigger_observations_published": false,
+    "release_or_merge_performed": false,
+    "note": "This sanitized aggregate records a completed evaluation with a hold verdict; it does not authorize a release."
+  }
+}
