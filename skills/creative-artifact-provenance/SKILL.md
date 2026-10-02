@@ -41,6 +41,12 @@ Read these bundled files before creating or publishing a manifest:
 4. Distinguish a diagnostic render from a provider original and from a final deliverable.
 5. Preserve an unbroken path from every final deliverable to its known origins; record a documented gap instead of fabricating a link.
 
+## Required row fields and projections
+
+Every private artifact row must include `artifact_id`, `classification`, `status`, `creation_status`, `relationship_status`, `parent_ids`, `model`, and `projection_eligibility`. Use a literal string value such as `"unknown"` for missing metadata and explain it in `unknown_fields`; do not leave a required field null or omit it. Use `relationship_status` to distinguish `root`, `parent-established`, `unresolved-parent`, `contested`, and `not-applicable`. `projection_eligibility` must state `include`, `exclude`, or `redact` with a reason.
+
+When the request asks for a public-safe projection, create a second file (for example, `provenance-public.json`) from the validated private register. Do not satisfy this request with a flag inside the private file. Set `public_projection_created: true`, retain a separate private manifest, and validate the public file independently for private paths, live identifiers, dangling parents, and withheld-field leakage.
+
 ## Validate the private record
 
 1. Detect duplicate identifiers, missing parents, cycles, contradictory statuses, impossible dimensions, and final files without lineage.

@@ -38,6 +38,8 @@ For workspace-local verification, materialize plain file text or select only the
 4. Detect uncommitted changes, stale checkouts, mismatched artifacts, newer competing candidates, and conflicting summaries.
 5. Stop when canonical identity cannot be proved. Do not select a familiar or newest-looking folder by inference.
 
+When a supplied release descriptor explicitly separates `validated_candidate` from a `convenient_checkout`, compare and record the descriptor's exact candidate `source_ref`, `build_hash`, and QA state, and explicitly reject the stale checkout. Preserve the evidence source: a synthetic fixture value such as `sha256:synthetic-*` is a supplied test identity, not a cryptographically verified local build hash. Record it as supplied and mark local recomputation `not-verified` unless candidate files and a build are actually available. Missing deployment approval alone does not block safe preparation; use `release_state: awaiting_approval`, list the remaining approval fields, and perform no external action.
+
 ## Build and verify the candidate
 
 1. Use the declared build command for the selected revision.

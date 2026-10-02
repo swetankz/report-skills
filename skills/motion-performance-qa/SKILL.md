@@ -1,6 +1,6 @@
 ---
 name: motion-performance-qa
-description: Diagnose, measure, and verify motion startup and runtime behavior in an interactive report, including font and asset readiness, loader sequencing, reveal stability, initialization and refresh behavior, reduced motion, console state, and frame pacing. Use when meaningful animation exists or motion defects are reported; do not use for static designs or deployment.
+description: Diagnose, measure, and verify motion startup and runtime behavior in an interactive report, including a blank flash or loader disappearing before the first scroll reveal, font and asset readiness, initialization and refresh behavior, reduced motion, console state, and frame pacing. Use when meaningful animation exists or motion defects are reported; do not use for static designs or deployment.
 ---
 
 # Motion Performance QA

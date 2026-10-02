@@ -40,6 +40,8 @@ Build a local, publishable web candidate from the complete approved report. Keep
 4. Keep all factual wording traceable to the source version; do not introduce new claims in interface copy.
 5. Fail the content gate when any required content ID is omitted, duplicated without reason, truncated, or detached from its evidence context.
 
+Before implementation, reconcile every source ID and URL in the source register to the report's citations and the site's bibliography or source interface. Preserve wording and qualifiers exactly: do not turn an approximate value into a more precise value, or vice versa. Verify that each report chapter—including analysis, recommendation, and limitations—has a destination.
+
 Before rendering, run a quantitative-integrity preflight across the report, figure specifications, and supplied data artifacts. Reproduce material calculations when numerator and denominator are available; compare repeated values, units, populations, periods, and construct definitions. A conflicted or unsupported value must not appear in the website as established fact. Return it upstream for correction, or, for an explicitly requested local working draft, replace the affected presentation with a conspicuous conflict notice that states the competing values and blocks readiness. Do not silently choose or repair a value outside the approved source.
 
 ## 3. Select the implementation architecture
@@ -61,7 +63,8 @@ Before rendering, run a quantitative-integrity preflight across the report, figu
 7. Use two-column compositions only when they improve comparison or reading context; define a clear reading order and deliberate stacked behavior.
 8. Prevent horizontal overflow, clipped text, occluded anchors, and fixed elements that block content at every required viewport.
 9. Add metadata, canonical intent, share metadata where requested, structured data when justified, and meaningful document titles and descriptions.
-10. Use interactions only when they clarify navigation, comparison, sequence, or evidence. Keep reading possible without them.
+10. For a shareable report page, include report-specific Open Graph (`og:title`, `og:description`, `og:type`, `og:url` when a canonical URL is known, and an eligible preview image when supplied) and Twitter card metadata; do not invent a live URL or image.
+11. Use interactions only when they clarify navigation, comparison, sequence, or evidence. Keep reading possible without them.
 
 ## 5. Implement motion safely when requested
 
@@ -85,6 +88,7 @@ Before rendering, run a quantitative-integrity preflight across the report, figu
 9. Mark unavailable browsers, devices, routes, or behaviors `not verified`; never broaden a narrow observation into a comprehensive pass.
 10. Distinguish an artifact failure from a test-infrastructure failure in every record. When the browser, server, driver, or capture tool fails before the artifact can be observed, assign affected checks `not-verified`, not `fail`, and keep the candidate, summary, and detailed validation records consistent.
 11. Keep browser profiles, caches, crash dumps, temporary servers, and driver state outside website source, build output, candidate records, and retained QA evidence. Use a uniquely scoped temporary directory when a tool requires a profile, retain only declared screenshots, traces, logs, or DOM captures, and verify the handoff package contains no browser state or crash byproducts.
+12. Record the exact local build or static-validation command, exit status, output path, and artifact identity. A static page may use an explicit no-compilation mode, but still run and record a reproducible offline check against the produced files; do not label a build `not run` and then imply it was verified. Keep browser/runtime checks separately marked `not-verified` when they were not observed.
 
 ## 7. Write the candidate record
 

@@ -40,6 +40,8 @@ Verify each supplied artifact before routing:
 4. Record missing fields and qualify the workflow instead of fabricating values.
 5. Reject a claimed approval that lacks an explicit human approval record for the exact artifact version and scope.
 
+Inventory the supplied fixture or input directory before routing. Inspect each supplied file enough to identify its role and defects. For every file in an explicitly named `intentional-defects` area, add a corresponding `evidence_defects` entry with its source path, disposition, and affected stages; before handoff, reconcile the register against the complete file inventory so no supplied defect is silently omitted.
+
 ## 3. Create the workflow manifest
 
 Create `workflow-manifest.yaml` before multi-stage execution. Start from `assets/templates/workflow-manifest.yaml` when the bundled template is present. Include:
@@ -51,6 +53,8 @@ Create `workflow-manifest.yaml` before multi-stage execution. Start from `assets
 - A top-level `evidence_defects` register that names every supplied evidence defect, its source, disposition, and affected stages. Keep this register synchronized with detailed stage findings; do not leave defects only in a separate assessment file.
 - Versioned handoffs, approval gates, blockers, and skipped stages with reasons.
 - `publication_authorized: false` unless an explicit, scoped human record proves otherwise.
+
+Represent each `expected_outputs` item as a versioned artifact record with `artifact_id`, `artifact_type`, `version`, and expected path or location. Do not use bare IDs or unversioned strings for handoffs. Choose an explicit initial version for new outputs and keep it consistent in downstream `input_contracts` and `actual_outputs`.
 
 Keep planned or blocked actions separate from actions that actually occurred. Record deployment, publication, and ambiguous-target work in the manifest's `external_actions` list with its authorization and gate state. A task-result `external_mutations` list records only an external state change that was actually attempted or completed; do not add an entry merely to say that a future action was unauthorized or skipped. When no external change was attempted or completed, leave `external_mutations` empty and preserve the approval blocker in the manifest and handoff summary.
 

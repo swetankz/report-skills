@@ -1,6 +1,6 @@
 {
   "name": "report-skills",
-  "version": "0.2.0-rc.1",
+  "version": "0.2.0",
   "description": "A modular, evidence-led research-to-publication skill system.",
   "description_i18n": {
     "en": "A modular, evidence-led research-to-publication skill system: orchestrate source-backed reports, evidence visuals, editable publication systems, responsive report websites, quality assurance, derivatives, provenance, and controlled release workflows."

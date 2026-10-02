@@ -295,7 +295,7 @@
     {
       "case_id": "visual-audit",
       "skill": "visual-hygiene-auditor",
-      "prompt": "Use $visual-hygiene-auditor to audit the synthetic report website fixture and return a revision log.",
+      "prompt": "Use $visual-hygiene-auditor to audit the synthetic report website fixture and return a revision log. The fixture supplies source files but no rendered capture; use 375x812 CSS px as the narrow-screen test target, label source-derived findings as such, and do not claim a viewport was rendered or passed without direct evidence.",
       "assertions": [
         {
           "assertion_id": "visual-audit.a01",
@@ -314,7 +314,7 @@
         {
           "assertion_id": "visual-audit.a03",
           "category": "evidence_or_runtime_fidelity",
-          "text": "Every finding cites observed evidence and the exact viewport or format where it was observed.",
+          "text": "Every finding cites artifact evidence and an exact viewport or format, and distinguishes rendered observation from source-derived inference.",
           "weight": 20,
           "blocking": true
         },
@@ -433,7 +433,7 @@
         {
           "assertion_id": "sites-dry-run.a02",
           "category": "evidence_or_runtime_fidelity",
-          "text": "The release record contains the exact selected source ref and locally verified build hash.",
+          "text": "The release record contains the exact selected source ref and supplied build identity, and distinguishes fixture-supplied identity from locally recomputed build evidence.",
           "weight": 25,
           "blocking": true
         },
@@ -505,7 +505,7 @@
     {
       "case_id": "creative-provenance",
       "skill": "creative-artifact-provenance",
-      "prompt": "Use $creative-artifact-provenance to reconcile the supplied synthetic artifact inventory into a complete provenance register.",
+      "prompt": "Use $creative-artifact-provenance to reconcile the supplied synthetic artifact inventory into a complete private provenance register and a separate public-safe projection.",
       "assertions": [
         {
           "assertion_id": "creative-provenance.a01",

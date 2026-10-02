@@ -97,6 +97,14 @@ For every finding, record:
 
 Separate direct observation, measurement, inference, and unverified hypothesis. Do not describe a likely cause as proven without causal evidence.
 
+Use a stable finding template so location and follow-up evidence cannot be lost:
+
+```text
+ID | pass | severity | artifact/location | viewport or format | evidence and evidence type | impact | recommended correction | verification status
+```
+
+For each revision-log entry, repeat `severity`, `evidence`, `recommended correction`, and `verification status` directly in that entry; do not rely on a linked finding to supply missing fields. If only source files are available, use an explicit narrow-screen test target such as `375×812 CSS px`, label the finding `source-derived` and the viewport check `not-verified`; never say the viewport was observed or passed without a rendered capture or measurement.
+
 ## 7. Set scoped verdicts
 
 1. Assign `pass`, `conditional-pass`, `fail`, or `not-verified` to each observed format and viewport.

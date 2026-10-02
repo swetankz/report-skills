@@ -34,6 +34,8 @@ Read these bundled files before producing artifacts:
 4. Record omissions that could alter interpretation, including denominators, populations, periods, uncertainty, and limitations.
 5. Use visual motifs only when they support narrative meaning and are permitted by the approved visual system.
 
+Before drafting, confirm the approval record matches the supplied report version. A task or fixture may identify an explicitly synthetic approval record; preserve its synthetic scope and do not represent it as real-world approval. If an exact versioned approval record is present and matches the report, create the requested local drafts even though derivative review or publication approval is still pending. Missing publication authorization is not a reason to withhold safe local drafts.
+
 ## Create channel-ready drafts
 
 1. Draft copy and creative specifications from the approved claim set.
@@ -42,6 +44,8 @@ Read these bundled files before producing artifacts:
 4. Provide channel-appropriate alternative text, captions, or transcript copy.
 5. Record any crop, edit, animation, composite, or export as a derivative transformation.
 6. Label all outputs `draft` or `ready-for-approval`; never label them published.
+
+Each deliverable must be independently traceable, not merely covered by package-level metadata. Put these fields in its manifest entry and a compact header or sidecar for the file itself: `deliverable_id`, `parent_report_id`, `parent_report_version`, `parent_report_hash` (or the exact available immutable identity), `source_claim_ids`, `transformation_type`, proposed `dimensions` and aspect ratio, and `status`. Record a claim-to-format/card/frame map plus any context omitted or shortened. Label proposed export dimensions as specifications, not observed exports.
 
 ## Validate before handoff
 
