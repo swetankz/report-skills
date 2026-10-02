@@ -2,9 +2,13 @@
 
 ## Distribution model
 
-Report Skills is one Codex plugin with eleven sibling skill directories. `report-skills` is an explicit orchestrator; it is not a physical container for the specialists.
+Report Skills is one plugin distributed for both Codex and ZCode, with eleven sibling skill directories. `report-skills` is an explicit orchestrator; it is not a physical container for the specialists.
 
 Every specialist can be copied or installed independently because its generated folder contains its own `SKILL.md`, UI metadata, references, templates, scripts, and required assets.
+
+## Packaging
+
+The same generated `skills/` tree is distributed through three manifests: `.codex-plugin/plugin.json` for Codex, `.zcode-plugin/plugin.json` for ZCode, and a root `marketplace.json` so the repository can be added directly as a ZCode marketplace. All three declare the same version as `pyproject.toml`; the release checklist records that sync before publication.
 
 ## Authoring model
 

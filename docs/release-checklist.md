@@ -44,6 +44,8 @@ Use this checklist for each Report Skills release. It defines the required repos
 ## Evidence, approval, and publication
 
 - [ ] `.codex-plugin/plugin.json` and `pyproject.toml` both declare the target version.
+- [ ] `.zcode-plugin/plugin.json` declares the target version and matches `pyproject.toml`.
+- [ ] `marketplace.json` lists the `report-skills` plugin at the target version.
 - [ ] A prerelease version, tag, archive name, manifest, and GitHub release all retain the same exact `-rc.N` identifier, and GitHub marks the release as a pre-release rather than the latest stable release.
 - [ ] The Gate 1 approval packet identifies the candidate commit and tree, skill and contract hashes, exact stage methods, model and environment receipts, focused results, proposed RC tag, assets, checksums, install instructions, rollback plan, and Gate 2 status.
 - [ ] Any later Gate 2 aggregate identifies the candidate commit, skill hashes, model and environment, repetitions, variance, and final qualification decision.

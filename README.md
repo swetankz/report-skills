@@ -1,6 +1,6 @@
 # Report Skills
 
-Report Skills is a modular, evidence-led research-to-publication system for Codex. One plugin provides an end-to-end orchestrator and ten independently installable specialist skills.
+Report Skills is a modular, evidence-led research-to-publication system for Codex and ZCode. One plugin provides an end-to-end orchestrator and ten independently installable specialist skills, with identical skill bodies in both clients.
 
 ## Skills
 
@@ -16,7 +16,7 @@ Report Skills is a modular, evidence-led research-to-publication system for Code
 - `pencil-safe-editor` — verify and preserve the active Pencil document before edits.
 - `creative-artifact-provenance` — record creative artifact origin, status, and lineage.
 
-`report-skills`, `sites-release-manager`, and `pencil-safe-editor` are explicit-only. Invoke them with the exact tokens `$report-skills`, `$sites-release-manager`, and `$pencil-safe-editor`; a topical request without the corresponding token does not activate the skill.
+`report-skills`, `sites-release-manager`, and `pencil-safe-editor` are explicit-only. Invoke them with the exact tokens `$report-skills`, `$sites-release-manager`, and `$pencil-safe-editor`; a topical request without the corresponding token does not activate the skill. This activation contract is identical in Codex and ZCode.
 
 ## Architecture
 
@@ -49,9 +49,15 @@ Repository CI validates evaluation contracts and expands benchmark plans without
 
 The canonical repository is [swetankz/report-skills](https://github.com/swetankz/report-skills). Install from the [latest published GitHub release](https://github.com/swetankz/report-skills/releases) rather than the moving `main` development branch.
 
-Use the latest stable release for normal installation. GitHub pre-releases are opt-in candidates for evaluation and should not be treated as final qualification.
+Use the latest stable release for normal installation. GitHub pre-releases are opt-in candidates for evaluation and should not be treated as final qualification. See the [installation guide](docs/installation.md) for every supported path in both clients.
 
-For the complete suite, download the versioned `report-skills-<version>.zip` archive and its SHA-256 sidecar, verify the checksum, extract it, and use the extracted root as the Codex plugin source. For one specialist, give Codex's skill installer the repository `swetankz/report-skills`, a published release tag, and path `skills/<skill-name>`. See the [complete Windows, macOS, and Linux installation guide](docs/installation.md).
+### ZCode
+
+The repository root is a ZCode plugin marketplace. In ZCode, open **Settings → Plugin Management → Discover**, add the marketplace with the **+** button from the GitHub repository `swetankz/report-skills`, and install the `report-skills` plugin. Skills appear namespaced as `report-skills:<skill-name>`, for example `report-skills:evidence-first-report`. The same **+** flow accepts a local directory checkout for testing `main` or a downloaded release package, and individual `skills/<skill-name>` folders can be copied into `~/.agents/skills/` for cross-tool use.
+
+### Codex
+
+For the complete suite, download the versioned `report-skills-<version>.zip` archive and its SHA-256 sidecar, verify the checksum, extract it, and use the extracted root as the Codex plugin source. For one specialist, give Codex's skill installer the repository `swetankz/report-skills`, a published release tag, and path `skills/<skill-name>`.
 
 ## Safety boundary
 
