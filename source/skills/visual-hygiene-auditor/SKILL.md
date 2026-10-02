@@ -103,7 +103,7 @@ Use a stable finding template so location and follow-up evidence cannot be lost:
 ID | pass | severity | artifact/location | viewport or format | evidence and evidence type | impact | recommended correction | verification status
 ```
 
-For each revision-log entry, repeat `severity`, `evidence`, `recommended correction`, and `verification status` directly in that entry; do not rely on a linked finding to supply missing fields. If only source files are available, use an explicit narrow-screen test target such as `375×812 CSS px`, label the finding `source-derived` and the viewport check `not-verified`; never say the viewport was observed or passed without a rendered capture or measurement.
+For every finding, fill the `viewport or format` field explicitly; a global viewport matrix does not replace per-finding location. If a finding is not viewport-specific, name the inspected format and say `viewport: not applicable`. For each revision-log entry, repeat `severity`, `evidence`, `recommended correction`, and `verification status` directly in that entry; do not rely on a linked finding to supply missing fields. If only source files are available, use an explicit narrow-screen test target such as `375×812 CSS px`, label the finding `source-derived` and the viewport check `not-verified`; never say the viewport was observed or passed without a rendered capture or measurement.
 
 ## 7. Set scoped verdicts
 

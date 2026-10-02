@@ -42,6 +42,8 @@ Verify each supplied artifact before routing:
 
 Inventory the supplied fixture or input directory before routing. Inspect each supplied file enough to identify its role and defects. For every file in an explicitly named `intentional-defects` area, add a corresponding `evidence_defects` entry with its source path, disposition, and affected stages; before handoff, reconcile the register against the complete file inventory so no supplied defect is silently omitted.
 
+Also reconcile defects embedded in ordinary source registers and report inputs, including post-cutoff records, incomplete identifiers, restricted access, unsupported claims, and measurement conflicts. The register must cover defects in both dedicated defect fixtures and the evidence itself. Bind each approval to the exact artifact ID, version, and scope stated in its record; never relabel a source report's approval as approval of a newly generated evidence package, derivative, or design. Downstream artifacts remain unapproved unless separately approved.
+
 ## 3. Create the workflow manifest
 
 Create `workflow-manifest.yaml` before multi-stage execution. Start from `assets/templates/workflow-manifest.yaml` when the bundled template is present. Include:
