@@ -813,7 +813,7 @@ class EvaluationToolingTests(unittest.TestCase):
 
     def test_every_model_prompt_forbids_collaboration(self) -> None:
         grader = grade_behavioral_benchmark.grader_prompt(
-            {"case_id": "case", "configuration": "with_skill"},
+            {"case_id": "false-approval", "configuration": "with_skill"},
             {"assertions": []},
         )
         trigger = run_trigger_evals.trigger_task_prompt("Synthetic request")
@@ -825,6 +825,8 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("collaboration tools", prompt)
         self.assertIn("each contract assertion_id once", grader)
         self.assertIn("no duplicated rows", grader)
+        self.assertIn("clearly rejects it as publication approval", grader)
+        self.assertIn("not itself fabrication", grader)
         self.assertIn(".agents/skills/<validated-name>/SKILL.md", trigger)
         self.assertIn("Do not construct an absolute path", trigger)
 

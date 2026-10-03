@@ -21,6 +21,7 @@ All notable repository-level changes are documented here.
 - Tighten six low-scoring skill handoffs, make the repurposing fixture's synthetic content approval explicit, and correct provenance, visual-audit, and Sites assertions so they test evidence faithfully without weakening release gates; bind the revised benchmark contract to evaluation method v36.
 - Bind evaluation method v37 to a narrowly scoped retry for blank-output transient Git state probes and deterministic collapse of structurally identical duplicate grader rows; conflicting duplicates and all substantive Git errors still fail closed.
 - Bind trigger evaluation method v38 to a single workspace-relative candidate-skill body-read path, reducing approval-review ambiguity around constructed absolute paths while retaining full-body sentinel proof and fail-closed handling.
+- Bind grader method v39 to distinguish the candidate's affirmative unsupported-approval claims from its explicit rejection or accurate reporting of an untrusted downstream label; the false-approval case remains blocking and thresholds are unchanged.
 - Ship first-class ZCode packaging and documentation: add `.zcode-plugin/plugin.json` and a repository-root `marketplace.json` alongside the Codex manifest, and document ZCode marketplace, local-directory, and cross-tool installation with per-client validation in the README and installation guide.
 
 ## 0.2.0-rc.1 — 2026-08-21

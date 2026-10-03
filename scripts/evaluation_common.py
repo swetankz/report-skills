@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v38"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v39"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -608,6 +608,7 @@ def canonical_grader_stage_method() -> dict[str, Any]:
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "grader",
         "repository_state_probe_policy": REPOSITORY_STATE_PROBE_POLICY,
+        "integrity_event_classification_policy": "evaluated-agent-claims-and-actions-v2",
         "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
