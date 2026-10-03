@@ -42,9 +42,13 @@ The Gate 1 root contains `gate1-master-plan.json`, `gate1-run-summary.json`, one
 
 Gate 2 is separate final qualification work and never starts automatically. It runs the canonical 96 behavioral tasks, 96 graders, 33 blind comparisons, and 75 trigger observations on one clean immutable candidate. Only that complete evidence set can produce the final threshold-based release verdict.
 
-## Gate 2 end-to-end local run
+## Gate 2 end-to-end run
 
-After reviewing both dry-run plans, run the authenticated workflow locally with explicit run identifiers:
+The same commands run in a private managed cloud workspace. See the
+[cloud release workflow](cloud-release.md) for candidate transfer, runtime
+access, fresh evidence, and publication prerequisites.
+
+After reviewing both dry-run plans, run the authenticated workflow in the private evaluation workspace with explicit run identifiers:
 
 ```text
 python scripts/run_behavioral_benchmark.py --execute --run-id <benchmark-id> --model <model> --reasoning-effort <effort>

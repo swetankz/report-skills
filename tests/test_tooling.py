@@ -189,6 +189,84 @@ class ToolingTests(unittest.TestCase):
         project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertEqual(plugin["version"], project["project"]["version"])
 
+    def test_plugin_validation_checks_both_client_and_marketplace_metadata(self) -> None:
+        with mock.patch.object(sys, "path", [str(REPO_ROOT / "scripts"), *sys.path]):
+            validator = load_script_module(
+                VALIDATE_REPOSITORY_SCRIPT, "test_validate_repository_plugin_metadata"
+            )
+        metadata_paths = (".codex-plugin/plugin.json", ".zcode-plugin/plugin.json", "marketplace.json")
+        original = {
+            relative: json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
+            for relative in metadata_paths
+        }
+        cases = (
+            ("valid", None, (), None, None),
+            ("codex-version", ".codex-plugin/plugin.json", ("version",), "9.9.9", "plugin and pyproject versions must match"),
+            ("zcode-version", ".zcode-plugin/plugin.json", ("version",), "9.9.9", ".zcode-plugin/plugin.json and pyproject versions must match"),
+            ("zcode-name", ".zcode-plugin/plugin.json", ("name",), "different-plugin", ".zcode-plugin/plugin.json name"),
+            ("zcode-skills", ".zcode-plugin/plugin.json", ("skills",), "../skills", ".zcode-plugin/plugin.json skills"),
+            ("zcode-missing-skills", ".zcode-plugin/plugin.json", ("skills",), None, ".zcode-plugin/plugin.json skills"),
+            ("marketplace-name", "marketplace.json", ("name",), "different-marketplace", "marketplace.json name"),
+            ("marketplace-plugin-name", "marketplace.json", ("plugins", 0, "name"), "different-plugin", "marketplace.json plugin name"),
+            ("marketplace-version", "marketplace.json", ("plugins", 0, "version"), "9.9.9", "marketplace.json plugin and pyproject versions must match"),
+            ("marketplace-source", "marketplace.json", ("plugins", 0, "source"), "../", "marketplace.json plugin source"),
+            ("marketplace-remote-source", "marketplace.json", ("plugins", 0, "source"), {"source": "github", "repo": "example/other"}, "marketplace.json plugin source"),
+            ("missing-plugins", "marketplace.json", ("plugins",), None, "marketplace.json plugins"),
+            ("empty-plugins", "marketplace.json", ("plugins",), [], "marketplace.json plugins"),
+            ("invalid-plugins", "marketplace.json", ("plugins",), {}, "marketplace.json plugins"),
+            ("invalid-plugin-entry", "marketplace.json", ("plugins",), [None], "marketplace.json plugins"),
+            ("duplicate-plugin-entry", "marketplace.json", ("plugins",), original["marketplace.json"]["plugins"] * 2, "marketplace.json plugins"),
+        )
+        for label, relative, keys, value, expected_error in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp_name:
+                root = Path(temp_name)
+                documents = json.loads(json.dumps(original))
+                if relative is not None:
+                    target = documents[relative]
+                    for key in keys[:-1]:
+                        target = target[key]
+                    if value is None:
+                        del target[keys[-1]]
+                    else:
+                        target[keys[-1]] = value
+                for path, document in documents.items():
+                    destination = root / path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(json.dumps(document), encoding="utf-8")
+                shutil.copyfile(REPO_ROOT / "pyproject.toml", root / "pyproject.toml")
+                errors: list[str] = []
+                with mock.patch.object(validator, "REPO_ROOT", root):
+                    validator.validate_plugin(errors)
+                if expected_error is None:
+                    self.assertEqual(errors, [])
+                else:
+                    self.assertTrue(any(expected_error in error for error in errors), errors)
+
+    def test_zcode_validation_reports_missing_malformed_and_nonobject_documents(self) -> None:
+        with mock.patch.object(sys, "path", [str(REPO_ROOT / "scripts"), *sys.path]):
+            validator = load_script_module(
+                VALIDATE_REPOSITORY_SCRIPT, "test_validate_repository_invalid_zcode_metadata"
+            )
+        paths = (".zcode-plugin/plugin.json", "marketplace.json")
+        project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        for relative in paths:
+            for invalid in (None, "{", "[]"):
+                with self.subTest(path=relative, invalid=invalid), tempfile.TemporaryDirectory() as temp_name:
+                    root = Path(temp_name)
+                    for path in paths:
+                        destination = root / path
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(REPO_ROOT / path, destination)
+                    if invalid is None:
+                        (root / relative).unlink()
+                    else:
+                        (root / relative).write_text(invalid, encoding="utf-8")
+                    errors: list[str] = []
+                    with mock.patch.object(validator, "REPO_ROOT", root):
+                        validator.validate_zcode_packaging(errors, project["project"]["version"])
+                    self.assertEqual(len(errors), 1, errors)
+                    self.assertIn(relative, errors[0])
+
     def test_skill_map_has_exact_inventory(self) -> None:
         mapping = json.loads((REPO_ROOT / "source" / "skill-map.yaml").read_text(encoding="utf-8"))
         self.assertEqual(set(mapping["skills"]), EXPECTED_SKILLS)
@@ -878,10 +956,12 @@ class ToolingTests(unittest.TestCase):
             initialize_git_repo(repo)
             (repo / ".gitignore").write_text("**/private.txt\n", encoding="utf-8")
             tracked = {
-                ".codex-plugin/plugin.json": "{}\n",
-                "skills/example/SKILL.md": "---\nname: example\n---\n",
                 **{path: "public\n" for path in release_module.ROOT_FILES},
                 **{path: "public\n" for path in release_module.DOC_FILES},
+                ".codex-plugin/plugin.json": '{"name":"report-skills","skills":"./skills/"}\n',
+                ".zcode-plugin/plugin.json": '{"name":"report-skills","skills":"skills"}\n',
+                "marketplace.json": '{"plugins":[{"name":"report-skills","source":"./"}]}\n',
+                "skills/example/SKILL.md": "---\nname: example\n---\n",
             }
             for relative, content in tracked.items():
                 path = repo / relative
@@ -891,6 +971,7 @@ class ToolingTests(unittest.TestCase):
             git(repo, "commit", "--quiet", "-m", "plugin source")
             for relative in (
                 ".codex-plugin/private.txt",
+                ".zcode-plugin/private.txt",
                 "skills/example/private.txt",
             ):
                 path = repo / relative
@@ -903,6 +984,55 @@ class ToolingTests(unittest.TestCase):
                 set(tree_hashes(stage)),
                 set(tracked),
             )
+            archive = root / "plugin.zip"
+            release_module.deterministic_zip(stage, archive)
+            with zipfile.ZipFile(archive) as packaged:
+                for manifest_path in (
+                    ".codex-plugin/plugin.json",
+                    ".zcode-plugin/plugin.json",
+                    "marketplace.json",
+                ):
+                    self.assertEqual(
+                        packaged.read(manifest_path), tracked[manifest_path].encode("utf-8")
+                    )
+                for manifest_path in (".codex-plugin/plugin.json", ".zcode-plugin/plugin.json"):
+                    manifest = json.loads(packaged.read(manifest_path))
+                    skill_root = manifest["skills"].removeprefix("./").rstrip("/")
+                    self.assertIn(f"{skill_root}/example/SKILL.md", packaged.namelist())
+                marketplace = json.loads(packaged.read("marketplace.json"))
+                self.assertEqual(marketplace["plugins"][0]["source"], "./")
+
+    def test_plugin_inventory_requires_both_client_manifests_and_marketplace(self) -> None:
+        inventory_module = load_script_module(RELEASE_INVENTORY_SCRIPT, "release_inventory")
+        with mock.patch.dict(sys.modules, {"release_inventory": inventory_module}):
+            release_module = load_script_module(RELEASE_SCRIPT, "test_plugin_required_metadata")
+        required_metadata = (
+            ".codex-plugin/plugin.json",
+            ".zcode-plugin/plugin.json",
+            "marketplace.json",
+        )
+        for omitted in required_metadata:
+            with self.subTest(omitted=omitted), tempfile.TemporaryDirectory() as temp_name:
+                repo = Path(temp_name) / "repo"
+                initialize_git_repo(repo)
+                tracked = {
+                    *release_module.ROOT_FILES,
+                    *release_module.DOC_FILES,
+                    *required_metadata,
+                    ".codex-plugin/extra.json",
+                    ".zcode-plugin/extra.json",
+                    "skills/example/SKILL.md",
+                } - {omitted}
+                for relative in tracked:
+                    path = repo / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("public\n", encoding="utf-8")
+                git(repo, "add", ".")
+                git(repo, "commit", "--quiet", "-m", "incomplete plugin source")
+                with mock.patch.object(release_module, "REPO_ROOT", repo):
+                    with self.assertRaises(SystemExit) as raised:
+                        release_module.plugin_inventory()
+                self.assertIn(omitted, str(raised.exception))
 
     def test_evaluation_inventory_matches_skills(self) -> None:
         evaluations = json.loads((REPO_ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))
