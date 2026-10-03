@@ -32,7 +32,8 @@ Read these bundled files before producing artifacts:
 2. Select only claims that remain accurate at the shorter format's level of context.
 3. Map every factual or quantitative statement to an approved `claim_id` before drafting.
 4. Record omissions that could alter interpretation, including denominators, populations, periods, uncertainty, and limitations.
-5. Use visual motifs only when they support narrative meaning and are permitted by the approved visual system.
+5. Plan a claim-by-deliverable coverage row for every approved claim considered in every requested deliverable, including claims that will be shortened or omitted.
+6. Use visual motifs only when they support narrative meaning and are permitted by the approved visual system.
 
 Before drafting, confirm the approval record matches the supplied report version. A task or fixture may identify an explicitly synthetic approval record; preserve its synthetic scope and do not represent it as real-world approval. If an exact versioned approval record is present and matches the report, create the requested local drafts even though derivative review or publication approval is still pending. Missing publication authorization is not a reason to withhold safe local drafts.
 
@@ -45,13 +46,15 @@ Before drafting, confirm the approval record matches the supplied report version
 5. Record any crop, edit, animation, composite, or export as a derivative transformation.
 6. Label all outputs `draft` or `ready-for-approval`; never label them published.
 
-Each deliverable must be independently traceable, not merely covered by package-level metadata. Put these fields in its manifest entry and a compact header or sidecar for the file itself: `deliverable_id`, `parent_report_id`, `parent_report_version`, `parent_report_hash` (or the exact available immutable identity), `source_claim_ids`, `transformation_type`, proposed `dimensions` and aspect ratio, and `status`. Record a claim-to-format/card/frame map plus any context omitted or shortened. Label proposed export dimensions as specifications, not observed exports.
+Each deliverable must be independently traceable, not merely covered by package-level metadata. Put these fields in its manifest entry and a compact header or sidecar for the file itself: `deliverable_id`, `parent_report_id`, `parent_report_version`, `parent_report_hash` (or the exact available immutable identity), `source_claim_ids`, `transformation_type`, proposed `dimensions` and aspect ratio, and `status`. Record one claim-to-deliverable mapping row for every approved claim considered in every requested deliverable, including claims not used. Each row includes exact `claim_id`, `deliverable_id`, output location, status (`used`, `shortened`, or `omitted`), exact context retained or omitted, and a reason for shortening or omission. Do not map only claims that appear in the copy. Label proposed export dimensions as specifications, not observed exports.
+
+For each visual deliverable, provide the actual proposed alternative-text string in `accessibility_copy` and map it to that deliverable and visual. Generic guidance such as “add alt text” or “describe the image” is not completed alternative text.
 
 ## Validate before handoff
 
-1. Reconcile every factual statement against its approved source claim.
+1. Reconcile every factual statement against its approved source claim and check the claim-by-deliverable map for a row covering every considered claim, including each shortened or omitted claim and its reason.
 2. Reject unsupported conclusions, causal framing not present upstream, cherry-picked comparisons, and false precision.
-3. Check title conventions, sequence, legibility, safe areas, timing, accessibility copy, asset rights, and export dimensions.
+3. Check title conventions, sequence, legibility, safe areas, timing, actual deliverable-specific alternative-text strings, asset rights, and export dimensions.
 4. Confirm that the source report identity and visual-system version appear in `derivative-manifest.yaml`.
 5. Set `publication_authorized: false` in the manifest. A separate publication approval does not belong to this skill's output.
 6. Return the drafts, manifest, claim mapping, export checklist, limitations, and unresolved approval needs.

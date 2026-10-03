@@ -61,6 +61,8 @@ verification: "not-retested"
 
 Rank impact, not implementation effort or reviewer preference.
 
+Every finding must contain a separate `severity` field whose value is exactly `critical`, `high`, `medium`, or `low`. Record the consequence separately as `impact`; prose such as `Impact: high` does not populate `severity`.
+
 ## Verdict rules
 
 - `pass`: Observe and pass every blocking item in the declared matrix.

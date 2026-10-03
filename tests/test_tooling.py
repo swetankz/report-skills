@@ -242,6 +242,26 @@ class ToolingTests(unittest.TestCase):
                 self.assertIn('short_description: "Explicit-only:', short_description, skill)
                 self.assertIn(f"${skill}", short_description, skill)
 
+    def test_gate2_skill_remediations_exist_in_source_and_generated_packages(self) -> None:
+        expectations = {
+            "visual-hygiene-auditor/SKILL.md": ("`severity` with one allowed value", "`Impact: high` label is not a severity field"),
+            "visual-hygiene-auditor/references/three-pass-audit-protocol.md": ("separate `severity` field", "prose such as `Impact: high` does not populate"),
+            "motion-performance-qa/SKILL.md": ("`proposed_correction`", "distinct fields"),
+            "motion-performance-qa/references/motion-measurement-protocol.md": ("## Finding separation", "`proposed_correction: none`"),
+            "report-content-repurposer/SKILL.md": ("claim-to-deliverable mapping row", "actual proposed alternative-text string"),
+            "report-content-repurposer/references/derivative-workflow.md": ("claim-by-deliverable coverage table", "actual alternative-text string"),
+            "pencil-safe-editor/SKILL.md": ("`observed_state`", "`proposed_next_step`"),
+            "pencil-safe-editor/references/pencil-edit-protocol.md": ("## Blocked handoff", "specific user action or safe observation"),
+            "interactive-report-publisher/references/web-publication-checklist.md": ("## Citation and URL map", "clickable external `href`"),
+            "report-visual-system/SKILL.md": ("component-to-content map", "reusable layout/component type"),
+        }
+        for tree_name in ("source/skills", "skills"):
+            for relative_path, fragments in expectations.items():
+                with self.subTest(tree=tree_name, path=relative_path):
+                    text = (REPO_ROOT / tree_name / relative_path).read_text(encoding="utf-8")
+                    for fragment in fragments:
+                        self.assertIn(fragment, text)
+
     def test_sites_release_manager_materializes_plain_verification_values(self) -> None:
         required_instructions = (
             "materialize plain file text or select only the required primitive scalar fields",

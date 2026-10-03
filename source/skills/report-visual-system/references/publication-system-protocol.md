@@ -20,10 +20,18 @@ Treat a name, modification date, or folder position as identification evidence, 
 Maintain one row per approved content unit:
 
 ```text
-content_id,content_type,source_location,destination,source_hash,placement_status,change_status,notes
+content_id,content_type,source_location,destination,component_ids,source_hash,placement_status,change_status,notes
 ```
 
 Use `placement_status` values `mapped`, `placed`, `verified`, or `blocked`. Record any wording change as `change_status: approval-required` until the exact revised report version is approved.
+
+Maintain a separate component-to-content map with one row per component/content relationship:
+
+```text
+component_id,content_id,source_location,destination,relationship_status
+```
+
+Every entry in `components` must appear in this map at least once, and every citation, figure, caption, source note, limitation, and report section in the content inventory must have one or more component IDs. Use `relationship_status: mapped` only when the source and destination are explicit; use `system-only` with a reason for genuine interface chrome, otherwise mark the relationship `blocked`.
 
 ## Required token groups
 
@@ -32,6 +40,7 @@ Use `placement_status` values `mapped`, `placed`, `verified`, or `blocked`. Reco
 - Spacing: base unit, scale, inset, stack, gutter, and section rhythm.
 - Layout: grid, margins, columns, alignment anchors, max widths, and safe areas.
 - Components: borders, radii, dividers, image treatments, and state variants where relevant.
+- Component tokens: reusable layout types and each component's semantic token references; do not leave components as IDs without reusable behavior or token bindings.
 
 Keep tokens semantic. Avoid encoding a private brand or one-off page coordinate as a reusable role.
 
@@ -68,12 +77,15 @@ tokens:
   layout: {}
 components: []
 section_map: []
+component_content_map: []
 assets: []
 accessibility_constraints: []
 export_targets: []
 ```
 
 Replace synthetic values with private runtime values only in the user's private output. Keep public examples fictional and reserved.
+
+Each component object includes a stable `component_id`, `component_type`, `reusable_layout_type`, `token_refs`, and content contract. `component_content_map` explicitly maps every listed component to its source content IDs and destination IDs. `section_map` alone is not a substitute for component-level mapping, and listing a citation component without a citation content ID and destination does not establish citation coverage.
 
 ## Verification matrix
 

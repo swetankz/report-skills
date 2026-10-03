@@ -22,6 +22,16 @@ content_id,source_location,route,anchor,component,rendered_status,citation_statu
 
 Require every row to be rendered and traceable. Treat a deliberate exclusion as a content change requiring an explicit record.
 
+## Citation and URL map
+
+Maintain one `citation_checks` row for every source cited in the report:
+
+```text
+source_id,source_register_url,citation_text,destination_href,verification_status,notes
+```
+
+Copy the exact source-register URL when one was supplied, and verify that the bibliography/source entry has a clickable external `href` to it. An internal fragment (for example, `#source-s1`) may link to that entry but is not a replacement for the external source URL. If no usable URL was supplied, preserve the stable source ID and record the access limitation; do not synthesize a URL. Check the bibliography links in the built candidate, not only the manifest.
+
 ## Quantitative-integrity preflight
 
 - Inventory material numbers across report prose, figures, captions, tables, and supplied data.

@@ -90,7 +90,8 @@ For every finding, record:
 - Pass: `structural`, `optical`, or `reader`.
 - Exact page, route, component, state, and viewport.
 - Observation and evidence reference.
-- Impact and severity.
+- `severity`: exactly one of `critical`, `high`, `medium`, or `low`.
+- `impact`: a separate explanation of reader, accessibility, or release consequence; do not use an `Impact` label as a substitute for the required severity value.
 - Recommended remedy.
 - Owner skill or discipline.
 - Disposition and verification state.
@@ -103,7 +104,7 @@ Use a stable finding template so location and follow-up evidence cannot be lost:
 ID | pass | severity | artifact/location | viewport or format | evidence and evidence type | impact | recommended correction | verification status
 ```
 
-For every finding, fill the `viewport or format` field explicitly; a global viewport matrix does not replace per-finding location. If a finding is not viewport-specific, name the inspected format and say `viewport: not applicable`. For each revision-log entry, repeat `severity`, `evidence`, `recommended correction`, and `verification status` directly in that entry; do not rely on a linked finding to supply missing fields. If only source files are available, use an explicit narrow-screen test target such as `375×812 CSS px`, label the finding `source-derived` and the viewport check `not-verified`; never say the viewport was observed or passed without a rendered capture or measurement.
+For every finding, fill the `viewport or format` field explicitly; a global viewport matrix does not replace per-finding location. If a finding is not viewport-specific, name the inspected format and say `viewport: not applicable`. Every finding and revision-log entry must use the exact field `severity` with one allowed value (`critical`, `high`, `medium`, `low`); an `Impact: high` label is not a severity field. Keep the impact explanation separate. For each revision-log entry, repeat `severity`, `evidence`, `recommended correction`, and `verification status` directly in that entry; do not rely on a linked finding to supply missing fields. If only source files are available, use an explicit narrow-screen test target such as `375×812 CSS px`, label the finding `source-derived` and the viewport check `not-verified`; never say the viewport was observed or passed without a rendered capture or measurement.
 
 ## 7. Set scoped verdicts
 

@@ -61,6 +61,10 @@ The script uses the nearest-rank 95th percentile and reports threshold counts. R
 - Source inspection: supports an implementation finding, not runtime success.
 - Screenshot: supports a visual state at one moment, not timing or smoothness.
 
+## Finding separation
+
+For each finding, keep these fields distinct: `observation` (what was directly seen or measured), `diagnosis` (the cause and whether it is suspected or confirmed), `proposed_correction` (the bounded change that could address it), and `verification_status` (what remains untested or was retested). A correction proposal is not authorization to implement it. If there is no safe or evidence-supported correction, write `proposed_correction: none` and explain why; do not silently omit the field.
+
 ## Fixture thresholds
 
 For the repository's controlled synthetic fixture only:

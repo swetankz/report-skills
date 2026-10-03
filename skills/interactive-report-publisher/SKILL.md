@@ -42,6 +42,8 @@ Build a local, publishable web candidate from the complete approved report. Keep
 
 Before implementation, reconcile every source ID and URL in the source register to the report's citations and the site's bibliography or source interface. Preserve wording and qualifiers exactly: do not turn an approximate value into a more precise value, or vice versa. Verify that each report chapter—including analysis, recommendation, and limitations—has a destination.
 
+For each cited source, include a `citation_checks` row with the source ID, exact supplied source-register URL (when present), citation/bibliography destination, and verification status. The bibliography entry must retain a clickable external `href` to that supplied URL; an internal fragment such as `#source-s1` may navigate to the bibliography entry but cannot replace the source URL. If no usable URL was supplied, retain the stable identifier and state the access limitation; never invent a URL.
+
 Before rendering, run a quantitative-integrity preflight across the report, figure specifications, and supplied data artifacts. Reproduce material calculations when numerator and denominator are available; compare repeated values, units, populations, periods, and construct definitions. A conflicted or unsupported value must not appear in the website as established fact. Return it upstream for correction, or, for an explicitly requested local working draft, replace the affected presentation with a conspicuous conflict notice that states the competing values and blocks readiness. Do not silently choose or repair a value outside the approved source.
 
 ## 3. Select the implementation architecture

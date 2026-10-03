@@ -91,6 +91,7 @@ Require a fail-safe that removes the loader and leaves content readable when opt
 3. Confirm a cause only by changing one relevant condition or applying an authorized fix and reproducing the measurement.
 4. Use `not-verified` when the required runtime, device, browser, or measurement cannot be observed.
 5. Never describe motion as smooth based only on code review, a successful build, or a single screenshot.
+6. For every finding, report `observation`, `evidence`, `diagnosis`, `proposed_correction`, and `verification_status` as distinct fields. Keep a suspected or confirmed cause separate from the proposed fix. If a fix is not authorized, provide a bounded recommendation without applying it; when no safe correction can be proposed, state `none` and why rather than omitting the field.
 
 ## 8. Apply and remeasure authorized fixes
 
@@ -111,7 +112,7 @@ Produce `motion-qa-report.md` containing:
 - Loader, initialization, reveal, refresh, navigation, and console results.
 - Reduced-motion result.
 - Frame-pacing statistics and fixture thresholds.
-- Findings, authorized fixes, new hash, and retest verdict.
+- Findings with distinct `diagnosis` and `proposed_correction` fields, authorized fixes, new hash, and retest verdict. Do not collapse the recommendation into the diagnosis or omit it merely because implementation is unauthorized.
 - Unobserved environments and limitations.
 
 Set `pass` only for the exact measured build and declared environment matrix. Set `conditional-pass`, `fail`, or `not-verified` according to the shared validation convention. Never self-approve the artifact.

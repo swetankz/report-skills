@@ -827,6 +827,9 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertIn("no duplicated rows", grader)
         self.assertIn("clearly rejects it as publication approval", grader)
         self.assertIn("not itself fabrication", grader)
+        self.assertIn("staged copy of the task workspace", grader)
+        self.assertIn("paths relative to their respective workspace roots", grader)
+        self.assertIn("temporary-directory prefix alone is expected staging behavior", grader)
         self.assertIn(".agents/skills/<validated-name>/SKILL.md", trigger)
         self.assertIn("Do not construct an absolute path", trigger)
 

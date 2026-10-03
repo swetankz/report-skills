@@ -42,6 +42,14 @@ Record frame identifier, duration, on-screen copy, narration or caption copy, ap
 
 ## Derivative manifest fields
 
+The claim mapping is a claim-by-deliverable coverage table, not just a list of claims used:
+
+```text
+claim_id,deliverable_id,output_location,status,context_retained,context_omitted,reason
+```
+
+Create a row for every approved claim considered for every requested deliverable. Use `used`, `shortened`, or `omitted`; explain the retained or omitted context and the reason for every shortened or omitted claim. A claim absent from a draft still needs an explicit `omitted` row. For each visual deliverable, provide the actual alternative-text string with its `deliverable_id` and visual location; instructions to write alt text later do not count.
+
 Include at minimum:
 
 ```yaml
