@@ -825,6 +825,8 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("collaboration tools", prompt)
         self.assertIn("each contract assertion_id once", grader)
         self.assertIn("no duplicated rows", grader)
+        self.assertIn(".agents/skills/<validated-name>/SKILL.md", trigger)
+        self.assertIn("Do not construct an absolute path", trigger)
 
     def test_model_invocation_preflight_requires_exact_collaboration_controls(self) -> None:
         valid = [
@@ -5688,7 +5690,8 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertIn("Do not list, search, enumerate, or probe", prompt)
         self.assertIn("do not use it to access an unlisted skill", prompt)
         self.assertIn("activate it and only then read its SKILL.md completely", prompt)
-        self.assertIn("exact path provided by the platform", prompt)
+        self.assertIn("workspace-relative literal path `.agents/skills/<validated-name>/SKILL.md`", prompt)
+        self.assertIn("Do not construct an absolute path", prompt)
         self.assertIn("Otherwise fail closed to no activation", prompt)
         self.assertIn("read its SKILL.md completely", prompt)
         self.assertIn("follow its instructions", prompt)
