@@ -44,7 +44,8 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v36"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v37"
+REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
@@ -580,6 +581,7 @@ def canonical_behavioral_task_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "behavioral_task",
+        "repository_state_probe_policy": REPOSITORY_STATE_PROBE_POLICY,
         "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "workspace_relative_path_policy": "in-workspace-only-v1",
@@ -605,6 +607,7 @@ def canonical_grader_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "grader",
+        "repository_state_probe_policy": REPOSITORY_STATE_PROBE_POLICY,
         "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
@@ -619,7 +622,7 @@ def canonical_grader_stage_method() -> dict[str, Any]:
         "input_binding": "source-staged-post-execution-sha256-v1",
         "output_persistence": "regular-nonlink-sha256-copyback-v1",
         "attempt_receipt": "immutable-pre-invocation-v2",
-        "summary_normalization": "contract-derived-summary-v1",
+        "summary_normalization": "contract-summary-and-identical-duplicate-collapse-v2",
         "cleanup": "verified-before-final-metadata-v1",
         "workspace_environment_guard": TASK_GIT_DISCOVERY_GUARD,
         "model_isolation": canonical_model_isolation_receipt(),
@@ -632,6 +635,7 @@ def canonical_blind_comparator_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "blind_comparator",
+        "repository_state_probe_policy": REPOSITORY_STATE_PROBE_POLICY,
         "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
@@ -655,6 +659,7 @@ def canonical_trigger_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "trigger",
+        "repository_state_probe_policy": REPOSITORY_STATE_PROBE_POLICY,
         "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
@@ -2587,15 +2592,23 @@ def repository_receipt(require_clean: bool = False) -> dict[str, Any]:
     """Return the exact candidate Git state used by a model-backed run."""
 
     def git(*arguments: str) -> str:
-        result = subprocess.run(
-            ["git", "-c", f"safe.directory={REPO_ROOT}", "-C", str(REPO_ROOT), *arguments],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise EvaluationError(f"Cannot record repository state: {result.stderr.strip() or result.stdout.strip()}")
-        return result.stdout.strip()
+        command = ["git", "-c", f"safe.directory={REPO_ROOT}", "-C", str(REPO_ROOT), *arguments]
+        for attempt in range(3):
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            diagnostic = result.stderr.strip() or result.stdout.strip()
+            if diagnostic:
+                raise EvaluationError(f"Cannot record repository state: {diagnostic}")
+            if attempt == 2:
+                raise EvaluationError("Cannot record repository state after three blank Git failures")
+            time.sleep(0.1 * (attempt + 1))
+        raise EvaluationError("Cannot record repository state after three blank Git failures")
 
     root = Path(git("rev-parse", "--show-toplevel")).resolve()
     if root != REPO_ROOT.resolve():

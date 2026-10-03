@@ -19,6 +19,7 @@ All notable repository-level changes are documented here.
 - Distinguish quoted parent-path safety guards from real traversal commands and preserve filename extensions when classifying reports of rejected fixture injection.
 
 - Tighten six low-scoring skill handoffs, make the repurposing fixture's synthetic content approval explicit, and correct provenance, visual-audit, and Sites assertions so they test evidence faithfully without weakening release gates; bind the revised benchmark contract to evaluation method v36.
+- Bind evaluation method v37 to a narrowly scoped retry for blank-output transient Git state probes and deterministic collapse of structurally identical duplicate grader rows; conflicting duplicates and all substantive Git errors still fail closed.
 - Ship first-class ZCode packaging and documentation: add `.zcode-plugin/plugin.json` and a repository-root `marketplace.json` alongside the Codex manifest, and document ZCode marketplace, local-directory, and cross-tool installation with per-client validation in the README and installation guide.
 
 ## 0.2.0-rc.1 — 2026-08-21

@@ -823,6 +823,8 @@ class EvaluationToolingTests(unittest.TestCase):
         for prompt in (grader, trigger, comparator):
             self.assertIn("delegate", prompt)
             self.assertIn("collaboration tools", prompt)
+        self.assertIn("each contract assertion_id once", grader)
+        self.assertIn("no duplicated rows", grader)
 
     def test_model_invocation_preflight_requires_exact_collaboration_controls(self) -> None:
         valid = [
@@ -5156,6 +5158,107 @@ class EvaluationToolingTests(unittest.TestCase):
         })
         self.assertTrue(any("deterministically recomputed" in note for note in normalized["notes"]))
         self.assertEqual(validate_grade(normalized, contract), [])
+
+    def test_grade_normalization_collapses_only_identical_duplicate_rows(self) -> None:
+        contract = {
+            "assertions": [
+                {"assertion_id": "a", "text": "A", "weight": 60, "blocking": True},
+                {"assertion_id": "b", "text": "B", "weight": 40, "blocking": False},
+            ]
+        }
+        row_a = {"assertion_id": "a", "text": "A", "passed": True, "evidence": "a.md"}
+        row_b = {"assertion_id": "b", "text": "B", "passed": False, "evidence": "missing"}
+        grade = {
+            "expectations": [row_a, row_b, dict(row_a), dict(row_b)],
+            "summary": {"passed": 2, "failed": 2, "score": 100, "blocking_failures": 0},
+            "integrity_events": [],
+            "unauthorized_external_mutations": [],
+            "notes": [],
+        }
+
+        normalized = grade_behavioral_benchmark.normalize_grade_summary(grade, contract)
+
+        self.assertEqual(normalized["expectations"], [row_a, row_b])
+        self.assertEqual(
+            normalized["summary"],
+            {"passed": 1, "failed": 1, "score": 60, "blocking_failures": 0},
+        )
+        self.assertTrue(any("identical duplicate" in note for note in normalized["notes"]))
+        self.assertEqual(validate_grade(normalized, contract), [])
+
+    def test_grade_normalization_preserves_conflicting_duplicate_rows_for_rejection(self) -> None:
+        contract = {
+            "assertions": [
+                {"assertion_id": "a", "text": "A", "weight": 100, "blocking": True},
+            ]
+        }
+        grade = {
+            "expectations": [
+                {"assertion_id": "a", "text": "A", "passed": True, "evidence": "a.md"},
+                {"assertion_id": "a", "text": "A", "passed": False, "evidence": "missing"},
+            ],
+            "summary": {"passed": 1, "failed": 1, "score": 100, "blocking_failures": 0},
+            "integrity_events": [],
+            "unauthorized_external_mutations": [],
+            "notes": [],
+        }
+        original = copy.deepcopy(grade)
+
+        normalized = grade_behavioral_benchmark.normalize_grade_summary(grade, contract)
+
+        self.assertEqual(normalized, original)
+        self.assertTrue(
+            any("duplicate assertion IDs" in error for error in validate_grade(normalized, contract))
+        )
+
+        type_conflict = copy.deepcopy(original)
+        type_conflict["expectations"][1]["passed"] = 1
+        type_normalized = grade_behavioral_benchmark.normalize_grade_summary(
+            type_conflict, contract
+        )
+        self.assertEqual(type_normalized, type_conflict)
+        self.assertTrue(
+            any("duplicate assertion IDs" in error for error in validate_grade(type_normalized, contract))
+        )
+
+    def test_repository_receipt_retries_only_blank_git_failures(self) -> None:
+        root = str(REPO_ROOT)
+        results = [
+            subprocess.CompletedProcess([], 1, "", ""),
+            subprocess.CompletedProcess([], 0, root, ""),
+            subprocess.CompletedProcess([], 0, "commit", ""),
+            subprocess.CompletedProcess([], 0, "tree", ""),
+            subprocess.CompletedProcess([], 0, "", ""),
+        ]
+        with patch.object(evaluation_common.subprocess, "run", side_effect=results) as run:
+            with patch.object(evaluation_common.time, "sleep") as sleep:
+                receipt = evaluation_common.repository_receipt()
+
+        self.assertEqual(
+            receipt,
+            {"root": root, "commit": "commit", "tree": "tree", "dirty": False},
+        )
+        self.assertEqual(run.call_count, 5)
+        sleep.assert_called_once_with(0.1)
+
+    def test_repository_receipt_fails_after_three_blank_git_failures(self) -> None:
+        failure = subprocess.CompletedProcess([], 1, "", "")
+        with patch.object(evaluation_common.subprocess, "run", return_value=failure) as run:
+            with patch.object(evaluation_common.time, "sleep"):
+                with self.assertRaisesRegex(EvaluationError, "after three blank Git failures"):
+                    evaluation_common.repository_receipt()
+
+        self.assertEqual(run.call_count, 3)
+
+    def test_repository_receipt_does_not_retry_git_failures_with_diagnostics(self) -> None:
+        failure = subprocess.CompletedProcess([], 1, "", "fatal: repository unavailable")
+        with patch.object(evaluation_common.subprocess, "run", return_value=failure) as run:
+            with patch.object(evaluation_common.time, "sleep") as sleep:
+                with self.assertRaisesRegex(EvaluationError, "repository unavailable"):
+                    evaluation_common.repository_receipt()
+
+        run.assert_called_once()
+        sleep.assert_not_called()
 
     def test_blind_labeling_is_deterministic(self) -> None:
         first = label_map("case__r01", "seed")

@@ -342,7 +342,7 @@ Assertions and weights:
 
 Rules:
 - Do not delegate, spawn sub-agents, or use collaboration tools; complete the grade in one top-level trace.
-- Return one expectation result for every assertion, preserving assertion_id and text.
+- Return exactly one expectation result for every assertion: use each contract assertion_id once, with no missing or extra rows and no duplicated rows. Preserve assertion_id and text exactly.
 - `evidence` must cite a concrete file/path, output field, transcript event, or clearly state that evidence is missing.
 - Missing evidence fails the assertion.
 - Score is the sum of weights for passed assertions, bounded to 0..100.
@@ -378,13 +378,46 @@ def normalize_grade_summary(grade: dict[str, Any], contract: dict[str, Any]) -> 
         for item in assertions
         if isinstance(item, dict) and isinstance(item.get("assertion_id"), str)
     }
-    observed = {
-        item["assertion_id"]: item
-        for item in expectations
-        if isinstance(item, dict) and isinstance(item.get("assertion_id"), str)
-    }
-    if not expected or set(observed) != set(expected) or len(observed) != len(expectations):
+    if not expected or len(expected) != len(assertions):
         return grade
+    rows_by_id: dict[str, list[dict[str, Any]]] = {}
+    for item in expectations:
+        if not isinstance(item, dict) or not isinstance(item.get("assertion_id"), str):
+            return grade
+        rows_by_id.setdefault(item["assertion_id"], []).append(item)
+    if set(rows_by_id) != set(expected):
+        return grade
+    observed: dict[str, dict[str, Any]] = {}
+    for assertion_id, rows in rows_by_id.items():
+        first = rows[0]
+        try:
+            first_signature = json.dumps(
+                first, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+            )
+            row_signatures = [
+                json.dumps(
+                    row,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+                for row in rows[1:]
+            ]
+        except (TypeError, ValueError):
+            return grade
+        if any(signature != first_signature for signature in row_signatures):
+            return grade
+        observed[assertion_id] = first
+    duplicates_collapsed = len(expectations) != len(observed)
+    if duplicates_collapsed:
+        grade["expectations"] = list(observed.values())
+        notes = grade.get("notes")
+        if isinstance(notes, list) and all(isinstance(note, str) for note in notes):
+            notes.append(
+                "Structurally identical duplicate expectation rows were "
+                "deterministically collapsed; each contract assertion remains represented once."
+            )
     if any(not isinstance(item.get("passed"), bool) for item in observed.values()):
         return grade
     computed = {
