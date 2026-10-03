@@ -75,6 +75,47 @@ def local_markdown_targets(text: str) -> list[str]:
     return targets
 
 
+def validate_zcode_packaging(errors: list[str], project_version: str | None) -> None:
+    documents: dict[str, dict] = {}
+    for relative in (".zcode-plugin/plugin.json", "marketplace.json"):
+        try:
+            data = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            errors.append(f"{relative} cannot be read: {exc}")
+            continue
+        if not isinstance(data, dict):
+            errors.append(f"{relative} must contain a JSON object")
+            continue
+        documents[relative] = data
+
+    def validate_identity(data: dict, label: str) -> None:
+        if data.get("name") != "report-skills":
+            errors.append(f"{label} name must be report-skills")
+        version = data.get("version")
+        if not isinstance(version, str) or not valid_plugin_version(version):
+            errors.append(f"{label} version must be stable semantic versioning or a numeric -rc.N prerelease")
+        if project_version is not None and version != project_version:
+            errors.append(f"{label} and pyproject versions must match: {version!r} != {project_version!r}")
+
+    zcode = documents.get(".zcode-plugin/plugin.json")
+    if zcode is not None:
+        validate_identity(zcode, ".zcode-plugin/plugin.json")
+        if zcode.get("skills") != "skills":
+            errors.append(".zcode-plugin/plugin.json skills must be skills")
+
+    marketplace = documents.get("marketplace.json")
+    if marketplace is not None:
+        if marketplace.get("name") != "report-skills":
+            errors.append("marketplace.json name must be report-skills")
+        plugins = marketplace.get("plugins")
+        if not isinstance(plugins, list) or len(plugins) != 1 or not isinstance(plugins[0], dict):
+            errors.append("marketplace.json plugins must contain exactly one report-skills entry")
+        else:
+            validate_identity(plugins[0], "marketplace.json plugin")
+            if plugins[0].get("source") != "./":
+                errors.append("marketplace.json plugin source must be ./")
+
+
 def validate_plugin(errors: list[str]) -> None:
     path = REPO_ROOT / ".codex-plugin" / "plugin.json"
     try:
@@ -89,6 +130,7 @@ def validate_plugin(errors: list[str]) -> None:
             "plugin version must be stable semantic versioning or a numeric -rc.N prerelease"
         )
     project_path = REPO_ROOT / "pyproject.toml"
+    project_version: str | None = None
     try:
         project = tomllib.loads(project_path.read_text(encoding="utf-8"))
         project_version = str(project.get("project", {}).get("version", ""))
@@ -100,6 +142,7 @@ def validate_plugin(errors: list[str]) -> None:
                 "plugin and pyproject versions must match: "
                 f"{data.get('version')!r} != {project_version!r}"
             )
+    validate_zcode_packaging(errors, project_version)
     for key in ("description",):
         if not str(data.get(key, "")).strip():
             errors.append(f"plugin {key} is required")
