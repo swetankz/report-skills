@@ -75,4 +75,6 @@ If post-deployment verification fails, report the actual state and follow only a
 
 Produce `sites-release-record.yaml` containing the canonical-source receipt, build identity, dry-run checks, approval state, access intent, routes, deployment evidence when applicable, blockers, and rollback note.
 
+In the behavioral task result, `external_mutations` records state-changing effects that actually occurred. Leave it empty when no external state changed, including when publication is merely proposed, refused, blocked for missing approval, or explicitly not started. Record missing authorization in the release record, blockers, and `not_verified`; do not describe a declined or unperformed action as an external mutation. Record an attempted unauthorized state change as an `integrity_event`, and never perform it.
+
 Keep this skill experimental when no public Sites integration contract or observable test environment is available. Mark tool-dependent results `not-verified`; do not simulate them.
