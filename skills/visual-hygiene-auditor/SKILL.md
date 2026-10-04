@@ -44,6 +44,8 @@ Audit the exact artifact through three distinct passes. Treat review as read-onl
 
 Before writing findings, create a three-row pass ledger in `visual-qa-report.md` with these exact pass names: `structural`, `optical`, and `reader-comprehension`. For each row, state the inspected scope, evidence type/reference, result (`findings`, `no findings`, or `not verified`), and finding IDs (or `none`). Keep all three rows even when a pass finds no defect or cannot be completed. A findings/revision log is not a substitute for pass coverage, and `reader` alone is not the required `reader-comprehension` label. Never mark a pass `no findings` unless its evidence was actually inspected; use `not verified` when it was not.
 
+For shell-based artifact checks, stay inside the supplied workspace and inspect only the artifact content. Do not construct parent paths or use a regex wildcard such as PowerShell `-match '..'` to scan text: the dots match arbitrary characters, not literal periods, and the command may be rejected by the workspace-boundary guard. If a literal text check is necessary, use a literal string operation such as `.Contains()`; never resolve a path outside the workspace.
+
 ## 3. Run the structural pass
 
 Inspect and record:
