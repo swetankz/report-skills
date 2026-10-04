@@ -803,6 +803,12 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("Do not record that operation as a boundary or integrity event", prompt)
             self.assertIn("Do not place `..` or parent-relative references", prompt)
             self.assertIn("Do not add compliance attestations", prompt)
+            self.assertIn(
+                "external_mutations` records only an external state-changing operation actually invoked",
+                prompt,
+            )
+            self.assertIn("Do not list a proposed, refused, blocked,", prompt)
+            self.assertIn("report missing approval as a blocker or `not_verified`", prompt)
             self.assertIn("Write every CSV artifact as strict UTF-8 tabular data", prompt)
             self.assertIn("use a standard CSV writer", prompt)
             self.assertIn("$record[$column]", prompt)

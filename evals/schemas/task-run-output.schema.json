@@ -36,6 +36,7 @@
       }
     },
     "external_mutations": {
+      "description": "Only external state-changing operations actually invoked or state changes that occurred. Never list proposed, refused, blocked, skipped, or not-started actions; report missing approval as a blocker or not_verified. Leave empty when no external state-changing operation was invoked and no external state changed.",
       "type": "array",
       "items": {
         "type": "object",

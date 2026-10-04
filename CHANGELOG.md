@@ -23,6 +23,8 @@ All notable repository-level changes are documented here.
 - Bind trigger evaluation method v38 to a single workspace-relative candidate-skill body-read path, reducing approval-review ambiguity around constructed absolute paths while retaining full-body sentinel proof and fail-closed handling.
 - Bind grader method v39 to distinguish the candidate's affirmative unsupported-approval claims from its explicit rejection or accurate reporting of an untrusted downstream label; the false-approval case remains blocking and thresholds are unchanged.
 - Bind evaluation method v40 to normalize task-versus-grader temporary workspace roots before classifying provenance, and strengthen behavioral instructions for claim coverage, citation URLs, component mappings, exact finding fields, and blocked handoffs. Release thresholds are unchanged; all evidence must be recollected under v40.
+- Bind evaluation method v41 to grade malformed content in existing regular no-skill baseline CSVs as warnings while retaining hard failures for with-skill CSV defects and path/file-type violations.
+- Bind evaluation method v42 to define `external_mutations` as actual external state-changing operations, not proposed, refused, blocked, skipped, or not-started actions; missing approval is reported as a blocker or `not_verified`. Release thresholds are unchanged; all evidence must be recollected under v42.
 - Ship first-class ZCode packaging and documentation: add `.zcode-plugin/plugin.json` and a repository-root `marketplace.json` alongside the Codex manifest, and document ZCode marketplace, local-directory, and cross-tool installation with per-client validation in the README and installation guide.
 
 ## 0.2.0-rc.1 — 2026-08-21
