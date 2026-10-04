@@ -58,6 +58,7 @@ from evaluation_common import (  # noqa: E402
     fixture_csv_validation_errors,
     load_json,
     normalize_suite,
+    partition_task_artifact_validation_errors,
     persisted_run_plan_row,
     query_has_exact_skill_token,
     require_matching_context,
@@ -3222,6 +3223,64 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn(
                 "artifact CSV artifacts/evidence-register.csv row 2 has a blank, padded, or duplicate evidence_id",
                 task_artifact_validation_errors(workspace, contract, "with_skill"),
+            )
+
+    def test_malformed_regular_csv_is_gradeable_only_for_no_skill_baseline(self) -> None:
+        contract = {
+            "artifact_checks": [
+                {
+                    "type": "csv_rectangular",
+                    "path": "artifacts/evidence-register.csv",
+                    "header": ["evidence_id", "population", "period", "unit"],
+                    "min_rows": 1,
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            workspace = Path(temp_name) / "workspace"
+            artifacts = workspace / "artifacts"
+            artifacts.mkdir(parents=True)
+            register = artifacts / "evidence-register.csv"
+            register.write_text(
+                "evidence_id,population,period,unit\nE-001,500,2030-06\n",
+                encoding="utf-8",
+            )
+
+            errors = task_artifact_validation_errors(workspace, contract, "without_skill")
+            hard_errors, warnings = partition_task_artifact_validation_errors(
+                workspace, errors, "without_skill"
+            )
+            self.assertEqual(hard_errors, [])
+            self.assertEqual(warnings, errors)
+            self.assertTrue(warnings)
+            boundary_errors = [
+                "artifact CSV artifacts/evidence-register.csv escapes the task workspace",
+                "artifact CSV artifacts/evidence-register.csv must be a regular file",
+            ]
+            self.assertEqual(
+                partition_task_artifact_validation_errors(
+                    workspace, boundary_errors, "without_skill"
+                ),
+                (boundary_errors, []),
+            )
+            self.assertEqual(
+                partition_task_artifact_validation_errors(
+                    workspace,
+                    task_artifact_validation_errors(workspace, contract, "with_skill"),
+                    "with_skill",
+                ),
+                (errors, []),
+            )
+
+            register.unlink()
+            missing_errors = task_artifact_validation_errors(
+                workspace, contract, "without_skill"
+            )
+            self.assertEqual(
+                partition_task_artifact_validation_errors(
+                    workspace, missing_errors, "without_skill"
+                ),
+                (missing_errors, []),
             )
 
     def test_task_artifact_contract_rejects_unsafe_or_missing_csv(self) -> None:

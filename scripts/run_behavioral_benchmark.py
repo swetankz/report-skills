@@ -49,6 +49,7 @@ from evaluation_common import (
     fixture_csv_validation_errors,
     load_json,
     normalize_suite,
+    partition_task_artifact_validation_errors,
     persisted_run_plan_row,
     repository_receipt,
     require_isolated_model_invocation,
@@ -514,9 +515,15 @@ def run_one(
     validation_errors.extend(skill_body_read_violations(result.stdout, run))
     validation_errors.extend(task_trace_isolation_validation_errors(transcript_path))
     validation_errors.extend(task_output_safety_validation_errors(output_path))
-    validation_errors.extend(
-        task_artifact_validation_errors(workspace, contract, run["configuration"])
+    artifact_errors = task_artifact_validation_errors(
+        workspace, contract, run["configuration"]
     )
+    artifact_errors, artifact_validation_warnings = (
+        partition_task_artifact_validation_errors(
+            workspace, artifact_errors, run["configuration"]
+        )
+    )
+    validation_errors.extend(artifact_errors)
     validation_errors.extend(workspace_persistence["input_validation_errors"])
     task_evidence = task_evidence_receipt(run_dir)
     metadata = {
@@ -529,6 +536,7 @@ def run_one(
         "completed_at": completed_at,
         "returncode": result.returncode,
         "validation_errors": validation_errors,
+        "artifact_validation_warnings": artifact_validation_warnings,
         "wall_clock_seconds": result.wall_clock_seconds,
         "timeout_seconds": timeout,
         "timed_out": result.timed_out,

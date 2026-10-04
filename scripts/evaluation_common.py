@@ -44,7 +44,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v40"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v41"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -524,6 +524,54 @@ def task_artifact_validation_errors(
     return errors
 
 
+def partition_task_artifact_validation_errors(
+    workspace: Path,
+    errors: list[str],
+    configuration: str | None,
+) -> tuple[list[str], list[str]]:
+    """Keep baseline CSV quality defects gradeable while retaining hard safety errors."""
+
+    if configuration != "without_skill":
+        return list(errors), []
+    artifacts = workspace / "artifacts"
+    regular_csv_labels = {
+        candidate.relative_to(workspace).as_posix()
+        for candidate in artifacts.rglob("*")
+        if candidate.suffix.casefold() == ".csv"
+        and not candidate.is_symlink()
+        and candidate.is_file()
+        and stat.S_ISREG(candidate.lstat().st_mode)
+    } if artifacts.is_dir() else set()
+    hard_errors: list[str] = []
+    gradeable_warnings: list[str] = []
+    for error in errors:
+        content_defect = any(
+            error.startswith(f"artifact CSV {label} ")
+            and any(
+                error.startswith(f"artifact CSV {label} {prefix}")
+                for prefix in (
+                    "cannot be parsed:",
+                    "has no header row",
+                    "has blank or duplicate headers",
+                    "header does not match its case contract",
+                    "row ",
+                )
+            )
+            and "escapes the task workspace" not in error
+            and "must be a regular file" not in error
+            for label in regular_csv_labels
+        ) or any(
+            error.startswith(f"artifact CSV {label} has ")
+            and re.search(r" has \d+ data rows; expected at least \d+$", error)
+            for label in regular_csv_labels
+        )
+        if content_defect:
+            gradeable_warnings.append(error)
+        else:
+            hard_errors.append(error)
+    return hard_errors, gradeable_warnings
+
+
 def canonical_model_isolation_receipt() -> dict[str, Any]:
     """Return the exact collaboration-isolation method for a model call."""
 
@@ -586,6 +634,7 @@ def canonical_behavioral_task_stage_method() -> dict[str, Any]:
         "workspace": "fresh-external-system-temp-v1",
         "workspace_relative_path_policy": "in-workspace-only-v1",
         "csv_authoring_policy": "structured-writer-roundtrip-v1",
+        "baseline_csv_validation_policy": "regular-without-skill-csv-content-defects-gradeable-v1",
         "write_failure_policy": "verify-exact-path-and-alternative-writer-v1",
         "model_visible_inputs": [
             "fixture",
@@ -2329,11 +2378,25 @@ def validate_task_evidence_binding(
         contract = load_json(run_dir / "case_contract.json")
     except EvaluationError as error:
         errors.append(str(error))
-    errors.extend(
-        task_artifact_validation_errors(
-            run_dir / "workspace", contract, metadata.get("configuration")
+    artifact_errors = task_artifact_validation_errors(
+        run_dir / "workspace", contract, metadata.get("configuration")
+    )
+    artifact_errors, artifact_validation_warnings = (
+        partition_task_artifact_validation_errors(
+            run_dir / "workspace", artifact_errors, metadata.get("configuration")
         )
     )
+    errors.extend(artifact_errors)
+    recorded_artifact_warnings = metadata.get("artifact_validation_warnings")
+    if (
+        recorded_artifact_warnings is not None
+        and recorded_artifact_warnings != artifact_validation_warnings
+    ) or (
+        artifact_validation_warnings
+        and metadata.get("evaluation_method_version") == EVALUATION_METHOD_VERSION
+        and recorded_artifact_warnings is None
+    ):
+        errors.append("baseline artifact-validation warnings do not match persisted CSV artifacts")
     errors.extend(task_output_safety_validation_errors(run_dir / "task-output.json"))
     errors.extend(task_trace_isolation_validation_errors(run_dir / "transcript.jsonl"))
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in actual.values()):
