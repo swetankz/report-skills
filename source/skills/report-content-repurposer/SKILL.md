@@ -7,6 +7,13 @@ description: "Create source-traceable, draft-only social posts, carousels, launc
 
 Create faithful derivatives from one approved report version. Keep every factual statement traceable, preserve necessary context, and leave every result in draft or export-ready state.
 
+## Blocking source-identifier integrity gate
+
+- Treat source and claim identifiers as opaque evidence values. Copy each identifier exactly as supplied; never mint, rename, prefix, suffix, or normalize one. For example, do not change `SYN-S1` to `SYN-S1-01` or relabel source IDs `C1`–`C9`.
+- In `source_claim_ids`, use only exact approved claim IDs that exist in the parent report's claim ledger. Preserve source citations in a separate `source_ids` field; do not pretend a source ID is a claim ID.
+- If the supplied report has source IDs but no claim ledger, keep those exact values in `source_ids` and map each statement to its exact source ID plus page/section/row locator; do not manufacture claim IDs or call the source IDs claim IDs. If neither an approved claim ID nor a supported source ID exists, mark the statement `unmapped`/`not-validated` or omit it. Do not claim complete or validated traceability while any statement remains unmapped.
+- Before handoff, verify every identifier in every derivative header, manifest entry, and mapping row appears verbatim in the approved upstream ledger or source. A mismatch is a blocking validation finding, not a cosmetic naming choice.
+
 ## Load the operating rules
 
 Read these bundled files before producing artifacts:
@@ -47,6 +54,8 @@ Before drafting, confirm the approval record matches the supplied report version
 6. Label all outputs `draft` or `ready-for-approval`; never label them published.
 
 Each deliverable must be independently traceable, not merely covered by package-level metadata. Put these fields in its manifest entry and a compact header or sidecar for the file itself: `deliverable_id`, `parent_report_id`, `parent_report_version`, `parent_report_hash` (or the exact available immutable identity), `source_claim_ids`, `transformation_type`, proposed `dimensions` and aspect ratio, and `status`. Record one claim-to-deliverable mapping row for every approved claim considered in every requested deliverable, including claims not used. Each row includes exact `claim_id`, `deliverable_id`, output location, status (`used`, `shortened`, or `omitted`), exact context retained or omitted, and a reason for shortening or omission. Do not map only claims that appear in the copy. Label proposed export dimensions as specifications, not observed exports.
+
+Repeat the exact `source_claim_ids` in each deliverable's own compact header or sidecar; a complete package manifest does not substitute for per-file traceability. Do not use locally invented claim labels in these headers or mapping rows.
 
 For each visual deliverable, provide the actual proposed alternative-text string in `accessibility_copy` and map it to that deliverable and visual. Generic guidance such as “add alt text” or “describe the image” is not completed alternative text.
 

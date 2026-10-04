@@ -44,6 +44,8 @@ Inventory the supplied fixture or input directory before routing. Inspect each s
 
 Also reconcile defects embedded in ordinary source registers and report inputs, including post-cutoff records, incomplete identifiers, restricted access, unsupported claims, and measurement conflicts. The register must cover defects in both dedicated defect fixtures and the evidence itself. Bind each approval to the exact artifact ID, version, and scope stated in its record; never relabel a source report's approval as approval of a newly generated evidence package, derivative, or design. Downstream artifacts remain unapproved unless separately approved.
 
+For a multi-stage workflow, this inventory is a blocking preflight: create `workflow-manifest.yaml` before drafting specialist artifacts. Its top-level `evidence_defects` must contain one row for every defective file plus separate rows for every cross-file conflict discovered by reconciliation. In particular, compare each reported headline or chart value with its underlying table/CSV and register any mismatch as its own defect with both source paths and affected stages; recording only the file-level defect does not cover an embedded measurement conflict. Before handoff, compare the complete defect-file list and cross-file discrepancy list against the manifest row-for-row. Never claim the evidence inventory is complete while a listed issue has no manifest entry.
+
 ## 3. Create the workflow manifest
 
 Create `workflow-manifest.yaml` before multi-stage execution. Start from `assets/templates/workflow-manifest.yaml` when the bundled template is present. Include:

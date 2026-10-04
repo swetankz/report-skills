@@ -42,6 +42,8 @@ Audit the exact artifact through three distinct passes. Treat review as read-onl
 4. Use exported pages for print or slide conclusions; do not treat an authoring canvas alone as export proof.
 5. Record unavailable evidence as `not verified` instead of guessing from source code or adjacent viewports.
 
+Before writing findings, create a three-row pass ledger in `visual-qa-report.md` with these exact pass names: `structural`, `optical`, and `reader-comprehension`. For each row, state the inspected scope, evidence type/reference, result (`findings`, `no findings`, or `not verified`), and finding IDs (or `none`). Keep all three rows even when a pass finds no defect or cannot be completed. A findings/revision log is not a substitute for pass coverage, and `reader` alone is not the required `reader-comprehension` label. Never mark a pass `no findings` unless its evidence was actually inspected; use `not verified` when it was not.
+
 ## 3. Run the structural pass
 
 Inspect and record:
@@ -131,6 +133,7 @@ Produce `visual-qa-report.md` containing:
 - Artifact ID, version, hash, reviewed formats, reviewed viewports, review time, and verdict.
 - Scope and unavailable evidence.
 - Three separately documented passes.
+- The complete three-row pass ledger, using the exact labels `structural`, `optical`, and `reader-comprehension`, with scope, evidence, result, and finding IDs for each.
 - Severity-ranked findings with evidence and owners.
 - Authorized changes, if any.
 - Retest records and remaining limitations.

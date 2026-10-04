@@ -75,6 +75,8 @@ Require a fail-safe that removes the loader and leaves content readable when opt
 5. Verify that the loader cannot remain active and that navigation, focus, and anchored content still work.
 6. Record direct runtime evidence; a media-query rule in source is not sufficient proof.
 
+Always include a reproducible reduced-motion validation procedure in the report, even when runtime access is unavailable. Name the route/build and the exact preference setup (for example, enable `prefers-reduced-motion: reduce` in browser emulation before a clean reload), then list checks for content visibility, keyboard/focus and navigation, loader dismissal, anchored content, and nonessential movement. For each check give an observable acceptance criterion and a separate result (`pass`, `fail`, or `not verified`). A proposed procedure is not an observed result; do not claim acceptance until directly tested.
+
 ## 6. Measure frame pacing
 
 1. Capture frame timestamps or intervals during a controlled startup, scroll, or interaction fixture.
@@ -111,9 +113,12 @@ Produce `motion-qa-report.md` containing:
 - Font and important-asset readiness results.
 - Loader, initialization, reveal, refresh, navigation, and console results.
 - Reduced-motion result.
+- A distinct `## Reduced-motion validation` table with route/build, setup, procedure, per-check acceptance criterion, and observed result; mark unrun checks `not verified` rather than omitting the procedure.
 - Frame-pacing statistics and fixture thresholds.
 - Findings with distinct `diagnosis` and `proposed_correction` fields, authorized fixes, new hash, and retest verdict. Do not collapse the recommendation into the diagnosis or omit it merely because implementation is unauthorized.
 - Unobserved environments and limitations.
+
+Include a separate `## Measured verification results` section. For each runtime-dependent conclusion, list the measurement or check, environment/build, evidence reference, acceptance criterion, and result. When the browser/runtime was unavailable, explicitly record `not verified` in this section; a general limitations paragraph alone does not document measured verification.
 
 Set `pass` only for the exact measured build and declared environment matrix. Set `conditional-pass`, `fail`, or `not-verified` according to the shared validation convention. Never self-approve the artifact.
 
