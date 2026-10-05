@@ -192,23 +192,18 @@ def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str
         # PowerShell transcript serialization can surround an argument with
         # adjacent quote tokens (`'"'!*SKILL.md'"'`). Collapse those wrappers
         # before checking exclusions; otherwise a safe `rg` glob looks like a
-        # named skill-body reference. This is only used for the single-command
-        # exclusion fast path below; chained commands remain fail-closed.
+        # named skill-body reference. Chained commands remain fail-closed.
         normalized = re.sub(r"['\"]{2,}", "", normalized)
         # PowerShell Path.Combine can spell the injected path as separate quoted
         # components; normalize that form before checking the exact candidate.
         normalized = re.sub(r"['\"]\s*,\s*['\"]", "/", normalized)
-        if (
-            "rg --files" in normalized
-            and re.search(
-                r"(?:-g|--glob)\s*=?\s*['\"]?![^'\";\s]*skill\.md['\"]?",
-                normalized,
-            )
-            and not re.search(r"[;|&]", normalized)
-        ):
-            # `SKILL.md` in a ripgrep exclusion glob is a filename filter, not
-            # a request to read a skill body. Keep chained commands fail-closed.
-            continue
+        exclusion_glob = re.compile(
+            r"(?:-g|--glob)\s*=?\s*['\"]?![^'\";\s]*skill\.md['\"]?"
+        )
+        # A negative ripgrep glob is a filename filter, not a body read. Remove
+        # only that token before checking the remainder; any direct named-skill
+        # reference in this or a chained command remains fail-closed.
+        normalized = exclusion_glob.sub(" ", normalized)
         if "skill.md" not in normalized:
             continue
         allowed_reference = allowed_pattern.search(normalized) is not None

@@ -2404,11 +2404,22 @@ class EvaluationToolingTests(unittest.TestCase):
         skill_extension_exclusion_glob = transcript(
             'rg --files . -g "!*.skill.md" -g "!.benchmark_skill/**"'
         )
+        skill_exclusion_search_glob = transcript(
+            "rg -n -i --glob '!*.SKILL.md' --glob '!*.csv' "
+            "'path|url|job[_-]?id|execution[_-]?id|personal|live|provider|provenance' fixture"
+        )
         powershell_serialized_skill_exclusion_glob = transcript(
             r'''pwsh -Command "rg --files -g '"'!*SKILL.md'"' -g '"'!artifacts/**'"'"'''
         )
+        powershell_serialized_exclusion_search = transcript(
+            r'''pwsh -Command "rg -n -i --glob '"'!*SKILL.md'"' --glob '"'!*.csv'"' '"'path|url|job[_-]?id|execution[_-]?id|personal|live|provider|provenance'"' fixture"'''
+        )
         skill_exclusion_then_read = transcript(
             "rg --files . -g '!SKILL.md'; Get-Content Q:/outside/SKILL.md"
+        )
+        skill_exclusion_search_then_read = transcript(
+            "rg -n --glob '!*.SKILL.md' pattern fixture; "
+            "Get-Content Q:/outside/SKILL.md"
         )
         global_join_path = transcript(
             r"Get-Content (Join-Path 'Q:\fixture\.codex\skills\other' 'SKILL.md')"
@@ -2437,9 +2448,26 @@ class EvaluationToolingTests(unittest.TestCase):
         )
         self.assertEqual(
             run_behavioral_benchmark.skill_body_read_violations(
+                skill_exclusion_search_glob, run
+            ),
+            [],
+        )
+        self.assertEqual(
+            run_behavioral_benchmark.skill_body_read_violations(
                 powershell_serialized_skill_exclusion_glob, run
             ),
             [],
+        )
+        self.assertEqual(
+            run_behavioral_benchmark.skill_body_read_violations(
+                powershell_serialized_exclusion_search, run
+            ),
+            [],
+        )
+        self.assertTrue(
+            run_behavioral_benchmark.skill_body_read_violations(
+                skill_exclusion_search_then_read, run
+            )
         )
         self.assertTrue(
             run_behavioral_benchmark.skill_body_read_violations(skill_exclusion_then_read, run)
