@@ -25,6 +25,8 @@ Check recommendations separately from findings. Do not attach a source claim to 
 
 ## Format patterns
 
+Do not calculate or substitute a new percentage or rate when the approved report already states the figure; preserve the supplied number and qualifiers. Accessibility text and transcripts must retain material qualifiers, limitations, denominators, and safeguards from the corresponding visual/narration rather than compressing them away.
+
 ### Single 4:5 post
 
 Specify headline, one primary finding, necessary context, source note, call to action, alternative text, dimensions, and safe-area requirements. Prefer one defensible idea over a dense miniature report.
@@ -55,6 +57,16 @@ Record frame identifier, duration, on-screen copy, narration or caption copy, ap
 Every deliverable file must carry its own parent identity, source claim IDs, transformation type, proposed dimensions/aspect ratio, and status. Put these fields on every data row of a CSV or other row-oriented file; a package manifest entry is not per-file metadata. If the format makes repeated columns invalid, use a same-stem sidecar and link the relative sidecar path from the deliverable.
 
 The statement-level mapping schema adds `source_locator` and verbatim `output_text` to the fields below. Include one distinct row per factual occurrence at its exact location; do not bundle several outputs or accessibility strings into one row.
+
+Use unique `statement_id` markers on every copy unit: `<!-- statement_id: ST-001 -->` before each Markdown block, a `statement_id` field for every YAML/JSON text item, and a `statement_id` column for each CSV copy row. A CSV video plan uses one row per frame-copy unit (for example, `on_screen_copy`, `narration`, or `accessibility_transcript`) with frame ID, content type, exact text, and provenance columns repeated on each row. The statement register is drafted first and is the source from which those copy units are materialized.
+
+From the workspace root, run the validator over every copy-bearing deliverable and its map, for example:
+
+```text
+python .benchmark_skill/report-content-repurposer/scripts/validate_derivative_package.py --artifacts-root artifacts --mapping artifacts/claim-mapping.csv --deliverable launch-post.md --deliverable carousel.md --deliverable video-frames.csv --deliverable derivative-manifest.yaml
+```
+
+Adjust the deliverable list to include every file containing output copy. A nonzero exit blocks a `pass`; repair the issue and rerun the same full command.
 
 Before handoff, verify factual statements in each accessibility string individually, not only whether an accessibility field exists.
 

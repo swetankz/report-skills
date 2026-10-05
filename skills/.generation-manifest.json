@@ -81,7 +81,8 @@
       "references/derivative-workflow.md",
       "references/evidence-language.md",
       "references/public-safety.md",
-      "references/validation-conventions.md"
+      "references/validation-conventions.md",
+      "scripts/validate_derivative_package.py"
     ],
     "report-skills": [
       "SKILL.md",
@@ -156,9 +157,10 @@
     "source/skills/pencil-safe-editor/SKILL.md": "c03a9efdaa11f67dc297dce8d829be2c028de5617abb1ea90dda64aea4f102fa",
     "source/skills/pencil-safe-editor/agents/openai.yaml": "7c9d18c617a74915781eac28920f2c3be544c651d39a012d7e507472e0eecf56",
     "source/skills/pencil-safe-editor/references/pencil-edit-protocol.md": "f0a9ea4a211ec70dd3d0169a7ab51e136ab0fdb59ec58dc563b384eecf88d2fc",
-    "source/skills/report-content-repurposer/SKILL.md": "01493e26f467107ecd812f9fe2ff1086e32d821b2a5487690ee3fe46bb5d4a21",
+    "source/skills/report-content-repurposer/SKILL.md": "079c6424dbaae0c7c4ea2f78f5dbe841d97fab9465d29922616603a251d5176a",
     "source/skills/report-content-repurposer/agents/openai.yaml": "c686ff694af8bb4d8b408ad27ee295ff2278fb5618e968f7b81c42d8703f54f7",
-    "source/skills/report-content-repurposer/references/derivative-workflow.md": "638d07c67314acc29d30455f78ec518375963e9d8e5c9ee03f09b075852182da",
+    "source/skills/report-content-repurposer/references/derivative-workflow.md": "fb573e4ae802780d8446d854b02d38e00a1765696400e8cf92cee54d6146c7a4",
+    "source/skills/report-content-repurposer/scripts/validate_derivative_package.py": "091116cc14ca8622d1374d8a426be665923773e4133c5ec7fdc85eae4d38c6e2",
     "source/skills/report-skills/SKILL.md": "808230d1c17f573cc41d1ea67f8b771369e8d6d20e35c45625a0fbd7dfc8d20f",
     "source/skills/report-skills/agents/openai.yaml": "136b5c9572b38556c09c1d28a1fefed04cb28c18abe9c2254ed645688e40b0aa",
     "source/skills/report-skills/references/routing-and-lifecycle.md": "8cf26844cb668b3ca7398e6a57d091414090f9141fa9cb34a1538775f9cdba1a",
