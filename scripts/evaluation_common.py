@@ -45,7 +45,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v45"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v46"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -74,7 +74,11 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v6"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v7"
+TASK_TRANSIENT_CAPACITY_RETRY_POLICY = (
+    "explicit-model-capacity-no-output-unchanged-workspace-two-retries-v1"
+)
+TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS = (30, 60)
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",
@@ -647,6 +651,7 @@ def canonical_behavioral_task_stage_method() -> dict[str, Any]:
         "input_binding": "plan-initial-post-execution-persisted-sha256-v1",
         "output_persistence": "regular-nonlink-sha256-copyback-v1",
         "workspace_persistence": "directory-sha256-copyback-v1",
+        "transient_capacity_retry_policy": TASK_TRANSIENT_CAPACITY_RETRY_POLICY,
         "cleanup": "verified-before-final-metadata-v1",
         "isolation": canonical_task_isolation_receipt(),
     }
@@ -3412,6 +3417,11 @@ def require_clean_task_execution(
     receipt_errors = execution_receipt_validation_errors(
         metadata, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, label
     )
+    receipt_errors.extend(
+        behavioral_task_retry_receipt_validation_errors(
+            metadata, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, label
+        )
+    )
     evidence_errors = (
         validate_task_evidence_binding(
             metadata,
@@ -3923,6 +3933,133 @@ def execution_receipt_validation_errors(
         errors.append(f"{label} contains a failed terminal event")
     if value("timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE:
         errors.append(f"{label} has an unsupported timeout-enforcement receipt")
+    return errors
+
+
+def behavioral_task_retry_receipt_validation_errors(
+    receipt: Any, expected_timeout: int, label: str
+) -> list[str]:
+    """Validate bounded capacity retries and their fail-closed safety receipts."""
+
+    errors: list[str] = []
+    if not isinstance(receipt, dict):
+        return [f"{label} has no behavioral-task retry receipt"]
+
+    if receipt.get("transient_capacity_retry_policy") != TASK_TRANSIENT_CAPACITY_RETRY_POLICY:
+        errors.append(f"{label} has an unsupported transient-capacity retry policy")
+    if receipt.get("overall_timeout_seconds") != expected_timeout:
+        errors.append(f"{label} retry receipt does not bind the overall task timeout")
+
+    last_attempt_timeout = receipt.get("last_attempt_timeout_seconds")
+    if (
+        isinstance(last_attempt_timeout, bool)
+        or not isinstance(last_attempt_timeout, int)
+        or not 0 < last_attempt_timeout <= expected_timeout
+    ):
+        errors.append(f"{label} has an invalid last-attempt timeout receipt")
+
+    attempts = receipt.get("retry_attempts")
+    max_attempts = len(TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS) + 1
+    if not isinstance(attempts, list) or len(attempts) > max_attempts:
+        return errors + [f"{label} has an invalid transient-capacity retry ledger"]
+
+    expected_keys = {
+        "attempt",
+        "failure_class",
+        "returncode",
+        "failed_terminal_event_count",
+        "wall_clock_seconds",
+        "attempt_timeout_seconds",
+        "token_usage",
+        "stdout_sha256",
+        "stderr_sha256",
+        "workspace_unchanged",
+        "task_output_absent",
+        "retry_scheduled",
+        "retry_delay_seconds",
+    }
+    for index, attempt in enumerate(attempts, start=1):
+        attempt_label = f"{label} retry attempt {index}"
+        if not isinstance(attempt, dict) or set(attempt) != expected_keys:
+            errors.append(f"{attempt_label} has a malformed receipt")
+            continue
+        attempt_number = attempt.get("attempt")
+        if (
+            isinstance(attempt_number, bool)
+            or not isinstance(attempt_number, int)
+            or attempt_number != index
+            or attempt.get("failure_class") != "model_capacity"
+        ):
+            errors.append(f"{attempt_label} has an invalid attempt identity or failure class")
+        returncode = attempt.get("returncode")
+        if isinstance(returncode, bool) or not isinstance(returncode, int) or returncode == 0:
+            errors.append(f"{attempt_label} is not a failed model invocation")
+        failed_events = attempt.get("failed_terminal_event_count")
+        if isinstance(failed_events, bool) or not isinstance(failed_events, int) or failed_events < 1:
+            errors.append(f"{attempt_label} has no failed terminal event")
+
+        attempt_timeout = attempt.get("attempt_timeout_seconds")
+        if (
+            isinstance(attempt_timeout, bool)
+            or not isinstance(attempt_timeout, int)
+            or not 0 < attempt_timeout <= expected_timeout
+        ):
+            errors.append(f"{attempt_label} has an invalid invocation timeout")
+        duration = attempt.get("wall_clock_seconds")
+        if (
+            isinstance(duration, bool)
+            or not isinstance(duration, (int, float))
+            or (isinstance(duration, float) and not math.isfinite(duration))
+            or duration < 0
+            or (isinstance(attempt_timeout, int) and duration > attempt_timeout)
+        ):
+            errors.append(f"{attempt_label} has an invalid wall-clock duration")
+
+        token_usage = attempt.get("token_usage")
+        if not isinstance(token_usage, dict) or set(token_usage) != {
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+        } or any(
+            value is not None
+            and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            )
+            for value in token_usage.values()
+        ):
+            errors.append(f"{attempt_label} has malformed token-usage evidence")
+        for key in ("stdout_sha256", "stderr_sha256"):
+            if not isinstance(attempt.get(key), str) or not re.fullmatch(
+                r"[0-9a-f]{64}", attempt[key]
+            ):
+                errors.append(f"{attempt_label} has an invalid {key} receipt")
+
+        workspace_unchanged = attempt.get("workspace_unchanged")
+        task_output_absent = attempt.get("task_output_absent")
+        retry_scheduled = attempt.get("retry_scheduled")
+        if not all(
+            isinstance(value, bool)
+            for value in (workspace_unchanged, task_output_absent, retry_scheduled)
+        ):
+            errors.append(f"{attempt_label} has malformed retry safety flags")
+            continue
+        retry_delay = attempt.get("retry_delay_seconds")
+        if retry_scheduled:
+            if (
+                index > len(TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS)
+                or not workspace_unchanged
+                or not task_output_absent
+                or retry_delay
+                != TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS[index - 1]
+            ):
+                errors.append(f"{attempt_label} scheduled an unsafe or unbounded retry")
+        elif retry_delay is not None:
+            errors.append(f"{attempt_label} has a delay without a scheduled retry")
+        if index < len(attempts) and not retry_scheduled:
+            errors.append(f"{attempt_label} was followed by an unscheduled retry")
+
     return errors
 
 

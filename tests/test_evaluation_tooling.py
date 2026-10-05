@@ -193,6 +193,12 @@ def bind_safe_task_metadata(metadata: dict, run_dir: Path) -> dict:
     metadata["model_isolation"] = canonical_model_isolation_receipt()
     metadata["evaluation_method_version"] = EVALUATION_METHOD_VERSION
     metadata["stage_method"] = canonical_behavioral_task_stage_method()
+    metadata["transient_capacity_retry_policy"] = (
+        evaluation_common.TASK_TRANSIENT_CAPACITY_RETRY_POLICY
+    )
+    metadata["overall_timeout_seconds"] = CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS
+    metadata["last_attempt_timeout_seconds"] = CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS
+    metadata["retry_attempts"] = []
     metadata["workspace_environment"] = workspace_environment_receipt(
         Path(tempfile.gettempdir()) / "report-skills-test-workspace" / run_dir.name
     )
@@ -2106,6 +2112,91 @@ class EvaluationToolingTests(unittest.TestCase):
                     {"configuration": "without_skill", "skill": "one"}, fixture
                 )
 
+    def test_capacity_retries_require_explicit_failure_and_clean_task_state(self) -> None:
+        capacity_failure = evaluation_common.CommandResult(
+            returncode=1,
+            wall_clock_seconds=1.0,
+            stdout=json.dumps(
+                {
+                    "type": "turn.failed",
+                    "error": {"message": "Selected model is at capacity"},
+                }
+            ),
+            stderr="unexpected status 503 Service Unavailable",
+            timeout_seconds=10,
+            failed_terminal_event_count=1,
+        )
+        self.assertTrue(
+            run_behavioral_benchmark.is_transient_model_capacity_failure(
+                capacity_failure
+            )
+        )
+        self.assertTrue(
+            run_behavioral_benchmark.capacity_retry_is_safe(
+                capacity_failure,
+                workspace_unchanged=True,
+                task_output_absent=True,
+                retries_remaining=True,
+            )
+        )
+        for safety_receipt in (
+            {"workspace_unchanged": False},
+            {"task_output_absent": False},
+            {"retries_remaining": False},
+        ):
+            with self.subTest(safety_receipt=safety_receipt):
+                conditions = {
+                    "workspace_unchanged": True,
+                    "task_output_absent": True,
+                    "retries_remaining": True,
+                    **safety_receipt,
+                }
+                self.assertFalse(
+                    run_behavioral_benchmark.capacity_retry_is_safe(
+                        capacity_failure, **conditions
+                    )
+                )
+
+        generic_failure = evaluation_common.CommandResult(
+            returncode=1,
+            wall_clock_seconds=1.0,
+            stdout=json.dumps(
+                {"type": "turn.failed", "error": {"message": "Authentication failed"}}
+            ),
+            stderr="",
+            timeout_seconds=10,
+            failed_terminal_event_count=1,
+        )
+        timed_out_capacity = evaluation_common.CommandResult(
+            returncode=124,
+            wall_clock_seconds=10.0,
+            stdout=capacity_failure.stdout,
+            stderr=capacity_failure.stderr,
+            timed_out=True,
+            timeout_seconds=10,
+            failed_terminal_event_count=1,
+        )
+        self.assertFalse(
+            run_behavioral_benchmark.is_transient_model_capacity_failure(
+                generic_failure
+            )
+        )
+        self.assertFalse(
+            run_behavioral_benchmark.is_transient_model_capacity_failure(
+                timed_out_capacity
+            )
+        )
+
+    def test_staged_output_absence_check_rejects_dangling_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            staged_output = Path(temp_name) / "task-output.json"
+            try:
+                staged_output.symlink_to(Path(temp_name) / "missing-target.json")
+            except OSError:
+                self.skipTest("file symlink creation is unavailable")
+            with self.assertRaisesRegex(EvaluationError, "not a regular file"):
+                run_behavioral_benchmark.safe_regular_file_sha256(staged_output)
+
     def test_run_one_executes_outside_repo_and_persists_exact_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)
@@ -2150,6 +2241,36 @@ class EvaluationToolingTests(unittest.TestCase):
                 )
                 with self.assertRaises(ValueError):
                     workspace.relative_to(REPO_ROOT.resolve())
+                if len(observed_workspace) == 1:
+                    return evaluation_common.CommandResult(
+                        returncode=1,
+                        wall_clock_seconds=1.0,
+                        stdout=json.dumps(
+                            {
+                                "type": "turn.failed",
+                                "error": {
+                                    "message": "Selected model is at capacity"
+                                },
+                            }
+                        )
+                        + "\n"
+                        + json.dumps(
+                            {
+                                "type": "token_count",
+                                "info": {
+                                    "input_tokens": 10,
+                                    "output_tokens": 2,
+                                    "total_tokens": 12,
+                                },
+                            }
+                        )
+                        + "\n",
+                        stderr="unexpected status 503 Service Unavailable\n",
+                        timeout_seconds=timeout,
+                        terminal_event_count=0,
+                        failed_terminal_event_count=1,
+                        timeout_enforcement=CODEX_TIMEOUT_ENFORCEMENT_MODE,
+                    )
                 (workspace / "artifacts" / "report.md").write_text(
                     "result", encoding="utf-8"
                 )
@@ -2160,7 +2281,21 @@ class EvaluationToolingTests(unittest.TestCase):
                 return evaluation_common.CommandResult(
                     returncode=0,
                     wall_clock_seconds=1.0,
-                    stdout=json.dumps({"type": "turn.completed"}) + "\n",
+                    stdout=(
+                        json.dumps(
+                            {
+                                "type": "token_count",
+                                "info": {
+                                    "input_tokens": 100,
+                                    "output_tokens": 20,
+                                    "total_tokens": 120,
+                                },
+                            }
+                        )
+                        + "\n"
+                        + json.dumps({"type": "turn.completed"})
+                        + "\n"
+                    ),
                     stderr="",
                     timeout_seconds=timeout,
                     terminal_event_count=1,
@@ -2192,6 +2327,7 @@ class EvaluationToolingTests(unittest.TestCase):
                     },
                 ),
                 patch.object(run_behavioral_benchmark, "run_codex", side_effect=fake_run),
+                patch.object(run_behavioral_benchmark.time, "sleep"),
             ):
                 metadata = run_behavioral_benchmark.run_one(
                     suite,
@@ -2206,10 +2342,56 @@ class EvaluationToolingTests(unittest.TestCase):
                         "skill_package_sha256": None,
                     },
                 )
-            self.assertEqual(len(observed_workspace), 1)
+            self.assertEqual(len(observed_workspace), 2)
+            self.assertEqual(observed_workspace[0], observed_workspace[1])
             self.assertFalse(observed_workspace[0].exists())
             self.assertTrue((suite / "runs" / "001" / "workspace").is_dir())
             self.assertEqual(metadata["validation_errors"], [])
+            self.assertEqual(
+                execution_receipt_validation_errors(
+                    metadata, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, "task"
+                ),
+                [],
+            )
+            self.assertEqual(
+                evaluation_common.behavioral_task_retry_receipt_validation_errors(
+                    metadata, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, "task"
+                ),
+                [],
+            )
+            self.assertEqual(metadata["timeout_seconds"], CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS)
+            self.assertLessEqual(
+                metadata["last_attempt_timeout_seconds"],
+                CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+            )
+            self.assertEqual(len(metadata["retry_attempts"]), 1)
+            self.assertTrue(metadata["retry_attempts"][0]["workspace_unchanged"])
+            self.assertTrue(metadata["retry_attempts"][0]["task_output_absent"])
+            self.assertTrue(metadata["retry_attempts"][0]["retry_scheduled"])
+            self.assertEqual(
+                metadata["retry_attempts"][0]["retry_delay_seconds"], 30
+            )
+            self.assertEqual(
+                metadata["token_usage"],
+                {"input_tokens": 110, "output_tokens": 22, "total_tokens": 132},
+            )
+            self.assertEqual(
+                metadata["transient_capacity_retry_policy"],
+                run_behavioral_benchmark.TASK_TRANSIENT_CAPACITY_RETRY_POLICY,
+            )
+            tampered_retry = copy.deepcopy(metadata)
+            tampered_retry["retry_attempts"][0]["workspace_unchanged"] = False
+            self.assertTrue(
+                evaluation_common.behavioral_task_retry_receipt_validation_errors(
+                    tampered_retry,
+                    CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+                    "tampered-task",
+                )
+            )
+            with self.assertRaisesRegex(
+                EvaluationError, "cannot be graded or compared"
+            ):
+                require_clean_task_execution(tampered_retry, "tampered-task")
             self.assertEqual(metadata["codex_isolation"], canonical_task_isolation_receipt())
             self.assertEqual(metadata["model_isolation"], canonical_model_isolation_receipt())
             self.assertTrue(metadata["workspace_persistence"]["cleanup_completed"])
@@ -2923,6 +3105,15 @@ class EvaluationToolingTests(unittest.TestCase):
             "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
         }
         self.assertEqual(execution_receipt_validation_errors(valid, 10, "valid"), [])
+        shortened_retry = dict(valid, timeout_seconds=4, wall_clock_seconds=3.5)
+        self.assertTrue(
+            any(
+                "timeout receipt does not match" in error
+                for error in execution_receipt_validation_errors(
+                    shortened_retry, 10, "task"
+                )
+            )
+        )
         late = dict(valid, wall_clock_seconds=10.1)
         self.assertTrue(
             any(
@@ -2971,6 +3162,10 @@ class EvaluationToolingTests(unittest.TestCase):
             "timeout_overrun_seconds": 0.0,
             "terminal_event_count": 1,
             "failed_terminal_event_count": 0,
+            "transient_capacity_retry_policy": evaluation_common.TASK_TRANSIENT_CAPACITY_RETRY_POLICY,
+            "overall_timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+            "last_attempt_timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+            "retry_attempts": [],
             "execution_profile": {
                 "codex_invocation": CODEX_INVOCATION_MODE,
                 "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
@@ -4977,6 +5172,10 @@ class EvaluationToolingTests(unittest.TestCase):
                             "timeout_overrun_seconds": 0.0,
                             "terminal_event_count": 1,
                             "failed_terminal_event_count": 0,
+                            "transient_capacity_retry_policy": evaluation_common.TASK_TRANSIENT_CAPACITY_RETRY_POLICY,
+                            "overall_timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+                            "last_attempt_timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+                            "retry_attempts": [],
                             "execution_profile": {
                                 "codex_invocation": CODEX_INVOCATION_MODE,
                                 "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
