@@ -13,6 +13,12 @@ Build a derivative claim bank before writing. For each candidate statement, reco
 
 Reject a shortened statement when the missing context changes its meaning. Do not upgrade analysis or inference into fact.
 
+## Statement-level traceability
+
+Before handoff, split every deliverable into atomic factual clauses and trace each exact output location to the claim that supports it. Include headlines, subheads, card-by-card copy, captions, calls to action that make factual promises, on-screen text, narration, and quantitative labels. A package-level source list or a claim-by-deliverable coverage matrix is not proof that every statement is mapped.
+
+Check recommendations separately from findings. Do not attach a source claim to a recommendation unless that claim actually supports it. Remove unsupported factual clauses; label a genuine recommendation as a recommendation and record its rationale instead of making it appear source-backed.
+
 ## Format patterns
 
 ### Single 4:5 post

@@ -1,6 +1,6 @@
 ---
 name: report-content-repurposer
-description: "Create source-traceable, draft-only social posts, carousels, launch creatives, and video-frame plans from an explicitly approved report version. Use when adapting validated report content to channel-specific formats while preserving claim context, citations, visual rules, accessibility copy, and derivative provenance; never use it to publish, schedule, or invent evidence."
+description: "Adapt an approved research or analytical report into channel-specific marketing drafts such as social launch posts, multi-card carousels, short-form video scripts, and frame plans. Use when asked to repurpose a report into multiple formats while preserving exact claims, context, accessibility, and derivative provenance; never publish, schedule, or invent evidence."
 ---
 
 # Report Content Repurposer
@@ -35,6 +35,8 @@ Read these bundled files before producing artifacts:
 
 ## Define the derivative plan
 
+Before drafting, split the requested outputs into atomic factual statements and plan a trace for each exact location: post headline/body/caption, every carousel headline and card line, and every frame headline, on-screen line, narration, or caption. A package-level claim list or claim-by-deliverable matrix does not replace statement-level traceability. Check recommendations separately; do not attach the nearest claim identifier unless it actually supports the recommendation. Remove unsupported factual clauses or label a genuine recommendation with its rationale rather than presenting it as a source-backed finding.
+
 1. Capture each requested channel, aspect ratio, duration or card count, copy limit, audience, call to action, and accessibility requirement.
 2. Select only claims that remain accurate at the shorter format's level of context.
 3. Map every factual or quantitative statement to an approved `claim_id` before drafting.
@@ -60,6 +62,8 @@ Repeat the exact `source_claim_ids` in each deliverable's own compact header or 
 For each visual deliverable, provide the actual proposed alternative-text string in `accessibility_copy` and map it to that deliverable and visual. Generic guidance such as “add alt text” or “describe the image” is not completed alternative text.
 
 ## Validate before handoff
+
+Read every deliverable line by line and reconcile each factual clause against its exact approved source claim. Check that each headline, card, frame, narration, caption, and quantitative label has matching statement-level traceability; a map that covers the package but misses a sentence or line fails validation.
 
 1. Reconcile every factual statement against its approved source claim and check the claim-by-deliverable map for a row covering every considered claim, including each shortened or omitted claim and its reason.
 2. Reject unsupported conclusions, causal framing not present upstream, cherry-picked comparisons, and false precision.

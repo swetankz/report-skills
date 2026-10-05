@@ -66,7 +66,7 @@ Record untested widths as `not-verified`; do not interpolate a pass from neighbo
 
 - Verify unique title and description values.
 - Verify language, viewport, favicon or icon only when supplied, and canonical intent.
-- Verify social metadata only when requested and supplied safely.
+- Unless the brief explicitly marks the page private or internal, verify report-specific og:title, og:description, og:type, and twitter:card metadata. Include og:url only when a canonical URL is known and a preview image only when a supplied asset is eligible; do not invent either. If the page is explicitly private/internal, record why share metadata is omitted.
 - Verify expected routes, direct route loads, fragment links, and invalid-route behavior.
 - Verify that robots or indexing settings match the declared release intent without deploying.
 

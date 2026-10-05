@@ -122,6 +122,8 @@ Use actual execution time for artifact creation, review, revision, validation, r
 
 ## 7. Determine readiness
 
+Immediately before handoff, re-open the final report draft and every status/summary artifact. If any unsupported claim, unresolved conflict, TODO/TBD/UNRESOLVED marker, or blocking source-identity gap remains, record it as a blocker and make every package/readiness status blocked or not-ready. A report draft containing an unresolved marker cannot coexist with a ready-for-approval package status. Reconcile status fields only after all edits, and do not let a request for a stronger story override this check.
+
 Audit the complete package before assigning `ready-for-approval`:
 
 - Validate the exact required CSV artifact paths, not merely a sibling candidate file. If a register fails, serialize the corrected rows back to that same canonical path and re-open those final bytes with the strict parser. A file named `*-fixed.csv` is only a diagnostic candidate and does not satisfy the required artifact contract. If one editing mechanism is unavailable, use another permitted write method within the task workspace; if the canonical file still cannot be corrected and verified, leave the package `blocked` and identify the exact unmet output.

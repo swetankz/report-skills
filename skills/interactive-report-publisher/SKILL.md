@@ -64,9 +64,11 @@ Before rendering, run a quantitative-integrity preflight across the report, figu
 6. Implement responsive layouts from content needs; avoid a desktop composition merely scaled down for small screens.
 7. Use two-column compositions only when they improve comparison or reading context; define a clear reading order and deliberate stacked behavior.
 8. Prevent horizontal overflow, clipped text, occluded anchors, and fixed elements that block content at every required viewport.
-9. Add metadata, canonical intent, share metadata where requested, structured data when justified, and meaningful document titles and descriptions.
+9. Include unique, report-specific document titles and descriptions, language, viewport metadata, canonical intent, and structured data when justified. Treat report-specific social metadata as part of the standard shareable-page contract below, not as an optional add-on.
 10. For a shareable report page, include report-specific Open Graph (`og:title`, `og:description`, `og:type`, `og:url` when a canonical URL is known, and an eligible preview image when supplied) and Twitter card metadata; do not invent a live URL or image.
 11. Use interactions only when they clarify navigation, comparison, sequence, or evidence. Keep reading possible without them.
+
+Unless the brief explicitly marks the page private or internal, treat a report page as shareable. Before handoff, inspect the final HTML for report-specific Open Graph og:title, og:description, og:type, and Twitter twitter:card fields. Missing required fields block a shareable candidate. Add og:url only when a canonical URL is known and a preview image only when a supplied asset is eligible; do not invent either value.
 
 ## 5. Implement motion safely when requested
 

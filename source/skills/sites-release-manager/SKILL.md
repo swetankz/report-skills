@@ -40,6 +40,16 @@ For workspace-local verification, materialize plain file text or select only the
 
 When a supplied release descriptor explicitly separates `validated_candidate` from a `convenient_checkout`, compare and record the descriptor's exact candidate `source_ref`, `build_hash`, and QA state, and explicitly reject the stale checkout. Preserve the evidence source: a synthetic fixture value such as `sha256:synthetic-*` is a supplied test identity, not a cryptographically verified local build hash. Record it as supplied and mark local recomputation `not-verified` unless candidate files and a build are actually available. Missing deployment approval alone does not block safe preparation; use `release_state: awaiting_approval`, list the remaining approval fields, and perform no external action.
 
+## Release-state decision (required final cross-check)
+
+Choose the final state from observed evidence, not from whether deployment is authorized:
+
+- Use awaiting_approval when the candidate is validated and the only remaining conditions are human or external-publication approval fields. Record each missing field, keep publication_approval null, and do not deploy.
+- Use blocked only when a named pre-approval requirement actually fails or prevents safe preparation, such as an unverified canonical source, failed build or QA, rights conflict, or unresolved safety issue. State that exact failure.
+- Use released only after the exact approved candidate is deployed and the resulting artifact is independently verified.
+
+Before handoff, compare release_state with the recorded blockers and evidence. Missing approval by itself is never a reason to set blocked; if safe preparation is complete and only approval remains, the exact state must be awaiting_approval.
+
 ## Build and verify the candidate
 
 1. Use the declared build command for the selected revision.

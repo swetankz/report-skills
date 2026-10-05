@@ -71,6 +71,8 @@ Use [Figure design protocol](references/figure-design-protocol.md) to handle axe
 
 Write a title that states an evidence-supported observation rather than a slogan or unsupported conclusion. Add a concise takeaway, caption, contextual annotation, and source note.
 
+Every figure specification must have a dedicated **Contextual annotation:** field containing the actual reader-facing annotation text for that figure. Do not substitute a caption, takeaway, source note, or a promise to add an annotation later. Tie the annotation to a documented reference point, comparison, period, limitation, or method change without implying unsupported cause. If no annotation is justified, retain the field and give a specific evidence-based reason; never silently omit it.
+
 Explain surprising changes, breaks, exclusions, missing data, uncertainty, and definition shifts near the relevant mark. Avoid annotations that imply motive or cause unless the evidence supports that claim.
 
 Write alternative text that identifies the figure type, subject, axes or categories, overall pattern, material exceptions, and the few values required to understand the takeaway. Keep the same information available without color alone.
@@ -94,8 +96,9 @@ For a new or existing figure:
 3. Check scales, baselines, ordering, area or volume encodings, aspect ratio, dual axes, missing values, and precision.
 4. Check population, period, geography, unit, denominator, sample size, and uncertainty context.
 5. Check color contrast, non-color differentiation, label legibility, caption completeness, and alternative text.
-6. Check source note, data path, transformation record, and claim linkage.
-7. Record each finding with location, evidence, severity, required correction, and verification state.
+6. Confirm that every delivered figure specification contains actual contextual annotation text in its dedicated field, or a specific evidence-based reason why none applies. A placeholder, instruction, or future promise fails this check and blocks the figure.
+7. Check source note, data path, transformation record, and claim linkage.
+8. Record each finding with location, evidence, severity, required correction, and verification state.
 
 Mark an unrendered or unobserved property `not-verified`. Do not call a figure accessible from specification alone when the final rendering was not inspected.
 

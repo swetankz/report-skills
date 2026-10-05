@@ -76,6 +76,8 @@ Preserve rejected review findings with their rationale. Recheck claim mappings a
 
 ## Readiness gate
 
+As the last action before handoff, re-open the draft and every package/status summary and reconcile their state. If any unresolved marker, unsupported claim, factual conflict, or required source-identity gap remains, record a blocker and use blocked/not-ready everywhere; never leave ready-for-approval in one artifact while another still contains an unresolved blocker.
+
 Set `ready-for-approval` only when:
 
 - Required files exist and carry exact version identity.

@@ -50,7 +50,8 @@ Write:
 - An evidence-linked visual-form rationale: name the linked claim/source and explain why this form preserves the evidence structure and reader question better than a plausible alternative.
 - One takeaway that matches the linked claim and uncertainty.
 - A caption that defines the measure, population, geography, period, and important exclusions.
-- Annotations for discontinuities, methodology changes, missing data, and meaningful reference points.
+- A dedicated contextual-annotation field containing the actual reader-facing text for each figure. A caption, takeaway, source note, or instruction to add an annotation later is not a substitute. If no annotation is warranted, include the field with a specific evidence-based reason.
+- Additional annotations for discontinuities, methodology changes, missing data, and meaningful reference points.
 - A source note with stable identifiers and a concise transformation statement.
 
 Keep interpretation separate from directly observed values. Label scenarios, forecasts, models, and illustrative diagrams explicitly.
@@ -75,6 +76,7 @@ Require all of these before `ready-for-approval`:
 - Every figure links to at least one registered claim and source.
 - Unit, population, geography, period, and denominator are present when applicable.
 - Title, takeaway, caption, annotations, and alternative text do not exceed the evidence.
+- Every delivered figure specification contains actual contextual-annotation text or a specific evidence-based not-applicable reason; a placeholder or future promise blocks readiness.
 - Encoding and uncertainty checks pass.
 - The final requested rendering is observed, or unobserved properties are marked `not-verified`.
 - Rights, visibility, and provenance constraints remain attached.

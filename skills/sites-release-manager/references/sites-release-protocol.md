@@ -34,6 +34,14 @@ Require a direct match between the canonical source and validated candidate. A d
 
 Do not authenticate, upload, deploy, change access, create a project, or modify a remote route during a dry run.
 
+## Required release-state selection
+
+- Set awaiting_approval when canonical source, candidate, build, QA, rights, and dry-run checks are complete and only the human publication approval or its fields remain. List each missing approval field and keep publication_approval null.
+- Set blocked only when an observed pre-approval condition prevents safe preparation, and name that failed condition. Do not use blocked to mean that deployment has not been authorized.
+- Set released only after an authorized deployment and independent verification of the exact artifact.
+
+Run this check against the final release record after all edits. If approval is the only outstanding item, release_state must be exactly awaiting_approval.
+
 ## Approval match
 
 Treat publication approval as valid only when it explicitly identifies:
