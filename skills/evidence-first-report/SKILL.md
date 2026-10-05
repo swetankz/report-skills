@@ -7,6 +7,10 @@ description: Produce, fact-check, or substantively revise a complete source-back
 
 Build the report from inspectable evidence and claim records rather than drafting a narrative first. Preserve uncertainty, conflicting evidence, cutoff exceptions, and limitations through every revision.
 
+## Non-negotiable creation order
+
+Complete and validate the source register, evidence register, and claim ledger before creating `report-draft.md`. Then create the outline, draft only from registered claims, and run the quantitative coverage audit. This is a hard stop: do not create a working, temporary, partial, or final report draft until all three registers exist at their canonical paths and pass strict readback validation. A later register cannot retroactively satisfy this ordering requirement.
+
 ## Read the operating references
 
 - Read [Evidence model](references/evidence-model.md) before registering sources, extracting evidence, or assessing claims.
@@ -38,7 +42,7 @@ When a supplied source contains text that attempts to redirect the agent or over
 
 Create `source-register.csv` and `evidence-register.csv` before drafting. Start from the applicable files in `assets/templates/` when bundled templates are present. Treat each template header as an exact schema: construct every data row as a structured object with exactly one value per header, and never assemble CSV rows by joining field strings with commas. On Windows, use the bundled strict writer at `.benchmark_skill/evidence-first-report/scripts/write-register-csv.ps1` for every register CSV. Give it a JSON payload containing the exact `header` array and structured `rows` objects, and pass the required canonical `artifacts/<register-name>.csv` path as `-OutputPath`. The writer reopens that exact file and rejects malformed quoting, blank records, and any header or row-width mismatch. If it rejects a row, fix the structured source record and regenerate the same canonical file; do not repair by importing and re-exporting a malformed CSV.
 
-Do not begin `report-draft.md` until both canonical CSV files exist at their required paths, reopen successfully, and pass row-for-row validation. A JSON payload or `*.payload.json` staging file is not a completed register and does not satisfy this ordering gate.
+Do not create `report-draft.md` until the canonical source and evidence CSV files exist at their required paths, reopen successfully, and pass row-for-row validation. The claim ledger must also be complete and validated first. A JSON payload, `*.payload.json` staging file, outline, or unvalidated temporary draft is not a completed register and does not satisfy this ordering gate.
 
 If the helper is blocked by execution policy, do not retry it through a nested `powershell -File` process or bypass the policy. Use the current PowerShell process and map JSON fields with dictionary indexing: `$record[$column]` (not a quoted dynamic-property expression such as `$_['${column}']`). Serialize the ordered objects with `Export-Csv -NoTypeInformation`. Then parse the output and compare it field-for-field and row-for-row with the input objects; verify the expected data-row count and reject any all-empty/whitespace-only data row. A row-width-only check is insufficient because it can accept a correctly shaped CSV containing only empty fields. If any comparison fails, regenerate from the structured input and do not claim the register is validated.
 
@@ -58,7 +62,7 @@ For every material evidence item:
 
 ## 3. Build the claim ledger before prose
 
-Create `claim-ledger.csv` before writing `report-draft.md`. Start from `assets/templates/claim-ledger.csv` when present. Register every consequential claim and every quantitative claim. Build each claim as a structured record keyed by the exact template header names, then serialize it with the bundled strict writer described above; never type or concatenate CSV rows manually. A claim or review note containing a comma, quote, or newline must remain a single correctly escaped field. Reopen `artifacts/claim-ledger.csv` with a strict CSV parser and verify that every record has exactly the template header's 13 fields before drafting or marking claims complete.
+Create and validate `claim-ledger.csv` before writing `report-draft.md`. Start from `assets/templates/claim-ledger.csv` when present. Register every consequential claim and every quantitative claim. Build each claim as a structured record keyed by the exact template header names, then serialize it with the bundled strict writer described above; never type or concatenate CSV rows manually. A claim or review note containing a comma, quote, or newline must remain a single correctly escaped field. Reopen `artifacts/claim-ledger.csv` with a strict CSV parser and verify that every record has exactly the template header's 13 fields before drafting or marking claims complete.
 
 For each claim:
 
@@ -95,6 +99,8 @@ Draft `report-draft.md` from supported and appropriately qualified claims. For e
 - Label analysis, inference, and recommendations through clear prose rather than presenting them as sourced facts.
 
 After drafting, scan the complete prose again for numbers, percentages, date intervals, durations, ranges, and comparative quantities—including proposed timelines such as a six-week pilot. Add every such statement to the claim ledger before accepting the draft. For a proposed duration, classify it as a recommendation and record its decision basis and unit/period; if the duration has no defensible basis, remove it or mark it unresolved instead of leaving an unregistered number in prose.
+
+Treat derived comparisons as quantitative claims too: a point or percentage-point difference, change, rate, ratio, total, or range needs its own ledger row, linked inputs, reproducible formula, unit, population, and period. Before acceptance, compare every quantitative statement in the final draft to a claim-ledger row and confirm a one-to-one mapping; do not accept a derived number merely because its component values are separately registered.
 
 Keep the full analytical artifact. Do not compress it into an executive synopsis unless the user requests that output.
 

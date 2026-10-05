@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import os
 import platform
 import re
@@ -44,15 +45,16 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v42"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v43"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
-    "windows-job-object-kill-on-close-v1"
+    "windows-job-object-absolute-deadline-v2"
     if os.name == "nt"
-    else "posix-session-process-group-v1"
+    else "posix-session-process-group-absolute-deadline-v2"
 )
+CODEX_TIMEOUT_POLL_INTERVAL_SECONDS = 1.0
 TASK_IGNORE_USER_CONFIG_SCOPE = "config.toml_only"
 TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v4"
 TASK_COLLABORATION_GUARD = "no-collaboration-tool-events-v1"
@@ -3869,6 +3871,21 @@ def execution_receipt_validation_errors(
         errors.append(f"{label} did not record a clean process exit")
     if value("termination_method") != "natural-exit":
         errors.append(f"{label} did not terminate naturally")
+    wall_clock_seconds = value("wall_clock_seconds")
+    if (
+        isinstance(wall_clock_seconds, bool)
+        or not isinstance(wall_clock_seconds, (int, float))
+        or (
+            isinstance(wall_clock_seconds, float)
+            and not math.isfinite(wall_clock_seconds)
+        )
+        or wall_clock_seconds < 0
+    ):
+        errors.append(f"{label} has an invalid wall-clock duration receipt")
+    elif wall_clock_seconds > expected_timeout:
+        errors.append(
+            f"{label} exceeded its {expected_timeout}-second wall-clock deadline"
+        )
     overrun = value("timeout_overrun_seconds")
     if isinstance(overrun, bool) or not isinstance(overrun, (int, float)) or overrun != 0:
         errors.append(f"{label} has an invalid timeout-overrun receipt")
@@ -4011,6 +4028,9 @@ def run_codex(
     environment: dict[str, str] | None = None,
 ) -> CommandResult:
     start = time.perf_counter()
+    wall_clock_start = time.time()
+    monotonic_deadline = time.monotonic() + timeout
+    wall_clock_deadline = wall_clock_start + timeout
     process_options: dict[str, Any] = {}
     if os.name == "nt":
         process_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004
@@ -4044,19 +4064,42 @@ def run_codex(
                 raise
         timed_out = False
         termination_method = "natural-exit"
+        pending_input: str | None = prompt
         try:
-            process.communicate(prompt, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            termination_method = _terminate_process_tree(process, windows_job)
-            windows_job = None
-            try:
-                process.communicate(timeout=30)
-            except (subprocess.TimeoutExpired, ValueError):
-                if process.poll() is None:
-                    process.kill()
-                    process.wait(timeout=30)
-                termination_method = "direct-process-kill-fallback"
+            while True:
+                remaining = min(
+                    monotonic_deadline - time.monotonic(),
+                    wall_clock_deadline - time.time(),
+                )
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    process.communicate(
+                        pending_input,
+                        timeout=min(remaining, CODEX_TIMEOUT_POLL_INTERVAL_SECONDS),
+                    )
+                except subprocess.TimeoutExpired:
+                    pending_input = None
+                    continue
+                # A host suspend can pause the process wait's monotonic clock.
+                # Recheck wall time even after communicate reports a natural exit.
+                if (
+                    time.monotonic() >= monotonic_deadline
+                    or time.time() >= wall_clock_deadline
+                ):
+                    timed_out = True
+                break
+            if timed_out:
+                termination_method = _terminate_process_tree(process, windows_job)
+                windows_job = None
+                try:
+                    process.communicate(timeout=30)
+                except (subprocess.TimeoutExpired, ValueError):
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=30)
+                    termination_method = "direct-process-kill-fallback"
         except BaseException:
             _terminate_process_tree(process, windows_job)
             windows_job = None
@@ -4076,7 +4119,10 @@ def run_codex(
         stderr_file.seek(0)
         stdout = stdout_file.read().decode("utf-8", errors="replace")
         stderr = stderr_file.read().decode("utf-8", errors="replace")
-    elapsed = time.perf_counter() - start
+    elapsed = max(
+        time.perf_counter() - start,
+        time.time() - wall_clock_start,
+    )
     terminal_event_count = 0
     failed_terminal_event_count = 0
     for line in stdout.splitlines():

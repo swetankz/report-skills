@@ -252,8 +252,36 @@ class ToolingTests(unittest.TestCase):
             "report-content-repurposer/references/derivative-workflow.md": ("claim-by-deliverable coverage table", "actual alternative-text string"),
             "pencil-safe-editor/SKILL.md": ("`observed_state`", "`proposed_next_step`"),
             "pencil-safe-editor/references/pencil-edit-protocol.md": ("## Blocked handoff", "specific user action or safe observation"),
-            "interactive-report-publisher/references/web-publication-checklist.md": ("## Citation and URL map", "clickable external `href`"),
+            "interactive-report-publisher/SKILL.md": (
+                "`reduced_motion: not-verified` unless the exact built candidate was exercised",
+                "implementation evidence to a pass",
+            ),
+            "interactive-report-publisher/references/web-publication-checklist.md": (
+                "## Citation and URL map",
+                "clickable external `href`",
+                "reduced_motion: \"verified | not-verified | not-applicable\"",
+                "CSS inspection may establish `reduced_motion_implementation: implemented-in-css`; it never establishes runtime success.",
+            ),
             "report-visual-system/SKILL.md": ("component-to-content map", "reusable layout/component type"),
+            "editorial-data-storytelling/SKILL.md": (
+                "Treat a disagreement between a supplied figure value and a reproducible calculation",
+                "do not plot either as a resolved result",
+                "explicit evidence-linked rationale",
+            ),
+            "editorial-data-storytelling/references/figure-design-protocol.md": (
+                "An evidence-linked visual-form rationale",
+                "Quarantine that metric from quantitative figures",
+            ),
+            "evidence-first-report/SKILL.md": (
+                "Complete and validate the source register, evidence register, and claim ledger before creating `report-draft.md`.",
+                "A later register cannot retroactively satisfy this ordering requirement.",
+                "confirm a one-to-one mapping",
+            ),
+            "creative-artifact-provenance/SKILL.md": (
+                "never collapse a failed provider output and a successful local render into one diagnostic row",
+                "Use `root` only when evidence establishes a true parentless origin",
+                "set `relationship_status` to `unresolved-parent`",
+            ),
         }
         for tree_name in ("source/skills", "skills"):
             for relative_path, fragments in expectations.items():
@@ -261,6 +289,14 @@ class ToolingTests(unittest.TestCase):
                     text = (REPO_ROOT / tree_name / relative_path).read_text(encoding="utf-8")
                     for fragment in fragments:
                         self.assertIn(fragment, text)
+        for path in (
+            REPO_ROOT / "templates" / "web-candidate.yaml",
+            REPO_ROOT / "skills" / "interactive-report-publisher" / "assets" / "templates" / "web-candidate.yaml",
+        ):
+            with self.subTest(path=path.relative_to(REPO_ROOT).as_posix()):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn('reduced_motion: "not-verified"', text)
+                self.assertIn('reduced_motion_implementation: "unknown"', text)
 
     def test_sites_release_manager_materializes_plain_verification_values(self) -> None:
         required_instructions = (

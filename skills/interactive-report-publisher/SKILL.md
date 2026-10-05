@@ -92,6 +92,8 @@ Before rendering, run a quantitative-integrity preflight across the report, figu
 11. Keep browser profiles, caches, crash dumps, temporary servers, and driver state outside website source, build output, candidate records, and retained QA evidence. Use a uniquely scoped temporary directory when a tool requires a profile, retain only declared screenshots, traces, logs, or DOM captures, and verify the handoff package contains no browser state or crash byproducts.
 12. Record the exact local build or static-validation command, exit status, output path, and artifact identity. A static page may use an explicit no-compilation mode, but still run and record a reproducible offline check against the produced files; do not label a build `not run` and then imply it was verified. Keep browser/runtime checks separately marked `not-verified` when they were not observed.
 
+Keep implementation and verification separate for reduced motion: CSS inspection may be recorded as `reduced_motion_implementation: implemented-in-css`, but it is not a behavior test. Set `reduced_motion: not-verified` unless the exact built candidate was exercised with the browser/OS reduced-motion preference enabled and the result directly observed. If that runtime check is unavailable, retain `not-verified` in both the candidate record and validation report; do not promote implementation evidence to a pass.
+
 ## 7. Write the candidate record
 
 Produce:

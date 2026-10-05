@@ -92,7 +92,8 @@ content_map: []
 citation_checks: []
 viewport_checks: []
 accessibility_checks: []
-reduced_motion: "implemented-or-not-applicable"
+reduced_motion: "verified | not-verified | not-applicable"
+reduced_motion_implementation: "implemented-in-css | not-implemented | not-applicable | unknown"
 external_deployment_authorized: false
 ```
 
@@ -102,4 +103,5 @@ external_deployment_authorized: false
 - Treat a successful build as compilation evidence, not layout or accessibility proof.
 - Treat a screenshot as evidence for its exact viewport and moment, not for keyboard, motion, or route behavior.
 - Treat direct interaction and measurements as evidence only for the recorded build hash and environment.
+- CSS inspection may establish `reduced_motion_implementation: implemented-in-css`; it never establishes runtime success. Use `reduced_motion: not-verified` until the exact built candidate is exercised with reduced motion enabled and observed.
 - Invalidate the affected checks after a material source or dependency change and retest the new build.

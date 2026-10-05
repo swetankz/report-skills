@@ -2798,6 +2798,70 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertEqual(result.failed_terminal_event_count, 0)
         self.assertEqual(result.timeout_enforcement, CODEX_TIMEOUT_ENFORCEMENT_MODE)
 
+    def test_run_codex_wall_clock_deadline_survives_host_suspend(self) -> None:
+        script = "import json; print(json.dumps({'type':'turn.completed'}), flush=True)"
+        times = iter((100.0, 100.0, 102.0, 102.0))
+        with patch("evaluation_common.time.time", side_effect=lambda: next(times)):
+            result = run_codex([sys.executable, "-c", script], "", timeout=1)
+        self.assertEqual(result.returncode, 124)
+        self.assertTrue(result.timed_out)
+        self.assertEqual(result.termination_reason, "timeout")
+        self.assertGreaterEqual(result.wall_clock_seconds, 2.0)
+        self.assertTrue(
+            any(
+                "exceeded its 1-second wall-clock deadline" in error
+                for error in execution_receipt_validation_errors(
+                    result, 1, "suspended-host"
+                )
+            )
+        )
+
+    def test_run_codex_polling_allows_clean_completion_after_first_interval(self) -> None:
+        script = (
+            "import json, time; time.sleep(1.2); "
+            "print(json.dumps({'type':'turn.completed'}), flush=True)"
+        )
+        result = run_codex([sys.executable, "-c", script], "", timeout=5)
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(result.timed_out)
+        self.assertEqual(result.termination_reason, "process-exit")
+        self.assertGreaterEqual(result.wall_clock_seconds, 1.0)
+        self.assertEqual(
+            execution_receipt_validation_errors(result, 5, "polled-clean-exit"), []
+        )
+
+    def test_execution_receipt_requires_in_bounds_wall_clock_duration(self) -> None:
+        valid = {
+            "returncode": 0,
+            "timeout_seconds": 10,
+            "timed_out": False,
+            "termination_reason": "process-exit",
+            "termination_method": "natural-exit",
+            "wall_clock_seconds": 9.9,
+            "timeout_overrun_seconds": 0.0,
+            "terminal_event_count": 1,
+            "failed_terminal_event_count": 0,
+            "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+        }
+        self.assertEqual(execution_receipt_validation_errors(valid, 10, "valid"), [])
+        late = dict(valid, wall_clock_seconds=10.1)
+        self.assertTrue(
+            any(
+                "exceeded its 10-second wall-clock deadline" in error
+                for error in execution_receipt_validation_errors(late, 10, "late")
+            )
+        )
+        missing = dict(valid)
+        del missing["wall_clock_seconds"]
+        self.assertTrue(
+            any(
+                "invalid wall-clock duration receipt" in error
+                for error in execution_receipt_validation_errors(
+                    missing, 10, "missing-duration"
+                )
+            )
+        )
+
     def test_execution_receipt_rejects_failed_and_completed_terminal_events(self) -> None:
         script = (
             "import json; "
@@ -2824,6 +2888,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "termination_method": "natural-exit",
             "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
             "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+            "wall_clock_seconds": 1.0,
             "timeout_overrun_seconds": 0.0,
             "terminal_event_count": 1,
             "failed_terminal_event_count": 0,
@@ -2910,6 +2975,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "termination_method": "natural-exit",
             "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
             "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+            "wall_clock_seconds": 1.0,
             "timeout_overrun_seconds": 0.0,
             "terminal_event_count": 1,
             "failed_terminal_event_count": 0,
@@ -4629,6 +4695,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 "termination_method": "natural-exit",
                 "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
                 "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+                "wall_clock_seconds": 1.0,
                 "timeout_overrun_seconds": 0.0,
                 "terminal_event_count": 1,
                 "failed_terminal_event_count": 0,
@@ -4736,6 +4803,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 "termination_method": "natural-exit",
                 "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
                 "timeout_seconds": CANONICAL_GRADER_TIMEOUT_SECONDS,
+                "wall_clock_seconds": 1.0,
                 "timeout_overrun_seconds": 0.0,
                 "terminal_event_count": 1,
                 "failed_terminal_event_count": 0,
@@ -4826,6 +4894,7 @@ class EvaluationToolingTests(unittest.TestCase):
                             "termination_method": "natural-exit",
                             "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
                             "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
+                            "wall_clock_seconds": 1.0,
                             "timeout_overrun_seconds": 0.0,
                             "terminal_event_count": 1,
                             "failed_terminal_event_count": 0,
@@ -5164,6 +5233,7 @@ class EvaluationToolingTests(unittest.TestCase):
                     "termination_method": "natural-exit",
                     "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
                     "timeout_seconds": CANONICAL_COMPARATOR_TIMEOUT_SECONDS,
+                    "wall_clock_seconds": 1.0,
                     "timeout_overrun_seconds": 0.0,
                     "terminal_event_count": 1,
                     "failed_terminal_event_count": 0,
@@ -6585,6 +6655,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "termination_reason": "process-exit",
             "termination_method": "natural-exit",
             "timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
+            "wall_clock_seconds": 1.0,
             "timeout_overrun_seconds": 0.0,
             "terminal_event_count": 1,
             "failed_terminal_event_count": 0,

@@ -47,12 +47,15 @@ Keep raw, transformed, and displayed values distinguishable. Never overwrite sou
 Write:
 
 - A descriptive title that remains true without the surrounding article.
+- An evidence-linked visual-form rationale: name the linked claim/source and explain why this form preserves the evidence structure and reader question better than a plausible alternative.
 - One takeaway that matches the linked claim and uncertainty.
 - A caption that defines the measure, population, geography, period, and important exclusions.
 - Annotations for discontinuities, methodology changes, missing data, and meaningful reference points.
 - A source note with stable identifiers and a concise transformation statement.
 
 Keep interpretation separate from directly observed values. Label scenarios, forecasts, models, and illustrative diagrams explicitly.
+
+When a supplied chart value conflicts with a reproducible calculation from its supporting rows, record both values and their source identifiers, but do not plot either as resolved. Quarantine that metric from quantitative figures until the designated source of record is corrected or an authorized decision resolves the conflict; a caveat does not make a disputed value safe to plot.
 
 ## Accessibility
 
