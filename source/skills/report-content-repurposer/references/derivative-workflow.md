@@ -15,6 +15,8 @@ Reject a shortened statement when the missing context changes its meaning. Do no
 
 ## Statement-level traceability
 
+Inventory source notes, dates/cutoffs, citations, captions, and metadata as well as main creative copy. Create one mapping row per factual occurrence; repeated text in the body and alt text needs separate rows. Put the exact output location and verbatim `output_text` in each row, with the exact approved claim/source identifier and source locator. Do not group multiple cards, frames, or fields under a generic location. If a factual statement has no valid supporting identifier, remove it or mark it `unmapped`/`not-validated` and block any completeness claim.
+
 Include every proposed accessibility string (alt text, captions, and transcripts) in the atomic statement inventory. Map each factual clause within it to the exact supporting claim and exact text/field location; a mapping that merely names the visual or `accessibility_copy` package does not count.
 
 Before handoff, split every deliverable into atomic factual clauses and trace each exact output location to the claim that supports it. Include headlines, subheads, card-by-card copy, captions, calls to action that make factual promises, on-screen text, narration, and quantitative labels. A package-level source list or a claim-by-deliverable coverage matrix is not proof that every statement is mapped.
@@ -50,12 +52,16 @@ Record frame identifier, duration, on-screen copy, narration or caption copy, ap
 
 ## Derivative manifest fields
 
+Every deliverable file must carry its own parent identity, source claim IDs, transformation type, proposed dimensions/aspect ratio, and status. Put these fields on every data row of a CSV or other row-oriented file; a package manifest entry is not per-file metadata. If the format makes repeated columns invalid, use a same-stem sidecar and link the relative sidecar path from the deliverable.
+
+The statement-level mapping schema adds `source_locator` and verbatim `output_text` to the fields below. Include one distinct row per factual occurrence at its exact location; do not bundle several outputs or accessibility strings into one row.
+
 Before handoff, verify factual statements in each accessibility string individually, not only whether an accessibility field exists.
 
 The claim mapping is a claim-by-deliverable coverage table, not just a list of claims used:
 
 ```text
-claim_id,deliverable_id,output_location,status,context_retained,context_omitted,reason
+claim_id,source_locator,deliverable_id,output_location,output_text,status,context_retained,context_omitted,reason
 ```
 
 Create a row for every approved claim considered for every requested deliverable. Use `used`, `shortened`, or `omitted`; explain the retained or omitted context and the reason for every shortened or omitted claim. A claim absent from a draft still needs an explicit `omitted` row. For each visual deliverable, provide the actual alternative-text string with its `deliverable_id` and visual location; instructions to write alt text later do not count.

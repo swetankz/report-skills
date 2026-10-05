@@ -37,6 +37,8 @@ Read these bundled files before producing artifacts:
 
 Include every proposed accessibility string (including alt text, captions, and transcript text) in the statement inventory. Factual statements embedded in accessibility copy require their own exact claim mapping at the text/field level, not only a deliverable-level or visual-level mapping; a generic row for the `accessibility_copy` package is insufficient.
 
+Build the mapping from an explicit inventory of every factual sentence or clause at every output location, including source notes, date/cutoff statements, captions, and accessibility text. Add one row for each occurrence, even when identical wording appears in the body and alt text. Each row must carry the exact output location, the exact literal `output_text` being mapped, and the exact approved claim/source identifier and source locator. A single row that says “body and accessibility text,” names several cards or frames, or lists claims for an entire deliverable is not statement-level coverage. If a factual statement has no valid supporting identifier, remove it or mark it `unmapped`/`not-validated` and block the completeness claim.
+
 Before drafting, split the requested outputs into atomic factual statements and plan a trace for each exact location: post headline/body/caption, every carousel headline and card line, and every frame headline, on-screen line, narration, or caption. A package-level claim list or claim-by-deliverable matrix does not replace statement-level traceability. Check recommendations separately; do not attach the nearest claim identifier unless it actually supports the recommendation. Remove unsupported factual clauses or label a genuine recommendation with its rationale rather than presenting it as a source-backed finding.
 
 1. Capture each requested channel, aspect ratio, duration or card count, copy limit, audience, call to action, and accessibility requirement.
@@ -59,11 +61,15 @@ Before drafting, confirm the approval record matches the supplied report version
 
 Each deliverable must be independently traceable, not merely covered by package-level metadata. Put these fields in its manifest entry and a compact header or sidecar for the file itself: `deliverable_id`, `parent_report_id`, `parent_report_version`, `parent_report_hash` (or the exact available immutable identity), `source_claim_ids`, `transformation_type`, proposed `dimensions` and aspect ratio, and `status`. Record one claim-to-deliverable mapping row for every approved claim considered in every requested deliverable, including claims not used. Each row includes exact `claim_id`, `deliverable_id`, output location, status (`used`, `shortened`, or `omitted`), exact context retained or omitted, and a reason for shortening or omission. Do not map only claims that appear in the copy. Label proposed export dimensions as specifications, not observed exports.
 
+For a CSV or other row-oriented deliverable, include those identity fields as columns on every data row; a manifest entry alone does not satisfy per-file metadata. Each statement-level claim-mapping row must additionally include `source_locator` and the verbatim `output_text` at that exact location.
+
 Repeat the exact `source_claim_ids` in each deliverable's own compact header or sidecar; a complete package manifest does not substitute for per-file traceability. Do not use locally invented claim labels in these headers or mapping rows.
 
 For each visual deliverable, provide the actual proposed alternative-text string in `accessibility_copy` and map it to that deliverable and visual. Generic guidance such as “add alt text” or “describe the image” is not completed alternative text.
 
 ## Validate before handoff
+
+Reconcile the verbatim `output_text` rows against the output inventory in both directions: every factual occurrence has exactly one mapping row, and every mapped text exists at the cited location. Include source notes, dates/cutoffs, citations, metadata, alt text, captions, and transcripts in this check. Do not claim complete traceability when a factual occurrence has no exact row.
 
 During line-by-line validation, check every factual statement in accessibility copy, alt text, captions, and transcripts against its exact approved source claim and output location. A package-level claim list does not establish coverage for these statements.
 
