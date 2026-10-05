@@ -7,6 +7,13 @@ description: "Explicit invocation only: activate this skill only when the user's
 
 Treat every invocation as a dry run until an explicit publication approval matches the exact source, revision, target project, access intent, and external action. Never combine release preparation with silent content or code fixes.
 
+## Non-negotiable dry-run output rules
+
+- When the supplied descriptor identifies a `validated_candidate`, use that exact candidate as the selection authority. Copy its `source_ref`, `build_hash`, and QA state verbatim into the release record, and explicitly reject any different `convenient_checkout` as stale. Do not replace descriptor values with values inferred from another folder or with `unknown`.
+- A synthetic identity supplied by an evaluation fixture is evidence of what the fixture supplied, not proof of a cryptographic build. Preserve it as supplied and mark local identity recomputation `not-verified` unless the exact candidate files and declared build are available and actually verified.
+- Start the release record from the bundled release-record template so its required fields are retained. Do not omit candidate identity, QA state, or approval status when composing the final output.
+- If the selected candidate passes all pre-approval checks and only human/external publication approval is missing, the exact state is `awaiting_approval`; leave `publication_approval: null` and enumerate each missing approval field. `blocked` is reserved for a named failed pre-approval condition that prevents safe preparation.
+
 ## Load the operating rules
 
 Read these bundled files before any release work:

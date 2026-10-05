@@ -34,6 +34,8 @@ Build a local, publishable web candidate from the complete approved report. Keep
 
 ## 2. Freeze content coverage
 
+For claim-level coverage, make a separate row for every independently meaningful proposition, counter-evidence item, recommendation, qualifier, and limitation in the source. A generic row such as `analysis` or `recommendations` does not prove that the individual statements in that section are represented. Preserve the logical relationship between claims and their qualifiers. Before handoff, compare the source statement inventory against the rendered page claim by claim; missing or conflated statements block the content gate.
+
 1. Inventory every report section, subsection, table, figure, caption, note, citation, bibliography entry, limitation, and appendix.
 2. Create stable content IDs and map each ID to a route, section anchor, and component.
 3. Preserve the approved order unless an explicitly approved web adaptation changes it.

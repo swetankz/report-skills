@@ -15,6 +15,8 @@ Reject a shortened statement when the missing context changes its meaning. Do no
 
 ## Statement-level traceability
 
+Include every proposed accessibility string (alt text, captions, and transcripts) in the atomic statement inventory. Map each factual clause within it to the exact supporting claim and exact text/field location; a mapping that merely names the visual or `accessibility_copy` package does not count.
+
 Before handoff, split every deliverable into atomic factual clauses and trace each exact output location to the claim that supports it. Include headlines, subheads, card-by-card copy, captions, calls to action that make factual promises, on-screen text, narration, and quantitative labels. A package-level source list or a claim-by-deliverable coverage matrix is not proof that every statement is mapped.
 
 Check recommendations separately from findings. Do not attach a source claim to a recommendation unless that claim actually supports it. Remove unsupported factual clauses; label a genuine recommendation as a recommendation and record its rationale instead of making it appear source-backed.
@@ -47,6 +49,8 @@ Separate the report's documented finding from promotional language. Preserve the
 Record frame identifier, duration, on-screen copy, narration or caption copy, approved claim identifiers, visual source, transformation, transition intent, and accessibility transcript. Treat frames as a production plan unless rendered media is actually produced and inspected.
 
 ## Derivative manifest fields
+
+Before handoff, verify factual statements in each accessibility string individually, not only whether an accessibility field exists.
 
 The claim mapping is a claim-by-deliverable coverage table, not just a list of claims used:
 

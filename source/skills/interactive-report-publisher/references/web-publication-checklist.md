@@ -14,10 +14,12 @@ Treat source selection and build success as separate decisions. Reject a candida
 
 ## Complete-content map
 
+When a content unit contains multiple independently meaningful claims, counter-evidence, recommendations, qualifiers, or limitations, split it into separate rows; a section-level label such as `analysis` is not claim coverage. Preserve relationships between each proposition and its context.
+
 Maintain one row per approved content unit:
 
 ```text
-content_id,source_location,route,anchor,component,rendered_status,citation_status,notes
+content_id,source_location,source_claim_id,claim_or_qualification,route,anchor,component,rendered_status,citation_status,notes
 ```
 
 Require every row to be rendered and traceable. Treat a deliberate exclusion as a content change requiring an explicit record.

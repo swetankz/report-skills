@@ -35,6 +35,8 @@ Read these bundled files before producing artifacts:
 
 ## Define the derivative plan
 
+Include every proposed accessibility string (including alt text, captions, and transcript text) in the statement inventory. Factual statements embedded in accessibility copy require their own exact claim mapping at the text/field level, not only a deliverable-level or visual-level mapping; a generic row for the `accessibility_copy` package is insufficient.
+
 Before drafting, split the requested outputs into atomic factual statements and plan a trace for each exact location: post headline/body/caption, every carousel headline and card line, and every frame headline, on-screen line, narration, or caption. A package-level claim list or claim-by-deliverable matrix does not replace statement-level traceability. Check recommendations separately; do not attach the nearest claim identifier unless it actually supports the recommendation. Remove unsupported factual clauses or label a genuine recommendation with its rationale rather than presenting it as a source-backed finding.
 
 1. Capture each requested channel, aspect ratio, duration or card count, copy limit, audience, call to action, and accessibility requirement.
@@ -62,6 +64,8 @@ Repeat the exact `source_claim_ids` in each deliverable's own compact header or 
 For each visual deliverable, provide the actual proposed alternative-text string in `accessibility_copy` and map it to that deliverable and visual. Generic guidance such as “add alt text” or “describe the image” is not completed alternative text.
 
 ## Validate before handoff
+
+During line-by-line validation, check every factual statement in accessibility copy, alt text, captions, and transcripts against its exact approved source claim and output location. A package-level claim list does not establish coverage for these statements.
 
 Read every deliverable line by line and reconcile each factual clause against its exact approved source claim. Check that each headline, card, frame, narration, caption, and quantitative label has matching statement-level traceability; a map that covers the package but misses a sentence or line fails validation.
 

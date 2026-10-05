@@ -1,9 +1,13 @@
 schema_version: "1.0"
 artifact_id: "synthetic-sites-release-001"
 release_state: "awaiting_approval"
+# Use awaiting_approval when pre-approval validation passes and only human authorization is missing.
+# Reserve blocked for a named failed pre-approval check; missing publication approval alone is not a blocker.
 publication_approval: null
 canonical_source: "synthetic-source-record"
 source_ref: "synthetic-ref"
+# Copy the selected validated_candidate source_ref and build_hash exactly; reject a stale convenient_checkout.
+# Synthetic fixture identities are supplied values, not locally verified hashes; record local recomputation as not-verified.
 build_hash: "sha256:synthetic-value"
 target_project: "private-runtime-value"
 intended_access: "private"
@@ -12,4 +16,3 @@ routes_verified: []
 deployment_status: null
 rollback_reference: null
 blockers: []
-
