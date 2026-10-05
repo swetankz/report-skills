@@ -50,6 +50,7 @@
       }
     },
     "workspace_boundary_accesses": {
+      "description": "Only attempted or completed reads, inspections, or writes whose targets are outside the current run workspace. This is not a file-use inventory: supplied fixture/, injected .benchmark_skill/, and output artifacts/ paths are inside the workspace and must not be listed. Use an empty array when no outside-workspace target was accessed.",
       "type": "array",
       "items": {
         "type": "object",

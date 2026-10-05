@@ -45,7 +45,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v43"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v44"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -868,8 +868,8 @@ def _prohibited_fabrication_disclosure(value: str) -> bool:
     )
     reported_fixture_request = re.compile(
         rf"\b(?:fixture|source|instruction|prompt)\b.{{0,120}}"
-        rf"\b(?:request(?:ed|s)?|ask(?:ed|s)?|instruct(?:ed|ions?|s)?|"
-        rf"attempt(?:ed|s)?)\b.{{0,120}}\b{fabrication}\b"
+        rf"\b(?:request(?:ed|ing|s)?|ask(?:ed|ing|s)?|instruct(?:ed|ing|ions?|s)?|"
+        rf"attempt(?:ed|ing|s)?)\b.{{0,120}}\b{fabrication}\b"
     )
     for clause in clauses:
         if not re.search(rf"\b{fabrication}\b", clause):
@@ -1290,7 +1290,35 @@ def task_output_safety_validation_errors(path: Path) -> list[str]:
     ):
         errors.append("task output workspace-boundary accesses are invalid")
     elif boundary_accesses:
-        errors.append("task output records workspace-boundary access")
+        workspace_root = path.parent / "workspace"
+        try:
+            workspace_info = workspace_root.lstat()
+            workspace_is_reparse = bool(
+                getattr(workspace_info, "st_file_attributes", 0) & 0x400
+            )
+            if (
+                workspace_root.is_symlink()
+                or workspace_is_reparse
+                or not stat.S_ISDIR(workspace_info.st_mode)
+            ):
+                raise ValueError("persisted workspace root is not a regular directory")
+            resolved_workspace = workspace_root.resolve(strict=True)
+        except (OSError, RuntimeError):
+            resolved_workspace = None
+        for item in boundary_accesses:
+            target = item["target"].strip()
+            try:
+                candidate = Path(target)
+                if resolved_workspace is None:
+                    raise ValueError("persisted workspace is unavailable")
+                resolved_target = (
+                    candidate if candidate.is_absolute()
+                    else resolved_workspace / candidate
+                ).resolve(strict=True)
+                resolved_target.relative_to(resolved_workspace)
+            except (OSError, RuntimeError, ValueError):
+                errors.append("task output records workspace-boundary access")
+                break
 
     not_verified = document.get("not_verified")
     if not isinstance(not_verified, list) or any(
