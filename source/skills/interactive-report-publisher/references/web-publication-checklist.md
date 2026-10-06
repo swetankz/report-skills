@@ -14,13 +14,25 @@ Treat source selection and build success as separate decisions. Reject a candida
 
 ## Complete-content map
 
+When a content unit contains multiple independently meaningful claims, counter-evidence, recommendations, qualifiers, or limitations, split it into separate rows; a section-level label such as `analysis` is not claim coverage. Preserve relationships between each proposition and its context.
+
 Maintain one row per approved content unit:
 
 ```text
-content_id,source_location,route,anchor,component,rendered_status,citation_status,notes
+content_id,source_location,source_claim_id,claim_or_qualification,route,anchor,component,rendered_status,citation_status,notes
 ```
 
 Require every row to be rendered and traceable. Treat a deliberate exclusion as a content change requiring an explicit record.
+
+## Citation and URL map
+
+Maintain one `citation_checks` row for every source cited in the report:
+
+```text
+source_id,source_register_url,citation_text,destination_href,verification_status,notes
+```
+
+Copy the exact source-register URL when one was supplied, and verify that the bibliography/source entry has a clickable external `href` to it. An internal fragment (for example, `#source-s1`) may link to that entry but is not a replacement for the external source URL. If no usable URL was supplied, preserve the stable source ID and record the access limitation; do not synthesize a URL. Check the bibliography links in the built candidate, not only the manifest.
 
 ## Quantitative-integrity preflight
 
@@ -56,7 +68,7 @@ Record untested widths as `not-verified`; do not interpolate a pass from neighbo
 
 - Verify unique title and description values.
 - Verify language, viewport, favicon or icon only when supplied, and canonical intent.
-- Verify social metadata only when requested and supplied safely.
+- Unless the brief explicitly marks the page private or internal, verify report-specific og:title, og:description, og:type, and twitter:card metadata. Include og:url only when a canonical URL is known and a preview image only when a supplied asset is eligible; do not invent either. If the page is explicitly private/internal, record why share metadata is omitted.
 - Verify expected routes, direct route loads, fragment links, and invalid-route behavior.
 - Verify that robots or indexing settings match the declared release intent without deploying.
 
@@ -82,7 +94,8 @@ content_map: []
 citation_checks: []
 viewport_checks: []
 accessibility_checks: []
-reduced_motion: "implemented-or-not-applicable"
+reduced_motion: "verified | not-verified | not-applicable"
+reduced_motion_implementation: "implemented-in-css | not-implemented | not-applicable | unknown"
 external_deployment_authorized: false
 ```
 
@@ -92,4 +105,5 @@ external_deployment_authorized: false
 - Treat a successful build as compilation evidence, not layout or accessibility proof.
 - Treat a screenshot as evidence for its exact viewport and moment, not for keyboard, motion, or route behavior.
 - Treat direct interaction and measurements as evidence only for the recorded build hash and environment.
+- CSS inspection may establish `reduced_motion_implementation: implemented-in-css`; it never establishes runtime success. Use `reduced_motion: not-verified` until the exact built candidate is exercised with reduced motion enabled and observed.
 - Invalidate the affected checks after a material source or dependency change and retest the new build.

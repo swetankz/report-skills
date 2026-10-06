@@ -2,8 +2,39 @@
 
 All notable repository-level changes are documented here.
 
-## Unreleased
+## 0.2.0
 
+- Bind evaluation method v47 to the selected GPT 6.1 Sol Ultra profile with explicit Fast service-tier controls in every invocation, prompt probe, and identity receipt. Recognize only complete literal PowerShell numeric index ranges in the trace guard, without exempting adjacent paths or other boundary controls; earlier receipts are not reused and release thresholds are unchanged.
+- Include both Codex and ZCode manifests plus the marketplace descriptor in the plugin archive, and independently reject archives missing either client metadata even when their inventory is self-consistent.
+- Reconcile repurposed copy against a source-byte-bound inventory and atomic clause-support records, including source recommendations, measurements and stop rules without claim IDs. Distinguish one accessibility output unit from its clause-level mappings, preserve explicit semantic review, and clarify visual-audit pass names and coverage-only severity records.
+- Exclude Python runtime caches from canonical generation inputs and hashes, keeping cache-bearing source workspaces reproducible while continuing to reject unexpected files in generated packages.
+
+- Require workflow manifests to carry a complete evidence-defect register and exact per-stage input/output contracts, including blocked future stages, so handoffs remain inspectable without consulting side files.
+- Run graders, blind comparators, and trigger observations in disposable reviewed workspace sandboxes on the pinned Windows runtime, while immutable input/output hashes and cleanup validation continue to fail closed on staged-evidence mutation.
+- Prohibit parent-relative reference literals in every behavioral command, including lookup tables and regular expressions, while preserving fail-closed traversal detection.
+- Name the prohibited parent-directory computation forms in behavioral task contracts, preserving fail-closed rejection of computed parent paths while making the workspace-relative path requirement explicit.
+- Require an explicit result verb before treating a scheduled action followed by “done” or “successful” as an external-action disclosure, while preserving rejection of affirmative publication language.
+- Finalize the stable release identity for the validated behavioral evaluation and release-validation system.
+- Add the complete Windows, macOS, and Linux installation guide and link it from the repository readme.
+- Require benchmark task receipts to identify each disclosed artifact as one concrete regular file, rejecting directory-style paths.
+- Distinguish rejected fixture requests for fabricated release state from affirmative fabrication claims in task receipts.
+- Forbid runtime and tool availability discovery during behavioral benchmark tasks, requiring unavailable capabilities to be recorded as not verified instead.
+- Restrict benchmark integrity-event disclosures to concrete evidence work and explicitly exclude compliance attestations from task receipts.
+- Require benchmark-generated CSV artifacts to use strict UTF-8 tabular serialization without blank logical records or consecutive line breaks.
+- Distinguish quoted parent-path safety guards from real traversal commands and preserve filename extensions when classifying reports of rejected fixture injection.
+
+- Tighten six low-scoring skill handoffs, make the repurposing fixture's synthetic content approval explicit, and correct provenance, visual-audit, and Sites assertions so they test evidence faithfully without weakening release gates; bind the revised benchmark contract to evaluation method v36.
+- Bind evaluation method v37 to a narrowly scoped retry for blank-output transient Git state probes and deterministic collapse of structurally identical duplicate grader rows; conflicting duplicates and all substantive Git errors still fail closed.
+- Bind trigger evaluation method v38 to a single workspace-relative candidate-skill body-read path, reducing approval-review ambiguity around constructed absolute paths while retaining full-body sentinel proof and fail-closed handling.
+- Bind grader method v39 to distinguish the candidate's affirmative unsupported-approval claims from its explicit rejection or accurate reporting of an untrusted downstream label; the false-approval case remains blocking and thresholds are unchanged.
+- Bind evaluation method v40 to normalize task-versus-grader temporary workspace roots before classifying provenance, and strengthen behavioral instructions for claim coverage, citation URLs, component mappings, exact finding fields, and blocked handoffs. Release thresholds are unchanged; all evidence must be recollected under v40.
+- Bind evaluation method v41 to grade malformed content in existing regular no-skill baseline CSVs as warnings while retaining hard failures for with-skill CSV defects and path/file-type violations.
+- Bind evaluation method v42 to define `external_mutations` as actual external state-changing operations, not proposed, refused, blocked, skipped, or not-started actions; missing approval is reported as a blocker or `not_verified`. Release thresholds are unchanged; all evidence must be recollected under v42.
+- Bind evaluation method v43 to enforce both monotonic and wall-clock deadlines with one-second polling, catching suspend/resume gaps and rejecting missing, malformed, or over-deadline elapsed-time receipts. Release thresholds are unchanged; all evidence must be recollected under v43.
+- Bind evaluation method v44 to define workspace-boundary telemetry as outside-workspace access only, independently resolve reported targets against the persisted task workspace, and recognize gerund-form reports of rejected fixture requests so they are not misclassified as affirmative fabrication. Release thresholds are unchanged; all evidence must be recollected under v44.
+- Bind evaluation method v45 to treat negative ripgrep `SKILL.md` exclusion globs as filename filters while retaining fail-closed detection of direct named-skill-file references, including in chained commands. Release thresholds are unchanged; all evidence must be recollected under v45.
+- Bind evaluation method v46 to retry explicit model-capacity/503 task failures at most twice with bounded backoff, and only when no task output exists and the isolated workspace hash is unchanged. Retry receipts include per-attempt token usage; dangling output symlinks are not treated as absence. Retries share the overall task deadline and leave an auditable receipt; all other errors remain fail-closed. Release thresholds are unchanged; all evidence must be recollected under v46.
+- Tighten the high-risk evidence handoffs exposed by Gate 2 diagnostics: quarantine unresolved chart/source conflicts, require evidence-linked visual-form rationales, enforce source/evidence/claim-register completion before report prose, keep provider and local-render provenance rows distinct, and report reduced-motion runtime behavior as unverified until directly tested.
 - Ship first-class ZCode packaging and documentation: add `.zcode-plugin/plugin.json` and a repository-root `marketplace.json` alongside the Codex manifest, and document ZCode marketplace, local-directory, and cross-tool installation with per-client validation in the README and installation guide.
 
 ## 0.2.0-rc.1 — 2026-08-21

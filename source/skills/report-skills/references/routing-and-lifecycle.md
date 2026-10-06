@@ -48,6 +48,7 @@ Record at minimum:
 | `evidence_cutoff` | Record the inclusive cutoff date or explain why none applies. |
 | `visibility` | Record the most restrictive applicable visibility. |
 | `requested_outputs` | List exact requested deliverables. |
+| `evidence_defects` | List every supplied defect with source, finding, disposition, and affected stages. |
 | `selected_skills` | List only skills required by the plan. |
 | `stages` | Record skill, inputs, outputs, status, blockers, and dependencies. |
 | `approval_gates` | Record gate type, artifact version, state, and decision evidence. |
@@ -58,7 +59,8 @@ Record at minimum:
 For each stage, record:
 
 - `stage_id`, `skill`, `status`, and dependency stage identifiers.
-- Accepted input artifact identifiers, versions, and hashes when available.
+- `input_contracts` naming exact upstream artifact identifiers, types, versions, locations, and hashes when available. Populate these contracts even when the stage is blocked or not started; use availability or acceptance state to distinguish pending from accepted inputs.
+- Accepted input artifact identifiers, versions, and hashes after actual acceptance.
 - Expected and actual output artifact identifiers and versions.
 - Blocking and non-blocking findings without collapsing their detail.
 - Required approval type and whether it is absent, pending, or explicitly granted.

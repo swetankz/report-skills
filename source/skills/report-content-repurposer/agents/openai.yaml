@@ -1,6 +1,6 @@
 interface:
   display_name: "Report Content Repurposer"
-  short_description: "Create traceable draft report derivatives"
+  short_description: "Repurpose reports into launch posts, carousels, and video"
   default_prompt: "Use $report-content-repurposer to create channel-ready drafts from this approved report without publishing them."
 
 policy:

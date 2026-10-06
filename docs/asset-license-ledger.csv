@@ -15,6 +15,7 @@ templates/workflow-manifest.yaml,Swetank Gawde,Created for Report Skills,MIT,yes
 examples/synthetic-report/brief.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional CivicAssist fixture
 examples/synthetic-report/inputs/chart-data.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional data with a deliberate derived-value conflict
 examples/synthetic-report/inputs/complete-report.md,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional report
+examples/synthetic-report/inputs/report-approval.yaml,Swetank Gawde,Created for Report Skills,MIT,yes,no,Synthetic approval record scoped to local draft adaptation
 examples/synthetic-report/inputs/operations.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional data
 examples/synthetic-report/inputs/report-outline.md,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional outline
 examples/synthetic-report/inputs/sources.csv,Swetank Gawde,Created for Report Skills,MIT,yes,no,Fictional source register

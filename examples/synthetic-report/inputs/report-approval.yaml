@@ -1,0 +1,13 @@
+schema_version: "1.0"
+fixture_type: "synthetic-content-approval"
+synthetic_test_clock: true
+scenario_as_of: "2030-07-02"
+artifact_id: "synthetic-civicassist-pilot-assessment"
+artifact_version: "1.0"
+artifact_path: "inputs/complete-report.md"
+approval_type: "content-approval"
+decision: "approved"
+decided_by: "Synthetic Editorial Review Board"
+decided_at: "2030-07-02"
+scope: "Approval of the synthetic report content only; local draft adaptation is permitted, but derivative content, design, and external publication are not approved."
+publication_authorized: false

@@ -235,7 +235,7 @@ def validate_gate1_behavioral_case_evidence(
         issues.append("run-plan:missing repository receipt")
         repository = {}
     if profile.get("model") != GATE1_MODEL:
-        issues.append("run-plan:model is not gpt-5.6-sol")
+        issues.append("run-plan:model is not gpt-6.1-sol")
     if profile.get("reasoning_effort") != GATE1_REASONING_EFFORT:
         issues.append("run-plan:reasoning effort is not ultra")
     if profile != expected_profile:
@@ -641,7 +641,7 @@ def validate_gate1_master_and_summary(
     if master != expected_master:
         issues.append("master-plan:document does not match the exact 25-call contract")
     if profile.get("model") != GATE1_MODEL:
-        issues.append("master-plan:model is not gpt-5.6-sol")
+        issues.append("master-plan:model is not gpt-6.1-sol")
     if profile.get("reasoning_effort") != GATE1_REASONING_EFFORT:
         issues.append("master-plan:reasoning effort is not ultra")
     if repository != current_repository:

@@ -42,6 +42,10 @@ Audit the exact artifact through three distinct passes. Treat review as read-onl
 4. Use exported pages for print or slide conclusions; do not treat an authoring canvas alone as export proof.
 5. Record unavailable evidence as `not verified` instead of guessing from source code or adjacent viewports.
 
+Before writing findings, create a three-row pass ledger in `visual-qa-report.md` with these exact pass names: `structural`, `optical`, and `reader-comprehension`. For each row, state the inspected scope, evidence type/reference, result (`findings`, `no findings`, or `not verified`), and finding IDs (or `none`). Keep all three rows even when a pass finds no defect or cannot be completed. A findings/revision log is not a substitute for pass coverage, and `reader` alone is not the required `reader-comprehension` label. Never mark a pass `no findings` unless its evidence was actually inspected; use `not verified` when it was not.
+
+For shell-based artifact checks, stay inside the supplied workspace and inspect only the artifact content. Do not construct parent paths or use a regex wildcard such as PowerShell `-match '..'` to scan text: the dots match arbitrary characters, not literal periods, and the command may be rejected by the workspace-boundary guard. If a literal text check is necessary, use a literal string operation such as `.Contains()`; never resolve a path outside the workspace.
+
 ## 3. Run the structural pass
 
 Inspect and record:
@@ -87,15 +91,24 @@ Base comprehension claims on walkthrough evidence, not personal preference alone
 
 For every finding, record:
 
-- Pass: `structural`, `optical`, or `reader`.
+- Pass: `structural`, `optical`, or `reader-comprehension`.
 - Exact page, route, component, state, and viewport.
 - Observation and evidence reference.
-- Impact and severity.
+- `severity`: exactly one of `critical`, `high`, `medium`, or `low`.
+- `impact`: a separate explanation of reader, accessibility, or release consequence; do not use an `Impact` label as a substitute for the required severity value.
 - Recommended remedy.
 - Owner skill or discipline.
 - Disposition and verification state.
 
 Separate direct observation, measurement, inference, and unverified hypothesis. Do not describe a likely cause as proven without causal evidence.
+
+Use a stable finding template so location and follow-up evidence cannot be lost:
+
+```text
+ID | pass | severity | artifact/location | viewport or format | evidence and evidence type | impact | recommended correction | verification status
+```
+
+For every finding, fill the `viewport or format` field explicitly; a global viewport matrix does not replace per-finding location. If a finding is not viewport-specific, name the inspected format and say `viewport: not applicable`. Every finding and finding-linked revision-log entry must use the exact field `severity` with one allowed value (`critical`, `high`, `medium`, `low`); an `Impact: high` label is not a severity field. Keep the impact explanation separate. For each finding-linked revision-log entry, repeat `severity`, `evidence`, `recommended correction`, and `verification status` directly in that entry; do not rely on a linked finding to supply missing fields. In addition, `revision-log.md` must contain three distinct pass-coverage entries with exact `pass` values `structural`, `optical`, and `reader-comprehension`, even when a pass has no finding or requires no change. These coverage-only records are not findings: record `finding_id: none`, evidence inspected, and `disposition: no-change`; use `severity: not-applicable` because no finding is being rated. Do not invent a revision or finding just to populate this coverage record. If only source files are available, use an explicit narrow-screen test target such as `375×812 CSS px`, label the finding `source-derived` and the viewport check `not-verified`; never say the viewport was observed or passed without a rendered capture or measurement.
 
 ## 7. Set scoped verdicts
 
@@ -122,6 +135,8 @@ Produce `visual-qa-report.md` containing:
 - Artifact ID, version, hash, reviewed formats, reviewed viewports, review time, and verdict.
 - Scope and unavailable evidence.
 - Three separately documented passes.
+- The complete three-row pass ledger, using the exact labels `structural`, `optical`, and `reader-comprehension`, with scope, evidence, result, and finding IDs for each.
+- Three separately labeled pass-coverage records in `revision-log.md`, including evidence and a verified no-change disposition where a pass produced no finding.
 - Severity-ranked findings with evidence and owners.
 - Authorized changes, if any.
 - Retest records and remaining limitations.

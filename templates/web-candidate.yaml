@@ -15,6 +15,6 @@ citation_checks: []
 viewport_checks: []
 accessibility_checks: []
 reduced_motion: "not-verified"
+reduced_motion_implementation: "unknown"
 external_deployment_authorized: false
 blockers: []
-

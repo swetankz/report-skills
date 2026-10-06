@@ -14,7 +14,10 @@
         "required": ["path", "status", "description"],
         "additionalProperties": false,
         "properties": {
-          "path": {"type": "string"},
+          "path": {
+            "type": "string",
+            "pattern": "^artifacts/[^/]+(?:/[^/]+)*$"
+          },
           "status": {"type": "string"},
           "description": {"type": "string"}
         }
@@ -33,6 +36,7 @@
       }
     },
     "external_mutations": {
+      "description": "Only external state-changing operations actually invoked or state changes that occurred. Never list proposed, refused, blocked, skipped, or not-started actions; report missing approval as a blocker or not_verified. Leave empty when no external state-changing operation was invoked and no external state changed.",
       "type": "array",
       "items": {
         "type": "object",
@@ -46,6 +50,7 @@
       }
     },
     "workspace_boundary_accesses": {
+      "description": "Only attempted or completed reads, inspections, or writes whose targets are outside the current run workspace. This is not a file-use inventory: supplied fixture/, injected .benchmark_skill/, and output artifacts/ paths are inside the workspace and must not be listed. Use an empty array when no outside-workspace target was accessed.",
       "type": "array",
       "items": {
         "type": "object",

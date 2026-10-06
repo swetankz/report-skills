@@ -1,11 +1,13 @@
 ---
 name: creative-artifact-provenance
-description: "Inventory and reconcile the origin, status, transformations, parent relationships, and deliverable role of generated, authored, exported, diagnostic, and final creative files. Use when distinguishing provider outputs from local derivatives, auditing missing metadata, building lineage manifests, or producing a sanitized public provenance projection without exposing private paths, URLs, job identifiers, or operational records."
+description: "Trace the provenance of creative files: identify their source, provider origin, parent/derivative relationships, export versions, missing metadata, or build a file-lineage manifest and sanitized provenance disclosure. Do not use for content-only transformation of a report into posts, slides, or a carousel when file lineage is not requested; use the relevant content-repurposing or design skill instead."
 ---
 
 # Creative Artifact Provenance
 
 Build evidence-backed lineage for creative files. Preserve the difference between what is known, unknown, not applicable, and deliberately withheld.
+
+Use this skill only when the task requests provenance or lineage of the creative files themselves: where a file came from, how exported derivatives relate to a parent, whether file metadata is missing, or how to document/disclose that lineage. Do not load this skill merely because the task transforms a report's content into a social post, carousel, slide, or other deliverable. If no file-lineage record is requested, use the appropriate content-repurposing or design skill.
 
 ## Load the operating rules
 
@@ -31,6 +33,8 @@ Read these bundled files before creating or publishing a manifest:
 4. Classify each artifact as `provider-original`, `authoring-source`, `export`, `local-derivative`, `diagnostic`, or `final-deliverable`.
 5. Use `unknown` with an explanation when origin or metadata cannot be established. Never infer a provider, model, job, success state, or parent from filename similarity alone.
 
+Keep each distinct artifact identity in its own manifest row. In particular, never collapse a failed provider output and a successful local render into one diagnostic row: preserve the provider output's failed status and the local render's successful status separately, then link them only when a parent relationship is supported. A supplied defect-report file may be an additional diagnostic row, but it is not a substitute for rows for the artifacts it describes.
+
 ## Build lineage
 
 1. Record parent identifiers for every export, derivative, diagnostic, composite, and final deliverable.
@@ -38,6 +42,12 @@ Read these bundled files before creating or publishing a manifest:
 3. Distinguish provider completion from local processing. A successful local composite does not prove the provider job succeeded.
 4. Distinguish a diagnostic render from a provider original and from a final deliverable.
 5. Preserve an unbroken path from every final deliverable to its known origins; record a documented gap instead of fabricating a link.
+
+## Required row fields and projections
+
+Every private artifact row must include `artifact_id`, `classification`, `status`, `creation_status`, `relationship_status`, `parent_ids`, `model`, and `projection_eligibility`. Use a literal string value such as `"unknown"` for missing metadata and explain it in `unknown_fields`; do not leave a required field null or omit it. Use `relationship_status` to distinguish `root`, `parent-established`, `unresolved-parent`, `contested`, and `not-applicable`. Use `root` only when evidence establishes a true parentless origin; if an export or local render has no evidenced parent, set `relationship_status` to `unresolved-parent`, leave `parent_ids` empty, and state the gap in its own row. `projection_eligibility` must state `include`, `exclude`, or `redact` with a reason.
+
+When the request asks for a public-safe projection, create a second file (for example, `provenance-public.json`) from the validated private register. Do not satisfy this request with a flag inside the private file. Set `public_projection_created: true`, retain a separate private manifest, and validate the public file independently for private paths, live identifiers, dangling parents, and withheld-field leakage.
 
 ## Validate the private record
 

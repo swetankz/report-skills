@@ -29,6 +29,8 @@ Distinguish among read-only diagnosis, edit planning, authorized editing, and re
 4. Record the observation time, original hash or equivalent version identity, requested changes, and current save state.
 5. Stop without writing if connectivity is unavailable, multiple targets are plausible, the active target differs, or identity evidence is indirect.
 
+When blocked, state four separate items in the handoff: `observed_state` (what the connection/editor shows), `requested_state` (the exact requested target/change), `blocker_state` (the concrete mismatch or missing evidence), and `proposed_next_step` (the smallest action that would resolve that blocker). Name conflicting file identities or the exact confirmation needed when available. Do not write while the blocker remains.
+
 Never switch to a different board merely because it appears newer or visually similar. Request clarification when exact identity cannot be discovered safely.
 
 ## Preserve the original
@@ -61,6 +63,6 @@ For a genuinely new file with no prior state, record that fact explicitly and ve
 
 ## Required output
 
-Produce `pencil-edit-record.yaml` with connectivity evidence, exact target receipt, original and backup identities, requested and applied changes, validation evidence, final identity, blockers, and status.
+Produce `pencil-edit-record.yaml` with connectivity evidence, exact target receipt, original and backup identities, requested and applied changes, validation evidence, final identity, blockers, and status. In the handoff, keep `observed_state`, `requested_state`, `blocker_state`, and `proposed_next_step` separately labeled, including when no write was attempted; an implied or generic next step is insufficient.
 
 Keep runtime file paths, board identifiers, screenshots, and private design content in private records. Use sanitized relative labels only in a public summary. Never present a disconnected, ambiguous, or wrong-target attempt as a successful edit.

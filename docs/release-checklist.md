@@ -17,14 +17,15 @@ Use this checklist for each Report Skills release. It defines the required repos
 
 ## Focused release-candidate evaluation (Gate 1)
 
-- [ ] The exact clean candidate commit, tree, generated packages, manifest, harness, schemas, model, reasoning effort, and evaluation-method version are frozen before model-backed evidence begins.
-- [ ] One sequential stream pinned to `gpt-5.6-sol` with `ultra` reasoning completes a focused 15-observation trigger/routing canary covering all eleven skills and the highest-risk boundary conflicts.
+- [ ] The exact clean candidate commit, tree, generated packages, manifest, harness, schemas, model, reasoning effort, Fast service tier, and evaluation-method version are frozen before model-backed evidence begins.
+- [ ] One sequential stream pinned to `gpt-6.1-sol` with `ultra` reasoning and the exact `service_tier="fast"` override completes a focused 15-observation trigger/routing canary covering all eleven skills and the highest-risk boundary conflicts.
 - [ ] The exact 25-call master plan exists before call one. After the trigger canary, each of the five essential adversarial/security tasks is immediately graded and required to be perfect and clean before the next task begins; no failed or partial attempt is retried or reused.
 - [ ] The tracked `evals/gate1-release-plan.json` is used unchanged. The read-only Gate 1 evidence validator passes five separate one-case task/grader roots, the mixed-repetition trigger plan, master-plan and summary hashes, exact call order, zero retries, and every input, output, trace, cleanup, semantic, identity, coverage, and plan binding; raw evidence remains ignored, private, and untracked.
 - [ ] The approval packet states that Gate 1 prepares an RC only. It makes no Gate 2 full-benchmark or final-threshold claim, and Gate 2 remains inactive pending separate authorization.
 
 ## Full qualification (Gate 2)
 
+- [ ] All new evidence uses evaluation method v47 on one clean candidate, with the Fast service tier explicitly pinned in the prompt probe, invocation controls, execution profile, and stage identities. Earlier methods and profiles remain diagnostic and cannot be reused or spliced into a release decision. The v47 recognition of complete PowerShell numeric indexers with adjacent range operands made from integers or `.Count`/`.Length` plus integer arithmetic does not permit spaced range tokens, arbitrary computed traversal, or any relaxation of release thresholds.
 - [ ] The full canonical matrix contains 96 fresh behavioral tasks, 96 graders, 33 blind comparisons, and 75 trigger observations on one immutable candidate.
 - [ ] Every primary task case has three fresh `with_skill` runs and three matched `without_skill` runs.
 - [ ] Task, grader, blind-comparator, and trigger receipts all show natural process exit, no timeout, zero timeout overrun, and exactly one terminal event under the same native invocation identity.

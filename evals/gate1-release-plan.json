@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "gate": "gate1-rc-preparation",
-  "evaluation_method_version": "report-skills-release-evaluation-v8",
-  "model": "gpt-5.6-sol",
+  "evaluation_method_version": "report-skills-release-evaluation-v47",
+  "model": "gpt-6.1-sol",
   "reasoning_effort": "ultra",
   "orchestration": {
     "method": "trigger-then-task-grader-per-case-v1",

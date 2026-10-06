@@ -223,10 +223,9 @@ def trigger_task_prompt(query: str) -> str:
         "without the dollar sign do not qualify. Count a token only when it appears in the "
         "Request block below, never in this wrapper, a description, metadata, an example, a path, "
         "a command, or tool output. A qualifying token itself activates exactly that named skill, "
-        "even when the platform omitted it from the available-skills catalog. Remove only the "
-        "leading dollar sign and make one literal, complete read of exactly "
-        "`.agents/skills/<validated-name>/SKILL.md` relative to the current workspace. This reads "
-        "an already activated skill; it is not discovery. Do not list, glob, search, recurse, "
+        "even when the platform omitted it from the available-skills catalog. This authorizes one "
+        "literal, complete read of the target body specified below; it is not discovery. Do not "
+        "list, glob, search, recurse, "
         "normalize, case-fold, guess, inspect siblings, parse agents/openai.yaml or frontmatter, "
         "use a partial or line-count read, or try another path or root. If that exact read is "
         "missing, declined, fails, or is incomplete, fail closed to no activation without a "
@@ -236,8 +235,10 @@ def trigger_task_prompt(query: str) -> str:
         "unlisted skill is then ineligible. Do not list, search, enumerate, or probe the workspace "
         "`.agents/skills` tree, and do not use it to access an unlisted skill. Decide applicability "
         "from the Request and the platform-declared description before opening the body. If a "
-        "declared skill clearly applies, activate it and only then read its SKILL.md completely at "
-        "the exact path provided by the platform. Otherwise fail closed to no activation. Do not "
+        "declared skill clearly applies, activate it and only then read its SKILL.md completely "
+        "using exactly the workspace-relative literal path "
+        "`.agents/skills/<validated-name>/SKILL.md` from the current workspace. Do not construct "
+        "an absolute path or use an alternate root. Otherwise fail closed to no activation. Do not "
         "inspect or invoke a "
         "skill merely "
         "to fill the response schema. Do not inspect process lists, command lines, environment "
@@ -349,7 +350,7 @@ def main() -> int:
                 or args.reasoning_effort != gate1_plan["reasoning_effort"]
             ):
                 raise EvaluationError(
-                    "Gate 1 trigger execution requires gpt-5.6-sol with ultra reasoning"
+                    "Gate 1 trigger execution requires gpt-6.1-sol with ultra reasoning"
                 )
             if not args.fail_fast_on_incorrect:
                 raise EvaluationError(
@@ -514,7 +515,7 @@ def main() -> int:
                 command = codex_base_command(
                     codex_runtime_command(execution_profile),
                     workspace,
-                    "read-only",
+                    "workspace-write",
                     staged_schema,
                     staged_prediction,
                     execution_profile["model"],

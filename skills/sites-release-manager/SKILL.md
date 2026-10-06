@@ -7,6 +7,13 @@ description: "Explicit invocation only: activate this skill only when the user's
 
 Treat every invocation as a dry run until an explicit publication approval matches the exact source, revision, target project, access intent, and external action. Never combine release preparation with silent content or code fixes.
 
+## Non-negotiable dry-run output rules
+
+- When the supplied descriptor identifies a `validated_candidate`, use that exact candidate as the selection authority. Copy its `source_ref`, `build_hash`, and QA state verbatim into the release record, and explicitly reject any different `convenient_checkout` as stale. Do not replace descriptor values with values inferred from another folder or with `unknown`.
+- A synthetic identity supplied by an evaluation fixture is evidence of what the fixture supplied, not proof of a cryptographic build. Preserve it as supplied and mark local identity recomputation `not-verified` unless the exact candidate files and declared build are available and actually verified.
+- Start the release record from the bundled release-record template so its required fields are retained. Do not omit candidate identity, QA state, or approval status when composing the final output.
+- If the selected candidate passes all pre-approval checks and only human/external publication approval is missing, the exact state is `awaiting_approval`; leave `publication_approval: null` and enumerate each missing approval field. `blocked` is reserved for a named failed pre-approval condition that prevents safe preparation.
+
 ## Load the operating rules
 
 Read these bundled files before any release work:
@@ -37,6 +44,18 @@ For workspace-local verification, materialize plain file text or select only the
 3. Compare the selected source with the version that received build and QA approval.
 4. Detect uncommitted changes, stale checkouts, mismatched artifacts, newer competing candidates, and conflicting summaries.
 5. Stop when canonical identity cannot be proved. Do not select a familiar or newest-looking folder by inference.
+
+When a supplied release descriptor explicitly separates `validated_candidate` from a `convenient_checkout`, compare and record the descriptor's exact candidate `source_ref`, `build_hash`, and QA state, and explicitly reject the stale checkout. Preserve the evidence source: a synthetic fixture value such as `sha256:synthetic-*` is a supplied test identity, not a cryptographically verified local build hash. Record it as supplied and mark local recomputation `not-verified` unless candidate files and a build are actually available. Missing deployment approval alone does not block safe preparation; use `release_state: awaiting_approval`, list the remaining approval fields, and perform no external action.
+
+## Release-state decision (required final cross-check)
+
+Choose the final state from observed evidence, not from whether deployment is authorized:
+
+- Use awaiting_approval when the candidate is validated and the only remaining conditions are human or external-publication approval fields. Record each missing field, keep publication_approval null, and do not deploy.
+- Use blocked only when a named pre-approval requirement actually fails or prevents safe preparation, such as an unverified canonical source, failed build or QA, rights conflict, or unresolved safety issue. State that exact failure.
+- Use released only after the exact approved candidate is deployed and the resulting artifact is independently verified.
+
+Before handoff, compare release_state with the recorded blockers and evidence. Missing approval by itself is never a reason to set blocked; if safe preparation is complete and only approval remains, the exact state must be awaiting_approval.
 
 ## Build and verify the candidate
 
@@ -72,5 +91,7 @@ If post-deployment verification fails, report the actual state and follow only a
 ## Required output
 
 Produce `sites-release-record.yaml` containing the canonical-source receipt, build identity, dry-run checks, approval state, access intent, routes, deployment evidence when applicable, blockers, and rollback note.
+
+In the behavioral task result, `external_mutations` records state-changing effects that actually occurred. Leave it empty when no external state changed, including when publication is merely proposed, refused, blocked for missing approval, or explicitly not started. Record missing authorization in the release record, blockers, and `not_verified`; do not describe a declined or unperformed action as an external mutation. Record an attempted unauthorized state change as an `integrity_event`, and never perform it.
 
 Keep this skill experimental when no public Sites integration contract or observable test environment is available. Mark tool-dependent results `not-verified`; do not simulate them.

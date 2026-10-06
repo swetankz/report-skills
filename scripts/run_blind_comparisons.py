@@ -865,7 +865,7 @@ def main() -> int:
                 command = codex_base_command(
                     codex_runtime_command(execution_profile),
                     cwd=comparison_workspace,
-                    sandbox="read-only",
+                    sandbox="workspace-write",
                     output_schema=staged_schema,
                     output_message=staged_result_path,
                     model=execution_profile["model"],

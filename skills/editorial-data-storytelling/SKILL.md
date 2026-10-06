@@ -28,13 +28,15 @@ Accept approved or validated claims, source data, provenance, the intended reade
 
 Stop when a material field or reproducible data path is missing. Mark a figure provisional when its upstream claim is not approved or validated; never upgrade upstream approval yourself.
 
+Treat a disagreement between a supplied figure value and a reproducible calculation from its supporting rows as a hard figure stop. Record both values and their source identifiers, but do not plot either as a resolved result or use a caption to excuse choosing one. Omit the disputed metric from quantitative figures and keep its status contested/blocked until the designated source of record is corrected or an authorized decision resolves the difference. Uncontested figures may proceed.
+
 ## 2. Write a figure brief
 
 Create one brief per proposed figure. Record:
 
 - Stable figure identifier and linked claim identifiers.
 - Reader question and one intended evidence-based takeaway.
-- Figure type and reason for selecting it.
+- Figure type and an explicit evidence-linked rationale for selecting it over a plausible alternative, naming the claim or source identifiers and the structure of the evidence that the form preserves.
 - Required data, comparison baseline, and transformation.
 - Unit, denominator, population, geography, period, and uncertainty.
 - Essential annotations, caption, source note, and alternative-text intent.
@@ -49,7 +51,7 @@ Keep source values separate from transformed and displayed values. Record every 
 
 Use a calculation or data-processing tool when appropriate, then preserve the command, formula, notebook, query, or transformation description needed to repeat the result. Do not manually transcribe values when a reproducible path is available.
 
-Compare every visible number with the registered result. Stop when the rendered values cannot be reproduced from the registered data.
+Compare every visible number with the registered result. Before accepting a figure, reconcile any supplied display value against available source rows. If they disagree and no designated source-of-record decision resolves the discrepancy, exclude the disputed metric rather than selecting the raw recomputation, supplied chart value, or rounded report prose. Stop when the rendered values cannot be reproduced from the registered data.
 
 ## 4. Choose an honest visual form
 
@@ -69,13 +71,15 @@ Use [Figure design protocol](references/figure-design-protocol.md) to handle axe
 
 Write a title that states an evidence-supported observation rather than a slogan or unsupported conclusion. Add a concise takeaway, caption, contextual annotation, and source note.
 
+Every figure specification must have a dedicated **Contextual annotation:** field containing the actual reader-facing annotation text for that figure. Do not substitute a caption, takeaway, source note, or a promise to add an annotation later. Tie the annotation to a documented reference point, comparison, period, limitation, or method change without implying unsupported cause. If no annotation is justified, retain the field and give a specific evidence-based reason; never silently omit it.
+
 Explain surprising changes, breaks, exclusions, missing data, uncertainty, and definition shifts near the relevant mark. Avoid annotations that imply motive or cause unless the evidence supports that claim.
 
 Write alternative text that identifies the figure type, subject, axes or categories, overall pattern, material exceptions, and the few values required to understand the takeaway. Keep the same information available without color alone.
 
 ## 6. Register every figure
 
-Create `figure-register.csv`, starting from `assets/templates/figure-register.csv` when present, with these columns:
+Create `figure-register.csv`, starting from `assets/templates/figure-register.csv` when present, with these columns. Treat these 16 columns as an exact schema. Build every figure as a structured object with exactly one value per header; never compose rows by joining fields with commas or infer width by splitting CSV text. On Windows, pass a JSON payload with the exact `header` array and structured `rows` objects to `.benchmark_skill/editorial-data-storytelling/scripts/write-register-csv.ps1`, using `-OutputPath artifacts/figure-register.csv`. The helper writes and strictly reparses the canonical file, rejecting unescaped commas, quotes, blank records, or any width mismatch. If validation fails, correct the structured source record and regenerate the same canonical path; do not import and re-export malformed CSV content. If the helper cannot be used, use ordered `[pscustomobject]` records and `Export-Csv -NoTypeInformation`, then strictly parse the final canonical file and verify every row has exactly 16 fields before continuing.
 
 ```text
 figure_id,title,figure_type,claim_ids,source_ids,data_path,unit,population,geography,period,transformation,editorial_takeaway,caption,alt_text,output_path,status
@@ -92,8 +96,9 @@ For a new or existing figure:
 3. Check scales, baselines, ordering, area or volume encodings, aspect ratio, dual axes, missing values, and precision.
 4. Check population, period, geography, unit, denominator, sample size, and uncertainty context.
 5. Check color contrast, non-color differentiation, label legibility, caption completeness, and alternative text.
-6. Check source note, data path, transformation record, and claim linkage.
-7. Record each finding with location, evidence, severity, required correction, and verification state.
+6. Confirm that every delivered figure specification contains actual contextual annotation text in its dedicated field, or a specific evidence-based reason why none applies. A placeholder, instruction, or future promise fails this check and blocks the figure.
+7. Check source note, data path, transformation record, and claim linkage.
+8. Record each finding with location, evidence, severity, required correction, and verification state.
 
 Mark an unrendered or unobserved property `not-verified`. Do not call a figure accessible from specification alone when the final rendering was not inspected.
 

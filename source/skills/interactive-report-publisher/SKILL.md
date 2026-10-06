@@ -34,11 +34,17 @@ Build a local, publishable web candidate from the complete approved report. Keep
 
 ## 2. Freeze content coverage
 
+For claim-level coverage, make a separate row for every independently meaningful proposition, counter-evidence item, recommendation, qualifier, and limitation in the source. A generic row such as `analysis` or `recommendations` does not prove that the individual statements in that section are represented. Preserve the logical relationship between claims and their qualifiers. Before handoff, compare the source statement inventory against the rendered page claim by claim; missing or conflated statements block the content gate.
+
 1. Inventory every report section, subsection, table, figure, caption, note, citation, bibliography entry, limitation, and appendix.
 2. Create stable content IDs and map each ID to a route, section anchor, and component.
 3. Preserve the approved order unless an explicitly approved web adaptation changes it.
 4. Keep all factual wording traceable to the source version; do not introduce new claims in interface copy.
 5. Fail the content gate when any required content ID is omitted, duplicated without reason, truncated, or detached from its evidence context.
+
+Before implementation, reconcile every source ID and URL in the source register to the report's citations and the site's bibliography or source interface. Preserve wording and qualifiers exactly: do not turn an approximate value into a more precise value, or vice versa. Verify that each report chapter—including analysis, recommendation, and limitations—has a destination.
+
+For each cited source, include a `citation_checks` row with the source ID, exact supplied source-register URL (when present), citation/bibliography destination, and verification status. The bibliography entry must retain a clickable external `href` to that supplied URL; an internal fragment such as `#source-s1` may navigate to the bibliography entry but cannot replace the source URL. If no usable URL was supplied, retain the stable identifier and state the access limitation; never invent a URL.
 
 Before rendering, run a quantitative-integrity preflight across the report, figure specifications, and supplied data artifacts. Reproduce material calculations when numerator and denominator are available; compare repeated values, units, populations, periods, and construct definitions. A conflicted or unsupported value must not appear in the website as established fact. Return it upstream for correction, or, for an explicitly requested local working draft, replace the affected presentation with a conspicuous conflict notice that states the competing values and blocks readiness. Do not silently choose or repair a value outside the approved source.
 
@@ -60,8 +66,11 @@ Before rendering, run a quantitative-integrity preflight across the report, figu
 6. Implement responsive layouts from content needs; avoid a desktop composition merely scaled down for small screens.
 7. Use two-column compositions only when they improve comparison or reading context; define a clear reading order and deliberate stacked behavior.
 8. Prevent horizontal overflow, clipped text, occluded anchors, and fixed elements that block content at every required viewport.
-9. Add metadata, canonical intent, share metadata where requested, structured data when justified, and meaningful document titles and descriptions.
-10. Use interactions only when they clarify navigation, comparison, sequence, or evidence. Keep reading possible without them.
+9. Include unique, report-specific document titles and descriptions, language, viewport metadata, canonical intent, and structured data when justified. Treat report-specific social metadata as part of the standard shareable-page contract below, not as an optional add-on.
+10. For a shareable report page, include report-specific Open Graph (`og:title`, `og:description`, `og:type`, `og:url` when a canonical URL is known, and an eligible preview image when supplied) and Twitter card metadata; do not invent a live URL or image.
+11. Use interactions only when they clarify navigation, comparison, sequence, or evidence. Keep reading possible without them.
+
+Unless the brief explicitly marks the page private or internal, treat a report page as shareable. Before handoff, inspect the final HTML for report-specific Open Graph og:title, og:description, og:type, and Twitter twitter:card fields. Missing required fields block a shareable candidate. Add og:url only when a canonical URL is known and a preview image only when a supplied asset is eligible; do not invent either value.
 
 ## 5. Implement motion safely when requested
 
@@ -85,6 +94,9 @@ Before rendering, run a quantitative-integrity preflight across the report, figu
 9. Mark unavailable browsers, devices, routes, or behaviors `not verified`; never broaden a narrow observation into a comprehensive pass.
 10. Distinguish an artifact failure from a test-infrastructure failure in every record. When the browser, server, driver, or capture tool fails before the artifact can be observed, assign affected checks `not-verified`, not `fail`, and keep the candidate, summary, and detailed validation records consistent.
 11. Keep browser profiles, caches, crash dumps, temporary servers, and driver state outside website source, build output, candidate records, and retained QA evidence. Use a uniquely scoped temporary directory when a tool requires a profile, retain only declared screenshots, traces, logs, or DOM captures, and verify the handoff package contains no browser state or crash byproducts.
+12. Record the exact local build or static-validation command, exit status, output path, and artifact identity. A static page may use an explicit no-compilation mode, but still run and record a reproducible offline check against the produced files; do not label a build `not run` and then imply it was verified. Keep browser/runtime checks separately marked `not-verified` when they were not observed.
+
+Keep implementation and verification separate for reduced motion: CSS inspection may be recorded as `reduced_motion_implementation: implemented-in-css`, but it is not a behavior test. Set `reduced_motion: not-verified` unless the exact built candidate was exercised with the browser/OS reduced-motion preference enabled and the result directly observed. If that runtime check is unavailable, retain `not-verified` in both the candidate record and validation report; do not promote implementation evidence to a pass.
 
 ## 7. Write the candidate record
 

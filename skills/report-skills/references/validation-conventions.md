@@ -13,6 +13,10 @@ Use these result states:
 
 Do not convert `not-verified` into `pass`.
 
+## Failed-check persistence
+
+A failed predicate, false comparison, or nonzero validation check remains a failure until the exact failed condition is repaired and the complete original check is rerun successfully. Do not replace a failed multi-condition check with a narrower follow-up that omits the failed condition, then report the stronger check as passed. Preserve the full check output and each condition's result. If the original predicate cannot be rerun, report `fail` or `not-verified`; never claim strict validation, completeness, or readiness from a partial recheck.
+
 ## Finding format
 
 Record:
@@ -43,7 +47,9 @@ Do not infer a successful build, browser behavior, smooth motion, connectivity, 
 
 ## Tabular artifacts
 
-Write CSV files with a standards-compliant serializer and re-open them with a strict UTF-8 CSV parser before accepting them. Require a nonempty header and exactly the header's field count in every logical record. Treat a zero-field or whitespace-only logical record anywhere, including after the final data row, as a blocking artifact error. A file may have no terminal line ending or one terminal LF or CRLF; preserve embedded line breaks and blank physical lines only inside properly quoted fields. Do not rely on importers that silently drop empty records.
+If the row-for-row comparison is false, CSV validation has failed even when a later width/count check passes. Repair the serialization or source-row mismatch and rerun the complete row-for-row, field-for-field comparison before stating `pass`.
+
+Write CSV files with a standards-compliant serializer; do not hand-build rows or add spaces before quoted fields. For example, use Python's `csv.writer` with `newline=""` and UTF-8 encoding, then re-open the file with a strict UTF-8 CSV parser before accepting it. Require a nonempty header and exactly the header's field count in every logical record. Compare parsed records to the structured input row-for-row and field-for-field, and verify the expected number of data rows; correct width alone does not prove that values were serialized. Treat a zero-field, all-empty, or whitespace-only data record anywhere, including after the final data row, as a blocking artifact error. A file may have no terminal line ending or one terminal LF or CRLF; preserve embedded line breaks and blank physical lines only inside properly quoted fields. Do not rely on importers that silently drop empty records.
 
 ## Negative tests
 

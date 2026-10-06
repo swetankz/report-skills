@@ -75,39 +75,92 @@ def local_markdown_targets(text: str) -> list[str]:
     return targets
 
 
-def validate_plugin(errors: list[str]) -> None:
-    path = REPO_ROOT / ".codex-plugin" / "plugin.json"
+def load_plugin_document(relative: str, errors: list[str]) -> dict | None:
+    """Read one regular metadata object without relying on Git history."""
+
+    path = REPO_ROOT / relative
+    if path.is_symlink():
+        errors.append(f"{relative} must be a regular file, not a symlink")
+        return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        errors.append(f"plugin manifest cannot be read: {exc}")
-        return
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        errors.append(f"{relative} cannot be read: {exc}")
+        return None
+    if not isinstance(data, dict):
+        errors.append(f"{relative} must contain a JSON object")
+        return None
+    return data
+
+
+def validate_plugin_identity(
+    data: dict, label: str, project_version: str | None, errors: list[str]
+) -> None:
     if data.get("name") != "report-skills":
-        errors.append("plugin name must be report-skills")
-    if not valid_plugin_version(data.get("version", "")):
+        errors.append(f"{label} name must be report-skills")
+    version = data.get("version")
+    if not isinstance(version, str) or not valid_plugin_version(version):
         errors.append(
-            "plugin version must be stable semantic versioning or a numeric -rc.N prerelease"
+            f"{label} version must be stable semantic versioning or a numeric -rc.N prerelease"
         )
+    if project_version is not None and version != project_version:
+        errors.append(
+            f"{label} and pyproject versions must match: {version!r} != {project_version!r}"
+        )
+
+
+def validate_zcode_packaging(errors: list[str], project_version: str | None) -> None:
+    zcode = load_plugin_document(".zcode-plugin/plugin.json", errors)
+    if zcode is not None:
+        validate_plugin_identity(zcode, ".zcode-plugin/plugin.json", project_version, errors)
+        if zcode.get("skills") != "skills":
+            errors.append(".zcode-plugin/plugin.json skills must resolve to the canonical skills root")
+
+    marketplace = load_plugin_document("marketplace.json", errors)
+    if marketplace is None:
+        return
+    if marketplace.get("name") != "report-skills":
+        errors.append("marketplace.json name must be report-skills")
+    plugins = marketplace.get("plugins")
+    if not isinstance(plugins, list) or len(plugins) != 1 or not isinstance(plugins[0], dict):
+        errors.append(
+            "marketplace.json plugins must contain exactly one report-skills object"
+        )
+        return
+    validate_plugin_identity(plugins[0], "marketplace.json plugin", project_version, errors)
+    if plugins[0].get("source") != "./":
+        errors.append("marketplace.json plugin source must be the exact local root ./")
+
+
+def validate_plugin(errors: list[str]) -> None:
     project_path = REPO_ROOT / "pyproject.toml"
+    project_version: str | None = None
     try:
         project = tomllib.loads(project_path.read_text(encoding="utf-8"))
-        project_version = str(project.get("project", {}).get("version", ""))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        version = project.get("project", {}).get("version")
+        if not isinstance(version, str) or not valid_plugin_version(version):
+            errors.append("pyproject.toml version must be a canonical plugin version")
+        else:
+            project_version = version
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         errors.append(f"pyproject.toml cannot be read: {exc}")
-    else:
-        if project_version != str(data.get("version", "")):
-            errors.append(
-                "plugin and pyproject versions must match: "
-                f"{data.get('version')!r} != {project_version!r}"
-            )
+    validate_zcode_packaging(errors, project_version)
+    data = load_plugin_document(".codex-plugin/plugin.json", errors)
+    if data is None:
+        return
+    validate_plugin_identity(data, "plugin", project_version, errors)
     for key in ("description",):
         if not str(data.get(key, "")).strip():
             errors.append(f"plugin {key} is required")
-    if not str(data.get("author", {}).get("name", "")).strip():
+    author = data.get("author")
+    if not isinstance(author, dict) or not str(author.get("name", "")).strip():
         errors.append("plugin author.name is required")
-    if data.get("skills") not in {"./skills", "./skills/"}:
+    if data.get("skills") not in ("./skills", "./skills/"):
         errors.append("plugin skills must resolve to ./skills/")
     interface = data.get("interface", {})
+    if not isinstance(interface, dict):
+        errors.append("plugin interface must contain a JSON object")
+        interface = {}
     for key in ("displayName", "shortDescription", "longDescription", "developerName", "category", "capabilities", "defaultPrompt"):
         if not interface.get(key):
             errors.append(f"plugin interface.{key} is required")

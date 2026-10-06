@@ -40,6 +40,12 @@ Verify each supplied artifact before routing:
 4. Record missing fields and qualify the workflow instead of fabricating values.
 5. Reject a claimed approval that lacks an explicit human approval record for the exact artifact version and scope.
 
+Inventory the supplied fixture or input directory before routing. Inspect each supplied file enough to identify its role and defects. For every file in an explicitly named `intentional-defects` area, add a corresponding `evidence_defects` entry with its source path, disposition, and affected stages; before handoff, reconcile the register against the complete file inventory so no supplied defect is silently omitted.
+
+Also reconcile defects embedded in ordinary source registers and report inputs, including post-cutoff records, incomplete identifiers, restricted access, unsupported claims, and measurement conflicts. The register must cover defects in both dedicated defect fixtures and the evidence itself. Bind each approval to the exact artifact ID, version, and scope stated in its record; never relabel a source report's approval as approval of a newly generated evidence package, derivative, or design. Downstream artifacts remain unapproved unless separately approved.
+
+For a multi-stage workflow, this inventory is a blocking preflight: create `workflow-manifest.yaml` before drafting specialist artifacts. Its top-level `evidence_defects` must contain one row for every defective file plus separate rows for every cross-file conflict discovered by reconciliation. In particular, compare each reported headline or chart value with its underlying table/CSV and register any mismatch as its own defect with both source paths and affected stages; recording only the file-level defect does not cover an embedded measurement conflict. Before handoff, compare the complete defect-file list and cross-file discrepancy list against the manifest row-for-row. Never claim the evidence inventory is complete while a listed issue has no manifest entry.
+
 ## 3. Create the workflow manifest
 
 Create `workflow-manifest.yaml` before multi-stage execution. Start from `assets/templates/workflow-manifest.yaml` when the bundled template is present. Include:
@@ -48,8 +54,15 @@ Create `workflow-manifest.yaml` before multi-stage execution. Start from `assets
 - Requested outputs and visibility.
 - Selected skills and stages in dependency order.
 - Exact input and expected output artifacts for every stage.
+- A top-level `evidence_defects` register that names every supplied evidence defect, its source, disposition, and affected stages. Keep this register synchronized with detailed stage findings; do not leave defects only in a separate assessment file.
 - Versioned handoffs, approval gates, blockers, and skipped stages with reasons.
 - `publication_authorized: false` unless an explicit, scoped human record proves otherwise.
+
+Represent each `expected_outputs` item as a versioned artifact record with `artifact_id`, `artifact_type`, `version`, and expected path or location. Do not use bare IDs or unversioned strings for handoffs. Choose an explicit initial version for new outputs and keep it consistent in downstream `input_contracts` and `actual_outputs`.
+
+Keep planned or blocked actions separate from actions that actually occurred. Record deployment, publication, and ambiguous-target work in the manifest's `external_actions` list with its authorization and gate state. A task-result `external_mutations` list records only an external state change that was actually attempted or completed; do not add an entry merely to say that a future action was unauthorized or skipped. When no external change was attempted or completed, leave `external_mutations` empty and preserve the approval blocker in the manifest and handoff summary.
+
+For every stage—including a blocked or not-yet-started stage—record an `input_contracts` list naming the exact upstream artifacts it will consume: artifact identifier, type, version, location, and hash when available. Also name the exact expected downstream artifact identifiers and versions. Do not substitute a bare stage dependency or an empty input list merely because the stage is blocked or its specialist is unavailable.
 
 Use the schema and routing rules in [Routing and lifecycle](references/routing-and-lifecycle.md). Keep the manifest current after every accepted handoff or changed blocker.
 

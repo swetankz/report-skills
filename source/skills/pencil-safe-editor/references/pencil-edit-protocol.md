@@ -36,6 +36,10 @@ Keep exact paths and editor identifiers private. Use clearly synthetic labels in
 
 Never weaken these conditions because a change appears small.
 
+## Blocked handoff
+
+If any stop condition applies, report four separately labeled values: `observed_state`, `requested_state`, `blocker_state`, and `proposed_next_step`. Include the exact conflicting target identities or the precise confirmation/evidence still needed. The proposed next step must be a specific user action or safe observation that resolves the named blocker; do not imply a write is underway and do not write until the blocker is cleared.
+
 ## Preservation sequence
 
 1. Observe source save state and version identity.

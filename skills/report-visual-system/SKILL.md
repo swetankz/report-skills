@@ -47,7 +47,7 @@ Create an editable publication system without changing the approved report's mea
 1. Confirm format type, physical or digital dimensions, units, orientation, editability requirement, export targets, and expected reading context.
 2. Select the authoring surface from user requirements and available capabilities; do not require a particular vendor.
 3. Record accessibility constraints, language and script needs, output color requirements, bleed or safe areas, and production limitations.
-4. Write `publication-spec.yaml` with the exact source identities, dimensions, tokens, components, section map, assets, constraints, and export targets.
+4. Write `publication-spec.yaml` with the exact source identities, dimensions, tokens, components, section map, component-to-content map, assets, constraints, and export targets. Every component inventory entry needs a stable `component_id`, a reusable layout/component type, and its semantic token references. Map each listed component to the source content IDs it renders; do not treat a component inventory or section map alone as proof of component-level source coverage.
 
 ## 4. Build the visual system
 
@@ -63,9 +63,10 @@ Create an editable publication system without changing the approved report's mea
 ## 5. Map and author every page or frame
 
 1. Create page or frame templates before composing all sections.
-2. Map every content ID and figure ID to a destination; flag unmapped and duplicate placements.
+2. Map every content ID and figure ID to a destination and one or more `component_id` values; flag unmapped and duplicate placements. Include citation/source-note content IDs and their destinations.
+   - Complete `component_content_map` for every component in the inventory, with its source content IDs, destination IDs, and `mapped`, `system-only` (with reason), or `blocked` status. Every component must either trace to source report content or carry an explicit system-only reason; component IDs cannot exist only in the inventory.
 3. Compose for pacing across dense and sparse material without manufacturing unsupported emphasis.
-4. Keep citations and source notes reachable from the claims or figures they support.
+4. Keep citations and source notes reachable from the claims or figures they support, and map each citation content ID to both its reusable citation component and destination.
 5. Preserve limitations as first-class report content rather than decorative fine print.
 6. Create the editable source only after confirming the intended target and preservation plan.
 7. Record the editable source identity and hash after authoring.

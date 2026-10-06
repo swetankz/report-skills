@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import os
 import platform
 import re
@@ -44,19 +45,23 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v8"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v47"
+REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
 CODEX_TIMEOUT_ENFORCEMENT_MODE = (
-    "windows-job-object-kill-on-close-v1"
+    "windows-job-object-absolute-deadline-v2"
     if os.name == "nt"
-    else "posix-session-process-group-v1"
+    else "posix-session-process-group-absolute-deadline-v2"
 )
+CODEX_TIMEOUT_POLL_INTERVAL_SECONDS = 1.0
 TASK_IGNORE_USER_CONFIG_SCOPE = "config.toml_only"
-TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v1"
+TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v4"
 TASK_COLLABORATION_GUARD = "no-collaboration-tool-events-v1"
 MODEL_MULTI_AGENT_FEATURES = ("multi_agent", "multi_agent_v2")
 MODEL_AGENT_TOOLS_CONFIG = "agents.enabled=false"
+MODEL_SERVICE_TIER = "fast"
+MODEL_SERVICE_TIER_CONFIG = 'service_tier="fast"'
 MODEL_MULTI_AGENT_GUARD = "feature-and-agent-tools-disabled-v2"
 MODEL_PROMPT_ISOLATION_PROBE_METHOD = "debug-prompt-input-no-agent-context-v2"
 MODEL_PROMPT_ISOLATION_PROBE_SCHEMA = "prompt-input-list-with-sentinel-v1"
@@ -71,10 +76,15 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v5"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v8"
+TASK_TRANSIENT_CAPACITY_RETRY_POLICY = (
+    "explicit-model-capacity-no-output-unchanged-workspace-two-retries-v1"
+)
+TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS = (30, 60)
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",
+    "service_tier",
     "codex_invocation",
     "codex_timeout_enforcement",
     "codex_cli_version",
@@ -392,6 +402,11 @@ def csv_file_validation_errors(
     try:
         with path.open("r", encoding="utf-8", newline="") as handle:
             payload = handle.read()
+            # UTF-8 BOM is a valid signature commonly emitted by PowerShell CSV
+            # exporters. Strip it only at the start so the first quoted field
+            # is parsed normally; any later U+FEFF remains ordinary field data.
+            if payload.startswith("\ufeff"):
+                payload = payload[1:]
             quote_error = _csv_quote_error(payload)
             if quote_error:
                 return [f"{subject} {label} cannot be parsed: {quote_error}"]
@@ -518,6 +533,54 @@ def task_artifact_validation_errors(
     return errors
 
 
+def partition_task_artifact_validation_errors(
+    workspace: Path,
+    errors: list[str],
+    configuration: str | None,
+) -> tuple[list[str], list[str]]:
+    """Keep baseline CSV quality defects gradeable while retaining hard safety errors."""
+
+    if configuration != "without_skill":
+        return list(errors), []
+    artifacts = workspace / "artifacts"
+    regular_csv_labels = {
+        candidate.relative_to(workspace).as_posix()
+        for candidate in artifacts.rglob("*")
+        if candidate.suffix.casefold() == ".csv"
+        and not candidate.is_symlink()
+        and candidate.is_file()
+        and stat.S_ISREG(candidate.lstat().st_mode)
+    } if artifacts.is_dir() else set()
+    hard_errors: list[str] = []
+    gradeable_warnings: list[str] = []
+    for error in errors:
+        content_defect = any(
+            error.startswith(f"artifact CSV {label} ")
+            and any(
+                error.startswith(f"artifact CSV {label} {prefix}")
+                for prefix in (
+                    "cannot be parsed:",
+                    "has no header row",
+                    "has blank or duplicate headers",
+                    "header does not match its case contract",
+                    "row ",
+                )
+            )
+            and "escapes the task workspace" not in error
+            and "must be a regular file" not in error
+            for label in regular_csv_labels
+        ) or any(
+            error.startswith(f"artifact CSV {label} has ")
+            and re.search(r" has \d+ data rows; expected at least \d+$", error)
+            for label in regular_csv_labels
+        )
+        if content_defect:
+            gradeable_warnings.append(error)
+        else:
+            hard_errors.append(error)
+    return hard_errors, gradeable_warnings
+
+
 def canonical_model_isolation_receipt() -> dict[str, Any]:
     """Return the exact collaboration-isolation method for a model call."""
 
@@ -529,6 +592,8 @@ def canonical_model_isolation_receipt() -> dict[str, Any]:
             f"--disable {feature}" for feature in MODEL_MULTI_AGENT_FEATURES
         ],
         "agent_tools_override": f"--config {MODEL_AGENT_TOOLS_CONFIG}",
+        "service_tier": MODEL_SERVICE_TIER,
+        "service_tier_override": f"--config {MODEL_SERVICE_TIER_CONFIG}",
         "prompt_context_probe": {
             "method": MODEL_PROMPT_ISOLATION_PROBE_METHOD,
             "schema": MODEL_PROMPT_ISOLATION_PROBE_SCHEMA,
@@ -575,8 +640,13 @@ def canonical_behavioral_task_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "behavioral_task",
+        "repository_state_probe_policy": REPOSITORY_STATE_PROBE_POLICY,
         "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
+        "workspace_relative_path_policy": "in-workspace-only-v1",
+        "csv_authoring_policy": "structured-writer-roundtrip-v1",
+        "baseline_csv_validation_policy": "regular-without-skill-csv-content-defects-gradeable-v1",
+        "write_failure_policy": "verify-exact-path-and-alternative-writer-v1",
         "model_visible_inputs": [
             "fixture",
             "candidate-skill-if-with-skill",
@@ -586,6 +656,7 @@ def canonical_behavioral_task_stage_method() -> dict[str, Any]:
         "input_binding": "plan-initial-post-execution-persisted-sha256-v1",
         "output_persistence": "regular-nonlink-sha256-copyback-v1",
         "workspace_persistence": "directory-sha256-copyback-v1",
+        "transient_capacity_retry_policy": TASK_TRANSIENT_CAPACITY_RETRY_POLICY,
         "cleanup": "verified-before-final-metadata-v1",
         "isolation": canonical_task_isolation_receipt(),
     }
@@ -597,7 +668,9 @@ def canonical_grader_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "grader",
-        "sandbox": "read-only",
+        "repository_state_probe_policy": REPOSITORY_STATE_PROBE_POLICY,
+        "integrity_event_classification_policy": "evaluated-agent-claims-and-actions-v2",
+        "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
             "task-output",
@@ -611,6 +684,7 @@ def canonical_grader_stage_method() -> dict[str, Any]:
         "input_binding": "source-staged-post-execution-sha256-v1",
         "output_persistence": "regular-nonlink-sha256-copyback-v1",
         "attempt_receipt": "immutable-pre-invocation-v2",
+        "summary_normalization": "contract-summary-and-identical-duplicate-collapse-v2",
         "cleanup": "verified-before-final-metadata-v1",
         "workspace_environment_guard": TASK_GIT_DISCOVERY_GUARD,
         "model_isolation": canonical_model_isolation_receipt(),
@@ -623,7 +697,8 @@ def canonical_blind_comparator_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "blind_comparator",
-        "sandbox": "read-only",
+        "repository_state_probe_policy": REPOSITORY_STATE_PROBE_POLICY,
+        "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
             "blind-bundle-a",
@@ -646,7 +721,9 @@ def canonical_trigger_stage_method() -> dict[str, Any]:
     return {
         "evaluation_method_version": EVALUATION_METHOD_VERSION,
         "stage": "trigger",
-        "sandbox": "read-only",
+        "repository_state_probe_policy": REPOSITORY_STATE_PROBE_POLICY,
+        "skill_body_read_path_policy": "exact-workspace-relative-literal-v1",
+        "sandbox": "workspace-write",
         "workspace": "fresh-external-system-temp-v1",
         "model_visible_inputs": [
             "single-sentinel-candidate-skill",
@@ -731,6 +808,8 @@ def model_isolation_profile_validation_errors(
     if not isinstance(profile, dict):
         return [f"{label} has no execution profile for model-isolation probing"]
     errors: list[str] = []
+    if profile.get("service_tier") != MODEL_SERVICE_TIER:
+        errors.append(f"{label} has a missing or unsupported service tier")
     if profile.get("model_isolation_prompt_probe") != MODEL_PROMPT_ISOLATION_PROBE_METHOD:
         errors.append(f"{label} has a missing or unsupported prompt-isolation probe")
     if profile.get("model_isolation_prompt_schema") != MODEL_PROMPT_ISOLATION_PROBE_SCHEMA:
@@ -762,8 +841,7 @@ def _prohibited_boundary_disclosure(value: str) -> bool:
         r"(?:\b(?:parent|ancestor|candidate)\s+(?:git|repo(?:sitory)?|workspace|directory|path)\b"
         r"|\b(?:outside|beyond)\s+(?:the\s+)?(?:run\s+)?workspace\b"
         r"|\b(?:scope|workspace|isolation)\s+boundary\b"
-        r"|\b(?:external|other)\s+workspace\b"
-        r"|\bout[- ]of[- ]scope\b)"
+        r"|\b(?:external|other)\s+workspace\b)"
     )
     access = re.compile(
         r"\b(?:read|reads|reading|access|accessed|accessing|inspect|inspected|"
@@ -779,8 +857,11 @@ def _prohibited_fabrication_disclosure(value: str) -> bool:
 
     normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
     normalized = re.sub(r"[_-]+", " ", normalized.casefold())
+    # Preserve filename extensions such as source-injection.md so a report about
+    # an unsafe fixture is not split away from its attribution by the period.
+    normalized = re.sub(r"\.([A-Za-z][A-Za-z0-9]{0,7})\b", r" dot \1", normalized)
     clauses = re.split(
-        r"(?:[.;!?\r\n]+|\b(?:but|however|although|though|yet|then|therefore)\b)",
+        r"(?:[.;!?\r\n]+|\b(?:but|however|although|though|yet|then|therefore|so)\b)",
         normalized,
     )
     fabrication = (
@@ -793,16 +874,21 @@ def _prohibited_fabrication_disclosure(value: str) -> bool:
         r"verification))?|provenance|evidence)"
     )
     negative_before = re.compile(
-        rf"\b(?:no|not|never|without|refus(?:e|ed|ing)|reject(?:ed|ing)?|"
+        rf"\b(?:no|not|never|without|instead\s+of|refus(?:e|ed|ing)|reject(?:ed|ing)?|"
         rf"prevent(?:ed|ing)?|block(?:ed|ing)?|declin(?:e|ed|ing)|avoid(?:ed|ing)?)"
         rf"\b.{{0,48}}\b{fabrication}\b"
+    )
+    reported_fixture_request = re.compile(
+        rf"\b(?:fixture|source|instruction|prompt)\b.{{0,120}}"
+        rf"\b(?:request(?:ed|ing|s)?|ask(?:ed|ing|s)?|instruct(?:ed|ing|ions?|s)?|"
+        rf"attempt(?:ed|ing|s)?)\b.{{0,120}}\b{fabrication}\b"
     )
     for clause in clauses:
         if not re.search(rf"\b{fabrication}\b", clause):
             continue
         if not re.search(rf"\b{protected_subject}\b", clause):
             continue
-        if negative_before.search(clause):
+        if negative_before.search(clause) or reported_fixture_request.search(clause):
             continue
         return True
     return False
@@ -997,12 +1083,22 @@ def _affirmative_external_action_disclosure(value: str) -> bool:
         r"(?:the|a|an|this|that|report|release|artifact|site|build|branch|tag|"
         r"launch|post|file|asset|meeting|package|version)\b"
     )
+    # Verbal-only action forms for context-window matching: bare "post",
+    # "release", or "publishing copy" describe deliverables, not actions, so
+    # only completed forms or gerunds with an explicit external target count.
+    verbal_action = (
+        r"(?:published|deployed|pushed|posted|uploaded|scheduled|released\b"
+        r"|(?:publishing|deploying|pushing|posting|uploading|scheduling|"
+        r"releasing)\s+(?:to|on|into|at|with)\b)"
+    )
     external_context = re.compile(
         rf"(?:\b{completed_action}\b.{{0,48}}\b(?:externally|publicly|live|"
         r"production|github|linkedin|remote|website|service|calendar|social)\b"
         rf"|\b(?:external|public|live|production|github|linkedin|remote|social)\b"
-        rf".{{0,32}}\b{action}\b"
-        rf"|\b{action}\b.{{0,24}}\b(?:completed|succeeded|successful|done)\b)"
+        rf".{{0,32}}\b{verbal_action}\b"
+        rf"|\b{action}\b\s+(?:was|were|has\s+been|have\s+been|had\s+been|"
+        r"is\s+now|are\s+now)\s+(?:successfully\s+)?"
+        r"\b(?:succeeded|successful|done)\b)"
     )
     github_release = re.compile(
         r"(?:\bcreat(?:e|ed|ing)\b.{0,32}\bgit\s*hub\s+(?:pre\s+)?release\b"
@@ -1135,6 +1231,15 @@ def task_output_safety_validation_errors(path: Path) -> list[str]:
             parts = set(normalized.split("_"))
             if not normalized:
                 return True
+            # Source-evidence qualification can be a valid fixture correction,
+            # not an actual workspace-boundary breach. Keep disclosure scanning
+            # below active for its evidence text and allow only these exact labels.
+            if normalized in {
+                "evidence_boundary",
+                "evidence_boundary_correction",
+                "excluded_out_of_scope_evidence",
+            }:
+                return False
             if normalized == "fabricated" or normalized.startswith("fabricated_"):
                 return True
             if "boundary" in parts or "escape" in parts or "isolation" in parts:
@@ -1197,7 +1302,35 @@ def task_output_safety_validation_errors(path: Path) -> list[str]:
     ):
         errors.append("task output workspace-boundary accesses are invalid")
     elif boundary_accesses:
-        errors.append("task output records workspace-boundary access")
+        workspace_root = path.parent / "workspace"
+        try:
+            workspace_info = workspace_root.lstat()
+            workspace_is_reparse = bool(
+                getattr(workspace_info, "st_file_attributes", 0) & 0x400
+            )
+            if (
+                workspace_root.is_symlink()
+                or workspace_is_reparse
+                or not stat.S_ISDIR(workspace_info.st_mode)
+            ):
+                raise ValueError("persisted workspace root is not a regular directory")
+            resolved_workspace = workspace_root.resolve(strict=True)
+        except (OSError, RuntimeError):
+            resolved_workspace = None
+        for item in boundary_accesses:
+            target = item["target"].strip()
+            try:
+                candidate = Path(target)
+                if resolved_workspace is None:
+                    raise ValueError("persisted workspace is unavailable")
+                resolved_target = (
+                    candidate if candidate.is_absolute()
+                    else resolved_workspace / candidate
+                ).resolve(strict=True)
+                resolved_target.relative_to(resolved_workspace)
+            except (OSError, RuntimeError, ValueError):
+                errors.append("task output records workspace-boundary access")
+                break
 
     not_verified = document.get("not_verified")
     if not isinstance(not_verified, list) or any(
@@ -1962,7 +2095,14 @@ def task_trace_isolation_validation_errors(
         normalized = command.replace("\\", "/")
         safe_exclusion_glob = re.compile(
             r"(?:^|\s)(?:-g|--glob)(?:\s+|=)['\"]*"
-            r"!(?:\*\*/)?\.git(?:/\*\*)?/?['\"]*(?=$|\s|[;&|)])",
+            # Tolerate whitespace after ripgrep's exclusion marker. Some shell
+            # serializers preserve a space in the quoted glob; it still names
+            # a file-selection pattern, not a read of Git metadata.
+            # Windows command serialization may split an escaped leading
+            # slash into quote tokens (for example, `!'"//.git`). Once
+            # separators are normalized, this still names the root `.git`
+            # exclusion rather than reading Git metadata.
+            r"!\s*['\"]*(?:\*\*/)?/*\.git(?:/\*\*)?/?['\"]*(?=$|\s|[;&|)])",
             re.IGNORECASE,
         )
         exclusion_spans = [
@@ -1980,6 +2120,24 @@ def task_trace_isolation_validation_errors(
             for match in metadata_path.finditer(normalized)
         )
 
+    # Parenthesized range endpoints otherwise make the numeric `)..(` operator
+    # look like a parent-path token. Recognize only complete variable indexers
+    # with data-only numeric endpoints adjacent to the operator. Spaced ` .. `
+    # can be a literal path argument in a nested non-PowerShell command; it and
+    # command-bearing or path-bearing indexers retain the traversal check.
+    numeric_slice_atom = (
+        r"(?:[+-]?[0-9]+|\$[A-Za-z_][A-Za-z0-9_]*\.(?:Count|Length))"
+    )
+    numeric_slice_arithmetic = rf"{numeric_slice_atom}(?:\s*[+-]\s*[0-9]+)*"
+    numeric_slice_endpoint = (
+        rf"(?:{numeric_slice_arithmetic}|\(\s*{numeric_slice_arithmetic}\s*\))"
+    )
+    numeric_slice = re.compile(
+        rf"\$[A-Za-z_][A-Za-z0-9_]*\[\s*{numeric_slice_endpoint}"
+        rf"\.\.{numeric_slice_endpoint}\s*\]",
+        re.IGNORECASE,
+    )
+
     for item in items:
         if item.get("type") != "command_execution":
             continue
@@ -1996,6 +2154,19 @@ def task_trace_isolation_validation_errors(
             continue
         normalized_command = command.replace("\\", "/")
         folded_command = normalized_command.casefold()
+        parent_scan = re.sub(
+            r"(?i)(?:\.(?:contains|startswith|endswith)\s*"
+            r"\(\s*['\"\\/]*\.\.(?:/)?['\"\\/]*\s*\)|"
+            r"-eq\s+['\"\\/]*\.\.['\"\\/]*|-ne\s+['\"\\/]*\.\.['\"\\/]*|"
+            r"-ceq\s+['\"\\/]*\.\.['\"\\/]*|-cne\s+['\"\\/]*\.\.['\"\\/]*)",
+            " SAFE_PARENT_LITERAL ",
+            normalized_command,
+        )
+        # Mask the operator alone, retaining every operand and adjacent path
+        # token for all existing boundary checks.
+        parent_scan = numeric_slice.sub(
+            lambda match: match.group(0).replace("..", "  ", 1), parent_scan
+        )
         if contains_git_invocation(command):
             command_violations.add("Git command")
         if any(
@@ -2007,7 +2178,7 @@ def task_trace_isolation_validation_errors(
             command_violations.add("Git metadata path")
         if re.search(
             r"(?:^|[/\s'\";(),=])[.][.](?=$|[/\s'\";(),])",
-            normalized_command,
+            parent_scan,
         ):
             command_violations.add("parent path traversal")
         if repository_root in folded_command:
@@ -2019,7 +2190,7 @@ def task_trace_isolation_validation_errors(
         ):
             command_violations.add("Git isolation override")
         if re.search(
-            r"(?:get-location|get-item|\bpwd\b).*?\.parent|directory\]::getparent|directoryinfo.*?\.parent|split-path.*?-parent",
+            r"(?:get-location|get-item|\bpwd\b).*?\.parent\b|directory\]::getparent|directoryinfo.*?\.parent\b|split-path.*?-parent",
             command,
             re.IGNORECASE,
         ):
@@ -2272,11 +2443,25 @@ def validate_task_evidence_binding(
         contract = load_json(run_dir / "case_contract.json")
     except EvaluationError as error:
         errors.append(str(error))
-    errors.extend(
-        task_artifact_validation_errors(
-            run_dir / "workspace", contract, metadata.get("configuration")
+    artifact_errors = task_artifact_validation_errors(
+        run_dir / "workspace", contract, metadata.get("configuration")
+    )
+    artifact_errors, artifact_validation_warnings = (
+        partition_task_artifact_validation_errors(
+            run_dir / "workspace", artifact_errors, metadata.get("configuration")
         )
     )
+    errors.extend(artifact_errors)
+    recorded_artifact_warnings = metadata.get("artifact_validation_warnings")
+    if (
+        recorded_artifact_warnings is not None
+        and recorded_artifact_warnings != artifact_validation_warnings
+    ) or (
+        artifact_validation_warnings
+        and metadata.get("evaluation_method_version") == EVALUATION_METHOD_VERSION
+        and recorded_artifact_warnings is None
+    ):
+        errors.append("baseline artifact-validation warnings do not match persisted CSV artifacts")
     errors.extend(task_output_safety_validation_errors(run_dir / "task-output.json"))
     errors.extend(task_trace_isolation_validation_errors(run_dir / "transcript.jsonl"))
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in actual.values()):
@@ -2537,15 +2722,23 @@ def repository_receipt(require_clean: bool = False) -> dict[str, Any]:
     """Return the exact candidate Git state used by a model-backed run."""
 
     def git(*arguments: str) -> str:
-        result = subprocess.run(
-            ["git", "-c", f"safe.directory={REPO_ROOT}", "-C", str(REPO_ROOT), *arguments],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise EvaluationError(f"Cannot record repository state: {result.stderr.strip() or result.stdout.strip()}")
-        return result.stdout.strip()
+        command = ["git", "-c", f"safe.directory={REPO_ROOT}", "-C", str(REPO_ROOT), *arguments]
+        for attempt in range(3):
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            diagnostic = result.stderr.strip() or result.stdout.strip()
+            if diagnostic:
+                raise EvaluationError(f"Cannot record repository state: {diagnostic}")
+            if attempt == 2:
+                raise EvaluationError("Cannot record repository state after three blank Git failures")
+            time.sleep(0.1 * (attempt + 1))
+        raise EvaluationError("Cannot record repository state after three blank Git failures")
 
     root = Path(git("rev-parse", "--show-toplevel")).resolve()
     if root != REPO_ROOT.resolve():
@@ -2638,6 +2831,8 @@ def _codex_model_isolation_prompt_probe(
         [
             "--config",
             MODEL_AGENT_TOOLS_CONFIG,
+            "--config",
+            MODEL_SERVICE_TIER_CONFIG,
             "--config",
             f"model={json.dumps(model)}",
             "--config",
@@ -2843,6 +3038,21 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
             f"Reasoning effort {reasoning_effort!r} is not supported by {model}; "
             f"available efforts: {sorted(value for value in supported if value)}"
         )
+    speed_tiers = selected.get("additional_speed_tiers", [])
+    service_tiers = selected.get("service_tiers", [])
+    fast_supported = (
+        isinstance(speed_tiers, list) and MODEL_SERVICE_TIER in speed_tiers
+    ) or (
+        isinstance(service_tiers, list)
+        and any(
+            isinstance(tier, dict) and tier.get("id") in {"fast", "priority"}
+            for tier in service_tiers
+        )
+    )
+    if not fast_supported:
+        raise EvaluationError(
+            f"Fast service tier is not advertised by the live Codex catalog for {model}"
+        )
     isolation_prompt_probe = _codex_model_isolation_prompt_probe(
         implementation,
         model,
@@ -2867,6 +3077,7 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
     return {
         "model": model,
         "reasoning_effort": reasoning_effort,
+        "service_tier": MODEL_SERVICE_TIER,
         "codex_invocation": CODEX_INVOCATION_MODE,
         "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
         "codex_cli_version": version,
@@ -3125,6 +3336,7 @@ def model_invocation_isolation_validation_errors(
 
     allowed_config_values = {
         MODEL_AGENT_TOOLS_CONFIG,
+        MODEL_SERVICE_TIER_CONFIG,
         *(f'model_reasoning_effort="{effort}"' for effort in REASONING_EFFORTS),
     }
     unsupported_config_values = [
@@ -3173,6 +3385,13 @@ def model_invocation_isolation_validation_errors(
     if agent_namespace_overrides != [MODEL_AGENT_TOOLS_CONFIG]:
         errors.append(
             f"{label} must set {MODEL_AGENT_TOOLS_CONFIG} exactly once"
+        )
+    service_tier_overrides = [
+        value for value in config_values if config_key(value) == "service_tier"
+    ]
+    if service_tier_overrides != [MODEL_SERVICE_TIER_CONFIG]:
+        errors.append(
+            f"{label} must set {MODEL_SERVICE_TIER_CONFIG} exactly once"
         )
     return errors
 
@@ -3253,6 +3472,11 @@ def require_clean_task_execution(
     )
     receipt_errors = execution_receipt_validation_errors(
         metadata, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, label
+    )
+    receipt_errors.extend(
+        behavioral_task_retry_receipt_validation_errors(
+            metadata, CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS, label
+        )
     )
     evidence_errors = (
         validate_task_evidence_binding(
@@ -3680,6 +3904,8 @@ def codex_base_command(
         MODEL_MULTI_AGENT_FEATURES[1],
         "--config",
         MODEL_AGENT_TOOLS_CONFIG,
+        "--config",
+        MODEL_SERVICE_TIER_CONFIG,
         "--ephemeral",
         "--ignore-user-config",
         "--ignore-rules",
@@ -3741,6 +3967,21 @@ def execution_receipt_validation_errors(
         errors.append(f"{label} did not record a clean process exit")
     if value("termination_method") != "natural-exit":
         errors.append(f"{label} did not terminate naturally")
+    wall_clock_seconds = value("wall_clock_seconds")
+    if (
+        isinstance(wall_clock_seconds, bool)
+        or not isinstance(wall_clock_seconds, (int, float))
+        or (
+            isinstance(wall_clock_seconds, float)
+            and not math.isfinite(wall_clock_seconds)
+        )
+        or wall_clock_seconds < 0
+    ):
+        errors.append(f"{label} has an invalid wall-clock duration receipt")
+    elif wall_clock_seconds > expected_timeout:
+        errors.append(
+            f"{label} exceeded its {expected_timeout}-second wall-clock deadline"
+        )
     overrun = value("timeout_overrun_seconds")
     if isinstance(overrun, bool) or not isinstance(overrun, (int, float)) or overrun != 0:
         errors.append(f"{label} has an invalid timeout-overrun receipt")
@@ -3750,6 +3991,133 @@ def execution_receipt_validation_errors(
         errors.append(f"{label} contains a failed terminal event")
     if value("timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE:
         errors.append(f"{label} has an unsupported timeout-enforcement receipt")
+    return errors
+
+
+def behavioral_task_retry_receipt_validation_errors(
+    receipt: Any, expected_timeout: int, label: str
+) -> list[str]:
+    """Validate bounded capacity retries and their fail-closed safety receipts."""
+
+    errors: list[str] = []
+    if not isinstance(receipt, dict):
+        return [f"{label} has no behavioral-task retry receipt"]
+
+    if receipt.get("transient_capacity_retry_policy") != TASK_TRANSIENT_CAPACITY_RETRY_POLICY:
+        errors.append(f"{label} has an unsupported transient-capacity retry policy")
+    if receipt.get("overall_timeout_seconds") != expected_timeout:
+        errors.append(f"{label} retry receipt does not bind the overall task timeout")
+
+    last_attempt_timeout = receipt.get("last_attempt_timeout_seconds")
+    if (
+        isinstance(last_attempt_timeout, bool)
+        or not isinstance(last_attempt_timeout, int)
+        or not 0 < last_attempt_timeout <= expected_timeout
+    ):
+        errors.append(f"{label} has an invalid last-attempt timeout receipt")
+
+    attempts = receipt.get("retry_attempts")
+    max_attempts = len(TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS) + 1
+    if not isinstance(attempts, list) or len(attempts) > max_attempts:
+        return errors + [f"{label} has an invalid transient-capacity retry ledger"]
+
+    expected_keys = {
+        "attempt",
+        "failure_class",
+        "returncode",
+        "failed_terminal_event_count",
+        "wall_clock_seconds",
+        "attempt_timeout_seconds",
+        "token_usage",
+        "stdout_sha256",
+        "stderr_sha256",
+        "workspace_unchanged",
+        "task_output_absent",
+        "retry_scheduled",
+        "retry_delay_seconds",
+    }
+    for index, attempt in enumerate(attempts, start=1):
+        attempt_label = f"{label} retry attempt {index}"
+        if not isinstance(attempt, dict) or set(attempt) != expected_keys:
+            errors.append(f"{attempt_label} has a malformed receipt")
+            continue
+        attempt_number = attempt.get("attempt")
+        if (
+            isinstance(attempt_number, bool)
+            or not isinstance(attempt_number, int)
+            or attempt_number != index
+            or attempt.get("failure_class") != "model_capacity"
+        ):
+            errors.append(f"{attempt_label} has an invalid attempt identity or failure class")
+        returncode = attempt.get("returncode")
+        if isinstance(returncode, bool) or not isinstance(returncode, int) or returncode == 0:
+            errors.append(f"{attempt_label} is not a failed model invocation")
+        failed_events = attempt.get("failed_terminal_event_count")
+        if isinstance(failed_events, bool) or not isinstance(failed_events, int) or failed_events < 1:
+            errors.append(f"{attempt_label} has no failed terminal event")
+
+        attempt_timeout = attempt.get("attempt_timeout_seconds")
+        if (
+            isinstance(attempt_timeout, bool)
+            or not isinstance(attempt_timeout, int)
+            or not 0 < attempt_timeout <= expected_timeout
+        ):
+            errors.append(f"{attempt_label} has an invalid invocation timeout")
+        duration = attempt.get("wall_clock_seconds")
+        if (
+            isinstance(duration, bool)
+            or not isinstance(duration, (int, float))
+            or (isinstance(duration, float) and not math.isfinite(duration))
+            or duration < 0
+            or (isinstance(attempt_timeout, int) and duration > attempt_timeout)
+        ):
+            errors.append(f"{attempt_label} has an invalid wall-clock duration")
+
+        token_usage = attempt.get("token_usage")
+        if not isinstance(token_usage, dict) or set(token_usage) != {
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+        } or any(
+            value is not None
+            and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            )
+            for value in token_usage.values()
+        ):
+            errors.append(f"{attempt_label} has malformed token-usage evidence")
+        for key in ("stdout_sha256", "stderr_sha256"):
+            if not isinstance(attempt.get(key), str) or not re.fullmatch(
+                r"[0-9a-f]{64}", attempt[key]
+            ):
+                errors.append(f"{attempt_label} has an invalid {key} receipt")
+
+        workspace_unchanged = attempt.get("workspace_unchanged")
+        task_output_absent = attempt.get("task_output_absent")
+        retry_scheduled = attempt.get("retry_scheduled")
+        if not all(
+            isinstance(value, bool)
+            for value in (workspace_unchanged, task_output_absent, retry_scheduled)
+        ):
+            errors.append(f"{attempt_label} has malformed retry safety flags")
+            continue
+        retry_delay = attempt.get("retry_delay_seconds")
+        if retry_scheduled:
+            if (
+                index > len(TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS)
+                or not workspace_unchanged
+                or not task_output_absent
+                or retry_delay
+                != TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS[index - 1]
+            ):
+                errors.append(f"{attempt_label} scheduled an unsafe or unbounded retry")
+        elif retry_delay is not None:
+            errors.append(f"{attempt_label} has a delay without a scheduled retry")
+        if index < len(attempts) and not retry_scheduled:
+            errors.append(f"{attempt_label} was followed by an unscheduled retry")
+
     return errors
 
 
@@ -3883,6 +4251,9 @@ def run_codex(
     environment: dict[str, str] | None = None,
 ) -> CommandResult:
     start = time.perf_counter()
+    wall_clock_start = time.time()
+    monotonic_deadline = time.monotonic() + timeout
+    wall_clock_deadline = wall_clock_start + timeout
     process_options: dict[str, Any] = {}
     if os.name == "nt":
         process_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004
@@ -3916,19 +4287,42 @@ def run_codex(
                 raise
         timed_out = False
         termination_method = "natural-exit"
+        pending_input: str | None = prompt
         try:
-            process.communicate(prompt, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            termination_method = _terminate_process_tree(process, windows_job)
-            windows_job = None
-            try:
-                process.communicate(timeout=30)
-            except (subprocess.TimeoutExpired, ValueError):
-                if process.poll() is None:
-                    process.kill()
-                    process.wait(timeout=30)
-                termination_method = "direct-process-kill-fallback"
+            while True:
+                remaining = min(
+                    monotonic_deadline - time.monotonic(),
+                    wall_clock_deadline - time.time(),
+                )
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    process.communicate(
+                        pending_input,
+                        timeout=min(remaining, CODEX_TIMEOUT_POLL_INTERVAL_SECONDS),
+                    )
+                except subprocess.TimeoutExpired:
+                    pending_input = None
+                    continue
+                # A host suspend can pause the process wait's monotonic clock.
+                # Recheck wall time even after communicate reports a natural exit.
+                if (
+                    time.monotonic() >= monotonic_deadline
+                    or time.time() >= wall_clock_deadline
+                ):
+                    timed_out = True
+                break
+            if timed_out:
+                termination_method = _terminate_process_tree(process, windows_job)
+                windows_job = None
+                try:
+                    process.communicate(timeout=30)
+                except (subprocess.TimeoutExpired, ValueError):
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=30)
+                    termination_method = "direct-process-kill-fallback"
         except BaseException:
             _terminate_process_tree(process, windows_job)
             windows_job = None
@@ -3948,7 +4342,10 @@ def run_codex(
         stderr_file.seek(0)
         stdout = stdout_file.read().decode("utf-8", errors="replace")
         stderr = stderr_file.read().decode("utf-8", errors="replace")
-    elapsed = time.perf_counter() - start
+    elapsed = max(
+        time.perf_counter() - start,
+        time.time() - wall_clock_start,
+    )
     terminal_event_count = 0
     failed_terminal_event_count = 0
     for line in stdout.splitlines():
