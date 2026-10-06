@@ -17,15 +17,15 @@ Reject a shortened statement when the missing context changes its meaning. Do no
 
 Inventory source notes, dates/cutoffs, citations, captions, and metadata as well as main creative copy. Create one mapping row per factual occurrence; repeated text in the body and alt text needs separate rows. Put the exact output location and verbatim `output_text` in each row, with the exact approved claim/source identifier and source locator. Do not group multiple cards, frames, or fields under a generic location. If a factual statement has no valid supporting identifier, remove it or mark it `unmapped`/`not-validated` and block any completeness claim.
 
-Include every proposed accessibility string (alt text, captions, and transcripts) in the atomic statement inventory. Map each factual clause within it to the exact supporting claim and exact text/field location; a mapping that merely names the visual or `accessibility_copy` package does not count.
+Include every proposed accessibility string (alt text, captions, and transcripts) in the atomic statement inventory. Map each factual clause within it to the exact supporting claim and exact text/field location; a mapping that merely names the visual or `accessibility_copy` package does not count. The accessibility row must repeat every claim ID used by the visual statement IDs it references and include an exact source locator; the validator checks this linkage.
 
-Before handoff, split every deliverable into atomic factual clauses and trace each exact output location to the claim that supports it. Include headlines, subheads, card-by-card copy, captions, calls to action that make factual promises, on-screen text, narration, and quantitative labels. A package-level source list or a claim-by-deliverable coverage matrix is not proof that every statement is mapped.
+Before handoff, split every deliverable into atomic factual clauses and trace each exact output location to the claim that supports it. Include headlines, subheads, card-by-card copy, captions, calls to action that make factual promises, on-screen text, narration, and quantitative labels. Include the exact approved report title visibly in every requested format. Preserve the source's population wording; do not upgrade “respondents” to “residents” or infer a population attribute. Before drafting, inventory every recommendation, safeguard, stop rule, and required support path; for each deliverable, retain each material item or create a distinct omitted row with its exact source locator, the omitted context, and the reason. A package-level source list or a claim-by-deliverable coverage matrix is not proof that every statement is mapped.
 
 Check recommendations separately from findings. Do not attach a source claim to a recommendation unless that claim actually supports it. Remove unsupported factual clauses; label a genuine recommendation as a recommendation and record its rationale instead of making it appear source-backed.
 
 ## Format patterns
 
-Do not calculate or substitute a new percentage or rate when the approved report already states the figure; preserve the supplied number and qualifiers. Accessibility text and transcripts must retain material qualifiers, limitations, denominators, and safeguards from the corresponding visual/narration rather than compressing them away.
+Do not calculate or substitute a new percentage or rate when the approved report already states the figure; preserve the supplied number and qualifiers. Accessibility text and transcripts must reproduce the complete linked visible/spoken copy verbatim (formatting may differ), then may add concise visual description. Do not paraphrase away a synthetic qualifier, source population, denominator, recommendation step, or safeguard; the validator checks verbatim parity against every linked visual statement.
 
 ### Single 4:5 post
 
@@ -54,13 +54,13 @@ Record frame identifier, duration, on-screen copy, narration or caption copy, ap
 
 ## Derivative manifest fields
 
-Every deliverable file must carry its own parent identity, source claim IDs, transformation type, proposed dimensions/aspect ratio, and status. Put these fields on every data row of a CSV or other row-oriented file; a package manifest entry is not per-file metadata. If the format makes repeated columns invalid, use a same-stem sidecar and link the relative sidecar path from the deliverable.
+Every requested-format file must carry its own parent identity, source claim IDs, transformation type, proposed dimensions/aspect ratio, and status. Put these fields on every data row of a CSV or other row-oriented file; a package manifest entry is not per-file metadata. If the format makes repeated columns invalid, use a same-stem sidecar and link the relative sidecar path from the deliverable. Every manifest deliverable entry must have a role: `requested-format` only for a consumer format explicitly asked for, `supporting-artifact` for checklists, validation records, and other internal support files. The validator requires the exact approved title and visual accessibility coverage for requested formats, not for support records.
 
-The statement-level mapping schema adds `source_locator` and verbatim `output_text` to the fields below. Include one distinct row per factual occurrence at its exact location; do not bundle several outputs or accessibility strings into one row.
+The statement-level mapping schema adds `source_locator` and verbatim `output_text` to the fields below. Include one distinct row per factual occurrence at its exact location; do not bundle several outputs or accessibility strings into one row. Classify report-derived facts in source notes as `sourced_fact` or `analysis`, never as `source_metadata`; reserve `source_metadata` for literal provenance values in structured headers/manifests.
 
 Use unique `statement_id` markers on every copy unit: `<!-- statement_id: ST-001 -->` before each Markdown block, a `statement_id` field for every YAML/JSON text item, and a `statement_id` column for each CSV copy row. Markdown files also need a populated YAML front-matter header containing all per-file provenance fields. A CSV video plan uses one row per frame-copy unit (for example, `on_screen_copy`, `narration`, or `accessibility_transcript`) with frame ID, duration, content type, exact text, visual source, transformation, transition intent, and provenance columns repeated on each row. Every factual copy row needs a nonempty exact claim/source ID and source locator; if none exists, omit the factual text or block completion. Provenance values such as report version, cutoff, draft/publication status, dimensions, and parent hash belong in structured metadata, not consumer-facing copy; never attach unrelated claim IDs to metadata. If the actual copy states a source fact about scope or cutoff, map that sentence to its exact source ID and locator. The statement register is drafted first and is the source from which those copy units are materialized.
 
-Treat each post/card/frame as a visual unit. Add `visual_unit_id` and semicolon-separated `related_statement_ids` columns to the mapping. Every visual copy row uses its visual's unit ID; one `accessibility_copy` row for that unit lists every visible/spoken statement ID exactly once. In video CSVs, the unit ID is the exact `frame_id`, and every frame must have exactly one `accessibility_transcript` row. That row is mapped as `accessibility_copy` and lists all visible copy, narration, and captions for its frame. Check the transcript's meaning against each linked statement: identifier coverage alone cannot establish that an alt description retained a recommendation, qualifier, or safeguard.
+Treat each post/card/frame as a visual unit. Add `visual_unit_id` and semicolon-separated `related_statement_ids` columns to the mapping. Every visual copy row uses its visual's unit ID; one `accessibility_copy` row for that unit lists every visible/spoken statement ID exactly once, repeats every associated claim ID, and has an exact source locator. Its text reproduces every linked statement verbatim so no qualifier, recommendation, or safeguard can disappear. In video CSVs, the unit ID is the exact `frame_id`, and every frame must have exactly one `accessibility_transcript` row. That row is mapped as `accessibility_copy` and lists all visible copy, narration, and captions for its frame.
 
 Use this front matter in each Markdown derivative and replace every placeholder with the exact available value (use `unknown` only when the source truly does not supply an immutable hash):
 
@@ -78,15 +78,17 @@ status: "draft"
 ---
 ```
 
+When the approved source file is present, compute its SHA-256 once and reuse that exact hash in the manifest, every Markdown header, and every row of every CSV deliverable. The validator must receive the source file path so it can compare the source bytes with the manifest and derivative metadata; a manifest hash that disagrees with the file, or an `unknown` derivative hash while the file is available, blocks completion.
+
 From the workspace root, run the validator over every copy-bearing deliverable and its map, for example:
 
 ```text
-pwsh -NoProfile -File .benchmark_skill/report-content-repurposer/scripts/validate_derivative_package.ps1 -ArtifactsRoot artifacts -Mapping artifacts/claim-mapping.csv -Deliverables "launch-post.md,carousel.md,video-frames.csv,derivative-manifest.yaml"
+pwsh -NoProfile -File .benchmark_skill/report-content-repurposer/scripts/validate_derivative_package.ps1 -ArtifactsRoot artifacts -Mapping artifacts/claim-mapping.csv -Deliverables "launch-post.md,carousel.md,video-frames.csv,derivative-manifest.yaml" -SourceReport fixture/inputs/complete-report.md
 ```
 
 Adjust the deliverable list to include every file containing output copy. A nonzero exit blocks a `pass`; repair the issue and rerun the same full command.
 
-Before handoff, verify factual statements in each accessibility string individually, not only whether an accessibility field exists.
+Before handoff, verify factual statements in each accessibility string individually, not only whether an accessibility field exists. Each accessibility mapping row must include all claim IDs from its linked visual rows plus an exact source locator, and its text must preserve the linked statements' material qualifiers and recommendation safeguards.
 
 The claim mapping is a claim-by-deliverable coverage table, not just a list of claims used:
 

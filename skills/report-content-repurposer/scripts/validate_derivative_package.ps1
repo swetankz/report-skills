@@ -12,7 +12,8 @@ provenance, and complete marker-to-map reconciliation.
 param(
     [Parameter(Mandatory = $true)][string]$ArtifactsRoot,
     [Parameter(Mandatory = $true)][string]$Mapping,
-    [Parameter(Mandatory = $true)][string]$Deliverables
+    [Parameter(Mandatory = $true)][string]$Deliverables,
+    [Parameter(Mandatory = $false)][string]$SourceReport
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,6 +61,14 @@ function Read-StrictCsv {
         $parser.Close()
     }
     return [pscustomobject]@{ Records = $records.ToArray() }
+}
+
+function Normalize-AccessibleText {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $normalized = [regex]::Replace($Text, '(?m)^\s{0,3}#{1,6}\s+', '')
+    $normalized = [regex]::Replace($normalized, '\[([^\]]+)\]\([^)]*\)', '$1')
+    $normalized = [regex]::Replace($normalized, '[*`_~]', '')
+    return [regex]::Replace($normalized, '\s+', ' ').Trim().ToLowerInvariant()
 }
 
 function Resolve-SafeArtifact {
@@ -235,8 +244,74 @@ function Read-OutputStatements {
         if ($statements.ContainsKey($statementId)) { $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): duplicate statement_id $statementId") }
         else { $statements[$statementId] = $text.Substring($start, $finish - $start) }
     }
-    if ($statements.Count -eq 0) { $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): no statement_id fields found") }
+    if ($statements.Count -eq 0) {
+        if ($extension -in @('.yaml', '.yml') -and $text -match '(?m)^source_report:\s*$') { return @{ Statements = $statements; Errors = $localErrors.ToArray() } }
+        $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): no statement_id fields found")
+    }
     return @{ Statements = $statements; Errors = $localErrors.ToArray() }
+}
+
+function Get-ProvenanceHashes {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $extension = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    $parentHashes = [System.Collections.Generic.List[string]]::new()
+    $deliverableRoles = @{}
+    $sourceHash = $null
+    if ($extension -eq '.csv') {
+        $data = Read-StrictCsv -Path $Path
+        $records = @($data.Records)
+        if ($records.Count -gt 0) {
+            $headers = @($records[0].Fields)
+            $hashIndex = [Array]::IndexOf($headers, 'parent_report_hash')
+            if ($hashIndex -ge 0) {
+                for ($i = 1; $i -lt $records.Count; $i++) {
+                    $fields = @($records[$i].Fields)
+                    if ($fields.Count -gt $hashIndex -and [string]$fields[$hashIndex]) { $parentHashes.Add(([string]$fields[$hashIndex]).Trim()) }
+                }
+            }
+        }
+    } elseif ($extension -eq '.md') {
+        $lines = [System.IO.File]::ReadAllLines($Path, [System.Text.Encoding]::UTF8)
+        if ($lines.Count -gt 1 -and $lines[0].Trim() -eq '---') {
+            $end = -1
+            for ($i = 1; $i -lt $lines.Count; $i++) { if ($lines[$i].Trim() -eq '---') { $end = $i; break } }
+            if ($end -gt 0) {
+                $header = $lines[1..($end - 1)] -join "`n"
+                $match = [regex]::Match($header, '(?m)^\s*parent_report_hash:\s*["'']?([^\r\n"'']+)["'']?\s*$')
+                if ($match.Success) { $parentHashes.Add($match.Groups[1].Value.Trim()) }
+            }
+        }
+    } elseif ($extension -eq '.json') {
+        try {
+            $document = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($document.source_report.hash) { $sourceHash = [string]$document.source_report.hash }
+            foreach ($item in @($document.deliverables)) { if ($item.deliverable_id) { $deliverableRoles[[string]$item.deliverable_id] = [string]$item.role } }
+            $parentMatches = [regex]::Matches([System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8), '"parent_report_hash"\s*:\s*"([^"]+)"')
+            foreach ($match in $parentMatches) { $parentHashes.Add($match.Groups[1].Value.Trim()) }
+        } catch { }
+    } else {
+        $text = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+        $parentMatches = [regex]::Matches($text, '(?m)^\s*parent_report_hash:\s*["'']?([^\r\n"'']+)["'']?\s*$')
+        foreach ($match in $parentMatches) { $parentHashes.Add($match.Groups[1].Value.Trim()) }
+        $deliverableSection = [regex]::Match($text, '(?ms)^deliverables:\s*\r?\n(?<section>(?:[ \t]+[^\r\n]*(?:\r?\n|$))*)')
+        if ($deliverableSection.Success) {
+            $sectionText = $deliverableSection.Groups['section'].Value
+            $idMatches = @([regex]::Matches($sectionText, '(?m)^\s*-\s*deliverable_id:\s*["'']?([^\r\n"'']+)["'']?\s*$'))
+            for ($index = 0; $index -lt $idMatches.Count; $index++) {
+                $idMatch = $idMatches[$index]
+                $entryEnd = if ($index + 1 -lt $idMatches.Count) { $idMatches[$index + 1].Index } else { $sectionText.Length }
+                $entry = $sectionText.Substring($idMatch.Index + $idMatch.Length, $entryEnd - ($idMatch.Index + $idMatch.Length))
+                $roleMatch = [regex]::Match($entry, '(?m)^\s*role:\s*["'']?([^\r\n"'']+)["'']?\s*$')
+                $deliverableRoles[$idMatch.Groups[1].Value.Trim()] = if ($roleMatch.Success) { $roleMatch.Groups[1].Value.Trim() } else { '' }
+            }
+        }
+        $sourceSection = [regex]::Match($text, '(?ms)^source_report:\s*\r?\n(?<section>(?:[ \t]+[^\r\n]*(?:\r?\n|$))*)')
+        if ($sourceSection.Success) {
+            $hashMatch = [regex]::Match($sourceSection.Groups['section'].Value, '(?m)^\s+hash:\s*["'']?([^\r\n"'']+)["'']?\s*$')
+            if ($hashMatch.Success) { $sourceHash = $hashMatch.Groups[1].Value.Trim() }
+        }
+    }
+    return [pscustomobject]@{ ParentHashes = @($parentHashes | Select-Object -Unique); SourceHash = $sourceHash; DeliverableRoles = $deliverableRoles }
 }
 
 try {
@@ -270,6 +345,7 @@ try {
         if ($status -notin @('used', 'shortened', 'omitted')) { $errors.Add("mapping row has unsupported status '$status'"); continue }
         if ($status -eq 'omitted') {
             if ($row['statement_id'] -or $row['output_path'] -or $row['output_text']) { $errors.Add('omitted mapping row must not claim an output statement') }
+            if (-not $row['deliverable_id'] -or -not $row['output_location']) { $errors.Add('omitted mapping row needs its deliverable_id and omitted output_location') }
             if ((-not $row['claim_ids'] -and -not $row['source_locator']) -or -not $row['context_omitted'] -or -not $row['reason']) { $errors.Add('omitted mapping row needs claim_ids or source_locator, context_omitted, and reason') }
             if ($row['statement_type'] -cnotin $allowedStatementTypes) { $errors.Add('omitted mapping row needs a supported statement_type') }
             continue
@@ -290,9 +366,11 @@ try {
         }
         if ($row['statement_type'] -eq 'recommendation' -and -not $row['reason']) { $errors.Add("recommendation $statementId needs its rationale") }
         if ($row['statement_type'] -eq 'accessibility_copy' -and (-not $row['visual_unit_id'] -or -not $row['related_statement_ids'])) { $errors.Add("accessibility copy $statementId needs visual_unit_id and related_statement_ids") }
+        if ($row['statement_type'] -eq 'accessibility_copy' -and -not $row['source_locator']) { $errors.Add("accessibility copy $statementId needs an exact source locator") }
         if ($row['statement_type'] -in @('sourced_fact', 'analysis', 'recommendation', 'nonfactual') -and -not $row['visual_unit_id']) { $errors.Add("visual content $statementId needs visual_unit_id") }
         if ($row['output_path'].ToLowerInvariant().EndsWith('.md') -and $row['statement_type'] -cne 'accessibility_copy' -and -not $row['visual_unit_id']) { $errors.Add("Markdown copy $statementId needs visual_unit_id") }
         if ($status -eq 'shortened' -and (-not $row['context_omitted'] -or -not $row['reason'])) { $errors.Add("shortened statement $statementId needs omitted context and reason") }
+        if (-not $row['context_retained'] -or -not $row['context_omitted']) { $errors.Add("mapping statement $statementId needs explicit context_retained and context_omitted (use 'none' when empty)") }
         $expected[$statementId] = @{ Path = $row['output_path'].Replace('\', '/'); Text = $row['output_text'] }
         $rowsByStatement[$statementId] = $row
     }
@@ -305,6 +383,63 @@ try {
         else { $declared[$rel] = $target }
     }
     if ($declared.Count -eq 0) { $errors.Add('at least one deliverable must be declared') }
+
+    $manifestSourceHashes = [System.Collections.Generic.List[string]]::new()
+    $manifestDeliverableRoles = @{}
+    $provenanceByPath = @{}
+    $approvedTitle = $null
+    foreach ($relative in $declared.Keys) {
+        $provenance = Get-ProvenanceHashes -Path $declared[$relative]
+        $provenanceByPath[$relative] = @($provenance.ParentHashes)
+        if ($provenance.SourceHash) { $manifestSourceHashes.Add($provenance.SourceHash) }
+        foreach ($deliverableId in $provenance.DeliverableRoles.Keys) { $manifestDeliverableRoles[[string]$deliverableId] = [string]$provenance.DeliverableRoles[$deliverableId] }
+    }
+    $manifestSourceHashes = @($manifestSourceHashes | Select-Object -Unique)
+    $manifestDeliverableIds = @($manifestDeliverableRoles.Keys)
+    foreach ($deliverableId in $manifestDeliverableRoles.Keys) {
+        if ($manifestDeliverableRoles[$deliverableId] -cnotin @('requested-format', 'supporting-artifact')) { $errors.Add("manifest deliverable $deliverableId needs role requested-format or supporting-artifact") }
+    }
+    $requestedFormatIds = @($manifestDeliverableRoles.Keys | Where-Object { $manifestDeliverableRoles[$_] -ceq 'requested-format' })
+    $visualScopeIds = if ($requestedFormatIds.Count -gt 0) { $requestedFormatIds } else { $manifestDeliverableIds }
+    $sourceHashFromFile = $null
+    if ($SourceReport) {
+        $sourceReportFull = [System.IO.Path]::GetFullPath($SourceReport)
+        if (-not (Test-Path -LiteralPath $sourceReportFull -PathType Leaf)) { throw 'source report must exist as a regular file' }
+        $sourceReportItem = Get-Item -LiteralPath $sourceReportFull -Force
+        if (($sourceReportItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'source report must not be a link or reparse point' }
+        $sourceHash = (Get-FileHash -LiteralPath $sourceReportFull -Algorithm SHA256).Hash.ToLowerInvariant()
+        $sourceHashFromFile = "sha256:$sourceHash"
+        $sourceText = [System.IO.File]::ReadAllText($sourceReportFull, [System.Text.Encoding]::UTF8)
+        $titleMatch = [regex]::Match($sourceText, '(?m)^#\s+(.+?)\s*#*\s*$')
+        if ($titleMatch.Success) { $approvedTitle = $titleMatch.Groups[1].Value.Trim() }
+        foreach ($manifestHash in $manifestSourceHashes) {
+            if ([string]$manifestHash -cne $sourceHashFromFile) { $errors.Add("manifest source hash '$manifestHash' does not match source report bytes") }
+        }
+    }
+    if ($manifestSourceHashes.Count -gt 1) { $errors.Add('declared manifests disagree on the canonical source-report hash') }
+    $knownManifestHashes = @($manifestSourceHashes | Where-Object { $_ -cne 'unknown' })
+    if ($sourceHashFromFile -or $knownManifestHashes.Count -eq 1) {
+        $canonicalHash = if ($sourceHashFromFile) { $sourceHashFromFile } else { [string]$knownManifestHashes[0] }
+        foreach ($relative in $provenanceByPath.Keys) {
+            foreach ($value in $provenanceByPath[$relative]) {
+                if ([string]$value -cne $canonicalHash) { $errors.Add("$relative parent_report_hash '$value' does not match manifest source hash") }
+            }
+        }
+    }
+    if ($approvedTitle) {
+        $formatRows = @($mapRows | Where-Object {
+            $_['status'] -ne 'omitted' -and
+            $declared.ContainsKey($_['output_path'].Replace('\', '/')) -and
+            -not [System.IO.Path]::GetFileName($_['output_path']).StartsWith('derivative-manifest', [System.StringComparison]::OrdinalIgnoreCase) -and
+            ($visualScopeIds.Count -eq 0 -or $visualScopeIds -ccontains $_['deliverable_id'])
+        })
+        $formatIds = if ($visualScopeIds.Count -gt 0) { $visualScopeIds } else { @($formatRows | ForEach-Object { $_['deliverable_id'] } | Select-Object -Unique) }
+        foreach ($formatId in $formatIds) {
+            $copyRows = @($formatRows | Where-Object { $_['deliverable_id'] -ceq $formatId -and $_['statement_type'] -cne 'accessibility_copy' })
+            $visibleCopy = (@($copyRows | ForEach-Object { $_['output_text'] }) -join "`n")
+            if (-not $visibleCopy.Contains($approvedTitle, [System.StringComparison]::Ordinal)) { $errors.Add("deliverable $formatId must include the exact approved report title as visible copy") }
+        }
+    }
 
     $found = @{}
     foreach ($rel in $declared.Keys) {
@@ -333,6 +468,7 @@ try {
     $visualUnits = @{}
     $accessibilityRows = @{}
     foreach ($row in $mapRows) {
+        if ($visualScopeIds.Count -gt 0 -and $visualScopeIds -cnotcontains $row['deliverable_id']) { continue }
         $unit = $row['visual_unit_id']
         if (-not $unit -or $row['status'] -eq 'omitted') { continue }
         $unitKey = "$($row['output_path'])::$unit"
@@ -353,6 +489,23 @@ try {
         foreach ($accessRow in $accessRows) {
             $related = @($accessRow['related_statement_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
             if (Compare-Object -ReferenceObject $expectedRelated -DifferenceObject $related) { $errors.Add("accessibility_copy for visual unit $unit must reference every visual statement_id exactly") }
+            $normalizedAccessText = Normalize-AccessibleText -Text $accessRow['output_text']
+            foreach ($sourceStatementId in $visualUnits[$unitKey]) {
+                if (-not $expected.ContainsKey($sourceStatementId)) { continue }
+                $normalizedSourceText = Normalize-AccessibleText -Text $expected[$sourceStatementId].Text
+                if ($normalizedSourceText -and -not $normalizedAccessText.Contains($normalizedSourceText, [System.StringComparison]::Ordinal)) { $errors.Add("accessibility_copy for visual unit $unit must preserve statement $sourceStatementId verbatim") }
+            }
+            $requiredClaims = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            foreach ($sourceStatementId in $visualUnits[$unitKey]) {
+                if (-not $rowsByStatement.ContainsKey($sourceStatementId)) { continue }
+                foreach ($claimId in ($rowsByStatement[$sourceStatementId]['claim_ids'] -split ';')) {
+                    if ($claimId.Trim()) { [void]$requiredClaims.Add($claimId.Trim()) }
+                }
+            }
+            $accessClaims = @($accessRow['claim_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            foreach ($claimId in $requiredClaims) {
+                if ($accessClaims -cnotcontains $claimId) { $errors.Add("accessibility_copy for visual unit $unit must carry related claim_id $claimId") }
+            }
         }
     }
     foreach ($unitKey in $accessibilityRows.Keys) {

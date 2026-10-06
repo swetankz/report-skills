@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib.util
 import shutil
 import subprocess
@@ -363,6 +364,14 @@ class DerivativeTraceabilityTests(unittest.TestCase):
         errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
         self.assertTrue(any("source metadata must not be assigned unrelated claim_ids" in error for error in errors))
 
+    def test_rejects_used_mapping_row_with_blank_context_disposition(self) -> None:
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        rows[0]["context_omitted"] = ""
+        self.write_mapping(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertTrue(any("needs explicit context_retained and context_omitted" in error for error in errors))
+
     def test_rejects_accessibility_mapping_that_omits_visual_statement(self) -> None:
         with self.mapping.open("r", encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
@@ -370,6 +379,25 @@ class DerivativeTraceabilityTests(unittest.TestCase):
         self.write_mapping(rows)
         errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
         self.assertTrue(any("must reference every visual statement_id exactly" in error for error in errors))
+
+    def test_accessibility_copy_inherits_claim_ids_from_related_visual_copy(self) -> None:
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        next(row for row in rows if row["statement_id"] == "ST-003")["claim_ids"] = ""
+        self.write_mapping(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertTrue(any("must carry all related claim_ids: SYN-S1" in error for error in errors))
+
+    def test_rejects_accessibility_copy_that_drops_visual_qualifier(self) -> None:
+        shortened = "A synthetic survey found willingness."
+        post = self.root / "post.md"
+        post.write_text(post.read_text(encoding="utf-8").replace(self.post_alt, shortened), encoding="utf-8")
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        next(row for row in rows if row["statement_id"] == "ST-004")["output_text"] = shortened
+        self.write_mapping(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertTrue(any("must preserve statement ST-001 verbatim" in error for error in errors))
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell Core is not installed")
     def test_powershell_validator_rejects_accessibility_relation_that_omits_statement(self) -> None:
@@ -397,7 +425,398 @@ class DerivativeTraceabilityTests(unittest.TestCase):
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         self.assertIn("must reference every visual statement_id exactly", result.stdout)
 
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell Core is not installed")
+    def test_powershell_validator_rejects_accessibility_copy_without_related_claim_id(self) -> None:
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        next(row for row in rows if row["statement_id"] == "ST-003")["claim_ids"] = ""
+        self.write_mapping(rows)
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-File",
+                str(POWERSHELL_VALIDATOR_PATH),
+                "-ArtifactsRoot",
+                str(self.root),
+                "-Mapping",
+                str(self.mapping),
+                "-Deliverables",
+                "post.md,video.csv",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("must carry related claim_id SYN-S1", result.stdout)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell Core is not installed")
+    def test_powershell_validator_rejects_accessibility_copy_that_drops_visual_qualifier(self) -> None:
+        shortened = "A synthetic survey found willingness."
+        post = self.root / "post.md"
+        post.write_text(post.read_text(encoding="utf-8").replace(self.post_alt, shortened), encoding="utf-8")
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        next(row for row in rows if row["statement_id"] == "ST-004")["output_text"] = shortened
+        self.write_mapping(rows)
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-File",
+                str(POWERSHELL_VALIDATOR_PATH),
+                "-ArtifactsRoot",
+                str(self.root),
+                "-Mapping",
+                str(self.mapping),
+                "-Deliverables",
+                "post.md,video.csv",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("must preserve statement ST-001 verbatim", result.stdout)
+
+    def test_validator_requires_matching_report_hash_across_package_files(self) -> None:
+        source_report = self.root.parent / "complete-report.md"
+        source_report.write_text("Synthetic approved report source.\n", encoding="utf-8")
+        source_hash = f"sha256:{hashlib.sha256(source_report.read_bytes()).hexdigest()}"
+        manifest = self.root / "hash-manifest.yaml"
+        manifest.write_text(
+            "source_report:\n"
+            "  artifact_id: synthetic-report\n"
+            "  version: '1.0'\n"
+            f"  hash: '{source_hash}'\n"
+            "manifest_note:\n"
+            "  statement_id: ST-005\n"
+            '  text: "Hash provenance note."\n',
+            encoding="utf-8",
+        )
+        with (self.root / "post.md").open("r+", encoding="utf-8") as handle:
+            text = handle.read().replace("parent_report_hash: unknown", f'parent_report_hash: "{source_hash}"')
+            handle.seek(0)
+            handle.write(text)
+            handle.truncate()
+        with (self.root / "video.csv").open("r", encoding="utf-8", newline="") as handle:
+            video_rows = list(csv.DictReader(handle))
+        for row in video_rows:
+            row["parent_report_hash"] = source_hash
+        with (self.root / "video.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(video_rows)
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            mapping_rows = list(csv.DictReader(handle))
+        mapping_rows.append(
+            {
+                "statement_id": "ST-005",
+                "claim_ids": "",
+                "source_locator": "hash-manifest.yaml#source_report.hash",
+                "deliverable_id": "manifest",
+                "output_path": "hash-manifest.yaml",
+                "output_location": "manifest_note.text",
+                "statement_type": "source_metadata",
+                "output_text": "Hash provenance note.",
+                "status": "used",
+                "context_retained": "exact immutable source hash",
+                "context_omitted": "none",
+                "reason": "Private provenance note.",
+                "visual_unit_id": "",
+                "related_statement_ids": "",
+            }
+        )
+        self.write_mapping(mapping_rows)
+        deliverables = [Path("post.md"), Path("video.csv"), Path("hash-manifest.yaml")]
+        self.assertEqual([], VALIDATOR.validate_package(self.root, self.mapping, deliverables, source_report))
+
+        video_rows[0]["parent_report_hash"] = "unknown"
+        with (self.root / "video.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(video_rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, deliverables, source_report)
+        self.assertTrue(any("does not match manifest source hash" in error for error in errors))
+
+        for row in video_rows:
+            row["parent_report_hash"] = source_hash
+        with (self.root / "video.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(video_rows)
+        manifest.write_text(manifest.read_text(encoding="utf-8").replace(source_hash, "unknown"), encoding="utf-8")
+        errors = VALIDATOR.validate_package(self.root, self.mapping, deliverables, source_report)
+        self.assertTrue(any("manifest source hash 'unknown' does not match source report bytes" in error for error in errors))
+
+    def test_non_copy_manifest_can_be_declared_for_hash_reconciliation(self) -> None:
+        manifest = self.root / "derivative-manifest.yaml"
+        manifest.write_text(
+            "source_report:\n"
+            "  artifact_id: synthetic-report\n"
+            "  version: '1.0'\n"
+            "  hash: unknown\n",
+            encoding="utf-8",
+        )
+        deliverables = [Path("post.md"), Path("video.csv"), Path("derivative-manifest.yaml")]
+        errors = VALIDATOR.validate_package(self.root, self.mapping, deliverables)
+        self.assertEqual([], errors)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell Core is not installed")
+    def test_powershell_validator_allows_non_copy_manifest_for_hash_reconciliation(self) -> None:
+        manifest = self.root / "derivative-manifest.yaml"
+        manifest.write_text(
+            "source_report:\n"
+            "  artifact_id: synthetic-report\n"
+            "  version: '1.0'\n"
+            "  hash: unknown\n",
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-File",
+                str(POWERSHELL_VALIDATOR_PATH),
+                "-ArtifactsRoot",
+                str(self.root),
+                "-Mapping",
+                str(self.mapping),
+                "-Deliverables",
+                "post.md,video.csv,derivative-manifest.yaml",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_validator_requires_exact_report_title_as_visible_copy_in_each_format(self) -> None:
+        source_report = self.root.parent / "complete-report.md"
+        source_report.write_text("# Exact Approved Report Title\n\nSynthetic source.\n", encoding="utf-8")
+        source_hash = f"sha256:{hashlib.sha256(source_report.read_bytes()).hexdigest()}"
+        post = self.root / "post.md"
+        post.write_text(post.read_text(encoding="utf-8").replace("parent_report_hash: unknown", f'parent_report_hash: "{source_hash}"'), encoding="utf-8")
+        post.write_text(post.read_text(encoding="utf-8").replace(self.post_alt, "Exact Approved Report Title"), encoding="utf-8")
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            mapping_rows = list(csv.DictReader(handle))
+        next(row for row in mapping_rows if row["statement_id"] == "ST-004")["output_text"] = "Exact Approved Report Title"
+        self.write_mapping(mapping_rows)
+        with (self.root / "video.csv").open("r", encoding="utf-8", newline="") as handle:
+            video_rows = list(csv.DictReader(handle))
+        for row in video_rows:
+            row["parent_report_hash"] = source_hash
+        with (self.root / "video.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(video_rows)
+        (self.root / "derivative-manifest.yaml").write_text(
+            "source_report:\n"
+            "  artifact_id: synthetic-report\n"
+            f"  hash: '{source_hash}'\n"
+            "deliverables:\n"
+            "  - deliverable_id: post\n"
+            "    role: requested-format\n"
+            "  - deliverable_id: video\n"
+            "    role: requested-format\n"
+            "  - deliverable_id: checklist\n"
+            "    role: supporting-artifact\n",
+            encoding="utf-8",
+        )
+        errors = VALIDATOR.validate_package(
+            self.root,
+            self.mapping,
+            [Path("post.md"), Path("video.csv"), Path("derivative-manifest.yaml")],
+            source_report,
+        )
+        self.assertTrue(any("deliverable post must include the exact approved report title" in error for error in errors))
+        self.assertTrue(any("deliverable video must include the exact approved report title" in error for error in errors))
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell Core is not installed")
+    def test_powershell_validator_requires_exact_report_title_as_visible_copy(self) -> None:
+        source_report = self.root.parent / "complete-report.md"
+        source_report.write_text("# Exact Approved Report Title\n\nSynthetic source.\n", encoding="utf-8")
+        source_hash = f"sha256:{hashlib.sha256(source_report.read_bytes()).hexdigest()}"
+        post = self.root / "post.md"
+        post.write_text(post.read_text(encoding="utf-8").replace("parent_report_hash: unknown", f'parent_report_hash: "{source_hash}"'), encoding="utf-8")
+        post.write_text(post.read_text(encoding="utf-8").replace(self.post_alt, "Exact Approved Report Title"), encoding="utf-8")
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            mapping_rows = list(csv.DictReader(handle))
+        next(row for row in mapping_rows if row["statement_id"] == "ST-004")["output_text"] = "Exact Approved Report Title"
+        self.write_mapping(mapping_rows)
+        with (self.root / "video.csv").open("r", encoding="utf-8", newline="") as handle:
+            video_rows = list(csv.DictReader(handle))
+        for row in video_rows:
+            row["parent_report_hash"] = source_hash
+        with (self.root / "video.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(video_rows)
+        (self.root / "derivative-manifest.yaml").write_text(
+            "source_report:\n"
+            "  artifact_id: synthetic-report\n"
+            f"  hash: '{source_hash}'\n"
+            "deliverables:\n"
+            "  - deliverable_id: post\n"
+            "    role: requested-format\n"
+            "  - deliverable_id: video\n"
+            "    role: requested-format\n"
+            "  - deliverable_id: checklist\n"
+            "    role: supporting-artifact\n",
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-File",
+                str(POWERSHELL_VALIDATOR_PATH),
+                "-ArtifactsRoot",
+                str(self.root),
+                "-Mapping",
+                str(self.mapping),
+                "-Deliverables",
+                "post.md,video.csv,derivative-manifest.yaml",
+                "-SourceReport",
+                str(source_report),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("deliverable post must include the exact approved report title", result.stdout)
+        self.assertIn("deliverable video must include the exact approved report title", result.stdout)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell Core is not installed")
+    def test_powershell_validator_rejects_report_hash_drift(self) -> None:
+        source_report = self.root.parent / "complete-report.md"
+        source_report.write_text("Synthetic approved report source.\n", encoding="utf-8")
+        source_hash = f"sha256:{hashlib.sha256(source_report.read_bytes()).hexdigest()}"
+        manifest = self.root / "hash-manifest.yaml"
+        manifest.write_text(
+            "source_report:\n"
+            "  artifact_id: synthetic-report\n"
+            "  version: '1.0'\n"
+            f"  hash: '{source_hash}'\n"
+            "manifest_note:\n"
+            "  statement_id: ST-005\n"
+            '  text: "Hash provenance note."\n',
+            encoding="utf-8",
+        )
+        with (self.root / "post.md").open("r+", encoding="utf-8") as handle:
+            text = handle.read().replace("parent_report_hash: unknown", f'parent_report_hash: "{source_hash}"')
+            handle.seek(0)
+            handle.write(text)
+            handle.truncate()
+        with (self.root / "video.csv").open("r", encoding="utf-8", newline="") as handle:
+            video_rows = list(csv.DictReader(handle))
+        for row in video_rows:
+            row["parent_report_hash"] = source_hash
+        video_rows[0]["parent_report_hash"] = "unknown"
+        with (self.root / "video.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(video_rows)
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            mapping_rows = list(csv.DictReader(handle))
+        mapping_rows.append(
+            {
+                "statement_id": "ST-005",
+                "claim_ids": "",
+                "source_locator": "hash-manifest.yaml#source_report.hash",
+                "deliverable_id": "manifest",
+                "output_path": "hash-manifest.yaml",
+                "output_location": "manifest_note.text",
+                "statement_type": "source_metadata",
+                "output_text": "Hash provenance note.",
+                "status": "used",
+                "context_retained": "exact immutable source hash",
+                "context_omitted": "none",
+                "reason": "Private provenance note.",
+                "visual_unit_id": "",
+                "related_statement_ids": "",
+            }
+        )
+        self.write_mapping(mapping_rows)
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-File",
+                str(POWERSHELL_VALIDATOR_PATH),
+                "-ArtifactsRoot",
+                str(self.root),
+                "-Mapping",
+                str(self.mapping),
+                "-Deliverables",
+                "post.md,video.csv,hash-manifest.yaml",
+                "-SourceReport",
+                str(source_report),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("does not match manifest source hash", result.stdout)
+
+        for row in video_rows:
+            row["parent_report_hash"] = source_hash
+        with (self.root / "video.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(video_rows)
+        manifest.write_text(manifest.read_text(encoding="utf-8").replace(source_hash, "unknown"), encoding="utf-8")
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-File",
+                str(POWERSHELL_VALIDATOR_PATH),
+                "-ArtifactsRoot",
+                str(self.root),
+                "-Mapping",
+                str(self.mapping),
+                "-Deliverables",
+                "post.md,video.csv,hash-manifest.yaml",
+                "-SourceReport",
+                str(source_report),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("manifest source hash 'unknown' does not match source report bytes", result.stdout)
+
     def test_omitted_recommendation_can_use_exact_source_locator_without_claim_id(self) -> None:
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        rows.append(
+            {
+                "statement_id": "",
+                "claim_ids": "",
+                "source_locator": "complete-report.md#Recommendation / stop rule",
+                "deliverable_id": "post",
+                "output_path": "",
+                "output_location": "recommendation coverage inventory",
+                "statement_type": "recommendation",
+                "output_text": "",
+                "status": "omitted",
+                "context_retained": "none",
+                "context_omitted": "stop rule is not reproduced in this short post",
+                "reason": "Keep the limited channel space focused on the main pilot recommendation.",
+                "visual_unit_id": "",
+                "related_statement_ids": "",
+            }
+        )
+        self.write_mapping(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertEqual([], errors)
+
+    def test_omitted_coverage_requires_deliverable_and_inventory_location(self) -> None:
         with self.mapping.open("r", encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
         rows.append(
@@ -420,7 +839,28 @@ class DerivativeTraceabilityTests(unittest.TestCase):
         )
         self.write_mapping(rows)
         errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
-        self.assertEqual([], errors)
+        self.assertTrue(any("needs its deliverable_id and omitted output_location" in error for error in errors))
+
+        if shutil.which("pwsh"):
+            result = subprocess.run(
+                [
+                    shutil.which("pwsh"),
+                    "-NoProfile",
+                    "-File",
+                    str(POWERSHELL_VALIDATOR_PATH),
+                    "-ArtifactsRoot",
+                    str(self.root),
+                    "-Mapping",
+                    str(self.mapping),
+                    "-Deliverables",
+                    "post.md,video.csv",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+            self.assertIn("needs its deliverable_id and omitted output_location", result.stdout)
 
 
 if __name__ == "__main__":

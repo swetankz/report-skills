@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -234,11 +236,130 @@ def read_deliverable(path: Path) -> tuple[dict[str, str], list[str]]:
         else:
             statements[statement_id] = body
     if not statements:
+        if suffix in {".yaml", ".yml"} and re.search(r"(?m)^source_report:\s*$", text):
+            return statements, errors
         errors.append(f"{path.name}: no statement_id fields found")
     return statements, errors
 
 
-def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths: Iterable[Path]) -> list[str]:
+def provenance_hashes(path: Path) -> tuple[set[str], str | None]:
+    """Read per-file parent hashes and a manifest's canonical source hash."""
+    suffix = path.suffix.casefold()
+    if suffix == ".csv":
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle, strict=True)
+            if "parent_report_hash" not in (reader.fieldnames or []):
+                return set(), None
+            values = {(row.get("parent_report_hash") or "").strip() for row in reader}
+            return {value for value in values if value}, None
+
+    text = path.read_text(encoding="utf-8-sig")
+    if suffix == ".md":
+        lines = text.splitlines()
+        if not lines or lines[0].strip() != "---":
+            return set(), None
+        end = next((index for index in range(1, len(lines)) if lines[index].strip() == "---"), None)
+        if end is None:
+            return set(), None
+        header = "\n".join(lines[1:end])
+        match = re.search(r"(?m)^\s*parent_report_hash:\s*(.*?)\s*$", header)
+        return ({match.group(1).strip().strip("\"'")} if match else set()), None
+
+    if suffix == ".json":
+        try:
+            document = json.loads(text)
+        except json.JSONDecodeError:
+            return set(), None
+
+        def collect_hashes(value: object) -> set[str]:
+            found: set[str] = set()
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    if key == "parent_report_hash" and isinstance(nested, str) and nested.strip():
+                        found.add(nested.strip())
+                    else:
+                        found.update(collect_hashes(nested))
+            elif isinstance(value, list):
+                for nested in value:
+                    found.update(collect_hashes(nested))
+            return found
+
+        source = document.get("source_report") if isinstance(document, dict) else None
+        source_hash = source.get("hash") if isinstance(source, dict) else None
+        canonical = source_hash.strip() if isinstance(source_hash, str) and source_hash.strip() else None
+        return collect_hashes(document), canonical
+
+    parent_values = {
+        match.group(1).strip().strip("\"'")
+        for match in re.finditer(r"(?m)^\s*parent_report_hash:\s*(.*?)\s*$", text)
+        if match.group(1).strip()
+    }
+    source_hash = None
+    source_section = re.search(
+        r"(?ms)^source_report:\s*\r?\n(?P<section>(?:[ \t]+.*(?:\r?\n|$))*)",
+        text,
+    )
+    if source_section:
+        hash_match = re.search(r"(?m)^\s+hash:\s*(.*?)\s*$", source_section.group("section"))
+        if hash_match:
+            source_hash = hash_match.group(1).strip().strip("\"'") or None
+    return parent_values, source_hash
+
+
+def manifest_deliverable_roles(path: Path) -> dict[str, str]:
+    """Return manifest deliverable IDs and their requested/supporting role."""
+    suffix = path.suffix.casefold()
+    if suffix == ".json":
+        try:
+            document = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return {}
+        deliverables = document.get("deliverables", []) if isinstance(document, dict) else []
+        return {
+            str(item["deliverable_id"]).strip(): str(item.get("role", "")).strip()
+            for item in deliverables
+            if isinstance(item, dict) and item.get("deliverable_id")
+        }
+    if suffix not in {".yaml", ".yml"}:
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        return {}
+    section = re.search(
+        r"(?ms)^deliverables:\s*\r?\n(?P<section>(?:[ \t]+.*(?:\r?\n|$))*)",
+        text,
+    )
+    if not section:
+        return {}
+    section_text = section.group("section")
+    starts = list(re.finditer(r"(?m)^\s*-\s*deliverable_id:\s*(.*?)\s*$", section_text))
+    roles: dict[str, str] = {}
+    for index, match in enumerate(starts):
+        deliverable_id = match.group(1).strip().strip("\"'")
+        if not deliverable_id:
+            continue
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(section_text)
+        entry = section_text[match.end() : end]
+        role_match = re.search(r"(?m)^\s*role:\s*[\"']?([^\r\n\"']+)[\"']?\s*$", entry)
+        roles[deliverable_id] = role_match.group(1).strip() if role_match else ""
+    return roles
+
+
+def normalized_prose(text: str) -> str:
+    """Normalize light Markdown while retaining every word and qualifier."""
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"[*`_~]", "", text)
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def validate_package(
+    artifacts_root: Path,
+    mapping_path: Path,
+    deliverable_paths: Iterable[Path],
+    source_report_path: Path | None = None,
+) -> list[str]:
     errors: list[str] = []
     try:
         root = artifacts_root.resolve(strict=True)
@@ -263,6 +384,8 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
         if status == "omitted":
             if row["statement_id"] or row["output_path"] or row["output_text"]:
                 errors.append(f"omitted mapping row {number} must not claim an output statement")
+            if not row["deliverable_id"] or not row["output_location"]:
+                errors.append(f"omitted mapping row {number} needs its deliverable_id and omitted output_location")
             if (not row["claim_ids"] and not row["source_locator"]) or not row["context_omitted"] or not row["reason"]:
                 errors.append(f"omitted mapping row {number} needs claim_ids or source_locator, context_omitted, and reason")
             if row["statement_type"] not in allowed_statement_types:
@@ -293,12 +416,16 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
             errors.append(f"mapping row {number} recommendation needs its rationale")
         if row["statement_type"] == "accessibility_copy" and (not row["visual_unit_id"] or not row["related_statement_ids"]):
             errors.append(f"mapping row {number} accessibility copy needs visual_unit_id and related_statement_ids")
+        if row["statement_type"] == "accessibility_copy" and not row["source_locator"]:
+            errors.append(f"mapping row {number} accessibility copy needs an exact source locator")
         if row["statement_type"] in {"sourced_fact", "analysis", "recommendation", "nonfactual"} and not row["visual_unit_id"]:
             errors.append(f"mapping row {number} visual content needs visual_unit_id")
         if row["output_path"].casefold().endswith(".md") and row["statement_type"] != "accessibility_copy" and not row["visual_unit_id"]:
             errors.append(f"mapping row {number} Markdown copy needs visual_unit_id")
         if status == "shortened" and (not row["context_omitted"] or not row["reason"]):
             errors.append(f"mapping row {number} shortened statement needs omitted context and reason")
+        if not row["context_retained"] or not row["context_omitted"]:
+            errors.append(f"mapping row {number} needs explicit context_retained and context_omitted (use 'none' when empty)")
         expected_ids[statement_id] = {
             "output_path": row["output_path"],
             "output_text": row["output_text"],
@@ -321,6 +448,77 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
             errors.append(str(exc))
     if not declared:
         errors.append("at least one deliverable must be declared")
+
+    manifest_source_hashes: set[str] = set()
+    provenance_by_path: dict[str, set[str]] = {}
+    manifest_roles: dict[str, str] = {}
+    for relative, target in declared.items():
+        try:
+            parent_values, source_hash = provenance_hashes(target)
+            provenance_by_path[relative] = parent_values
+            manifest_roles.update(manifest_deliverable_roles(target))
+            if source_hash:
+                manifest_source_hashes.add(source_hash)
+        except (OSError, UnicodeError, csv.Error) as exc:
+            errors.append(f"{relative}: cannot read report-hash provenance: {exc}")
+    source_hash_from_file: str | None = None
+    approved_title: str | None = None
+    if source_report_path is not None:
+        try:
+            if source_report_path.is_symlink():
+                return ["source report must be a regular non-link file"]
+            source_file = source_report_path.resolve(strict=True)
+            if not source_file.is_file():
+                return ["source report must be a regular non-link file"]
+            source_hash_from_file = f"sha256:{hashlib.sha256(source_file.read_bytes()).hexdigest()}"
+            try:
+                source_text = source_file.read_text(encoding="utf-8-sig")
+            except UnicodeError:
+                source_text = ""
+            title_match = re.search(r"(?m)^#\s+(.+?)\s*#*\s*$", source_text)
+            approved_title = title_match.group(1).strip() if title_match else None
+        except OSError as exc:
+            return [f"cannot read source report for hash verification: {exc}"]
+        for declared_hash in manifest_source_hashes:
+            if declared_hash.casefold() != source_hash_from_file.casefold():
+                errors.append(f"manifest source hash {declared_hash!r} does not match source report bytes")
+
+    if len(manifest_source_hashes) > 1:
+        errors.append("declared manifests disagree on the canonical source-report hash")
+    elif source_hash_from_file or (manifest_source_hashes and next(iter(manifest_source_hashes)).casefold() != "unknown"):
+        canonical_hash = source_hash_from_file or next(iter(manifest_source_hashes))
+        for relative, values in provenance_by_path.items():
+            for value in values:
+                if value.casefold() != canonical_hash.casefold():
+                    errors.append(f"{relative}: parent_report_hash {value!r} does not match manifest source hash")
+    manifest_deliverables = set(manifest_roles)
+    for deliverable_id, role in manifest_roles.items():
+        if role not in {"requested-format", "supporting-artifact"}:
+            errors.append(f"manifest deliverable {deliverable_id} needs role requested-format or supporting-artifact")
+    requested_format_ids = {
+        deliverable_id for deliverable_id, role in manifest_roles.items() if role == "requested-format"
+    }
+    visual_scope_ids = requested_format_ids or manifest_deliverables
+    if approved_title:
+        requested_formats: dict[str, list[dict[str, str]]] = {}
+        for row in mapped_rows:
+            if row["status"] == "omitted" or row["output_path"] not in declared:
+                continue
+            if Path(row["output_path"]).name.casefold().startswith("derivative-manifest"):
+                continue
+            if visual_scope_ids and row["deliverable_id"] not in visual_scope_ids:
+                continue
+            requested_formats.setdefault(row["deliverable_id"], []).append(row)
+        format_ids = visual_scope_ids or set(requested_formats)
+        for deliverable_id in sorted(format_ids):
+            format_rows = requested_formats.get(deliverable_id, [])
+            visible_copy = "\n".join(
+                row["output_text"]
+                for row in format_rows
+                if row["statement_type"] != "accessibility_copy"
+            )
+            if approved_title not in visible_copy:
+                errors.append(f"deliverable {deliverable_id} must include the exact approved report title as visible copy")
 
     found_ids: dict[str, tuple[str, str]] = {}
     for relative, target in declared.items():
@@ -359,6 +557,8 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
     visual_units: dict[tuple[str, str], set[str]] = {}
     accessibility_rows: dict[str, list[dict[str, str]]] = {}
     for row in mapped_rows:
+        if visual_scope_ids and row["deliverable_id"] not in visual_scope_ids:
+            continue
         unit = row["visual_unit_id"]
         if not unit:
             continue
@@ -380,6 +580,22 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
             related = {item.strip() for item in access_row["related_statement_ids"].split(";") if item.strip()}
             if related != statement_ids:
                 errors.append(f"accessibility_copy for visual unit {unit} must reference every visual statement_id exactly")
+            access_text = normalized_prose(access_row["output_text"])
+            for source_statement_id in statement_ids:
+                source_text = normalized_prose(expected_ids[source_statement_id]["output_text"])
+                if source_text and source_text not in access_text:
+                    errors.append(f"accessibility_copy for visual unit {unit} must preserve statement {source_statement_id} verbatim")
+            required_claim_ids = {
+                claim.strip()
+                for source_row in mapped_rows
+                if source_row["statement_id"] in statement_ids
+                for claim in source_row["claim_ids"].split(";")
+                if claim.strip()
+            }
+            access_claim_ids = {claim.strip() for claim in access_row["claim_ids"].split(";") if claim.strip()}
+            if not required_claim_ids <= access_claim_ids:
+                missing_claim_ids = ";".join(sorted(required_claim_ids - access_claim_ids))
+                errors.append(f"accessibility_copy for visual unit {unit} must carry all related claim_ids: {missing_claim_ids}")
     for key, access_rows in accessibility_rows.items():
         if key not in {"::".join(key_parts) for key_parts in visual_units}:
             errors.append(f"accessibility_copy mapping {access_rows[0]['statement_id']} has no matching visual copy unit")
@@ -417,8 +633,9 @@ def main() -> int:
     parser.add_argument("--artifacts-root", type=Path, required=True)
     parser.add_argument("--mapping", type=Path, required=True)
     parser.add_argument("--deliverable", type=Path, action="append", required=True)
+    parser.add_argument("--source-report", type=Path)
     args = parser.parse_args()
-    errors = validate_package(args.artifacts_root, args.mapping, args.deliverable)
+    errors = validate_package(args.artifacts_root, args.mapping, args.deliverable, args.source_report)
     if errors:
         print(f"Derivative traceability validation failed with {len(errors)} issue(s):")
         for error in errors:
