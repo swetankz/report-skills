@@ -10,7 +10,9 @@ This script checks that inventory against the exact local deliverable files.
 from __future__ import annotations
 
 import argparse
+import calendar
 import csv
+from datetime import date
 import hashlib
 import json
 import re
@@ -372,8 +374,102 @@ def normalized_prose(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().casefold()
 
 
-SUPPORT_COLUMNS = {"support_id", "statement_id", "source_unit_id", "output_text", "output_occurrence", "claim_ids", "source_locator", "kind", "reason"}
+SUPPORT_COLUMNS = {"support_id", "statement_id", "source_unit_id", "output_text", "output_occurrence", "claim_ids", "source_locator", "kind", "metadata_field", "reason"}
 SOURCE_KINDS = {"sourced_fact", "analysis", "recommendation", "safeguard", "stop_rule", "measurement", "source_metadata", "nonfactual"}
+METADATA_FIELDS = {"report_title", "reporting_period", "evidence_cutoff"}
+MONTH_NAMES = "January February March April May June July August September October November December".split()
+MONTH_PATTERN = "(?:" + "|".join(MONTH_NAMES) + ")"
+DATE_PATTERN = rf"(?:[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}|{MONTH_PATTERN} [0-9]{{1,2}}, [0-9]{{4}})"
+PERIOD_PATTERN = rf"(?:{DATE_PATTERN} (?:through|to) {DATE_PATTERN}|{MONTH_PATTERN}(?: [0-9]{{4}})? (?:through|to) {MONTH_PATTERN} [0-9]{{4}})"
+METADATA_LABEL = r"(?:reporting[ _]period|evidence[ _]cutoff)"
+
+
+def calendar_value(value: str, field: str) -> bool:
+    """Validate supported calendar syntax, not the semantics of arbitrary prose."""
+    def day(text: str) -> date:
+        if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", text):
+            return date.fromisoformat(text)
+        match = re.fullmatch(rf"({MONTH_PATTERN}) ([0-9]{{1,2}}), ([0-9]{{4}})", text, re.I)
+        if not match:
+            raise ValueError("unsupported date")
+        month = next(index for index, name in enumerate(MONTH_NAMES, 1) if name.casefold() == match.group(1).casefold())
+        return date(int(match.group(3)), month, int(match.group(2)))
+
+    try:
+        if field == "evidence_cutoff":
+            day(value)
+            return True
+        first, last = re.split(r" (?:through|to) ", value, flags=re.I)
+        if re.fullmatch(DATE_PATTERN, first, re.I) and re.fullmatch(DATE_PATTERN, last, re.I):
+            return day(first) <= day(last)
+        last_match = re.fullmatch(rf"({MONTH_PATTERN}) ([0-9]{{4}})", last, re.I)
+        first_match = re.fullmatch(rf"({MONTH_PATTERN})(?: ([0-9]{{4}}))?", first, re.I)
+        if not first_match or not last_match:
+            return False
+        first_month = next(index for index, name in enumerate(MONTH_NAMES, 1) if name.casefold() == first_match.group(1).casefold())
+        last_month = next(index for index, name in enumerate(MONTH_NAMES, 1) if name.casefold() == last_match.group(1).casefold())
+        first_year, last_year = int(first_match.group(2) or last_match.group(2)), int(last_match.group(2))
+        return date(first_year, first_month, 1) <= date(last_year, last_month, calendar.monthrange(last_year, last_month)[1])
+    except (ValueError, StopIteration):
+        return False
+
+
+def report_metadata_bindings(lines: list[str]) -> tuple[dict[str, dict], list[str]]:
+    """Resolve source-owned fields through an explicit, narrow syntax adapter.
+
+    No inventory declaration can create a binding. Unrecognized narrative is
+    not classified automatically; a requested metadata binding fails closed
+    when its calendar syntax is unsupported, invalid or ambiguous.
+    """
+    candidates: dict[str, list[dict]] = {}
+    declarations: dict[str, int] = {}
+    errors = []
+    title_found = False
+    label = re.compile(rf"(?:and )?(?:the )?(?P<label>{METADATA_LABEL})(?: runs from | is |[ \t]*[:=][ \t]*)", re.I)
+    boundary = rf"(?=[ \t]*(?:[.;]|$|and (?:the )?{METADATA_LABEL}\b))"
+    for index, line in enumerate(lines):
+        title = re.match(r"^\s*#\s+(.*?)\s*$", line)
+        if title and not title_found:
+            title_found = True
+            candidates["report_title"] = [{"source_locator": f"line:{index + 1}", "source_text": title.group(1), "start": title.start(1), "end": title.end(1)}]
+            declarations["report_title"] = 1
+        position = len(line) - len(line.lstrip())
+        while position < len(line):
+            field_match = label.match(line, position)
+            if not field_match:
+                break
+            field = field_match.group("label").casefold().replace(" ", "_")
+            declarations[field] = declarations.get(field, 0) + 1
+            value_pattern = PERIOD_PATTERN if field == "reporting_period" else DATE_PATTERN
+            value_match = re.match(rf"(?P<value>{value_pattern})(?![0-9A-Za-z])", line[field_match.end():], re.I)
+            if not value_match or not calendar_value(value_match.group("value"), field):
+                break
+            value_end = field_match.end() + value_match.end()
+            # An explicitly cited external study date remains sourced evidence,
+            # not an IDless administrative field. Unsupported narrative never
+            # creates a metadata binding; a declared metadata unit then fails.
+            if re.match(r"[ \t]*(?:\(\s*`?[\w][\w.-]*`?\s*\)|\[[^\]]+\])", line[value_end:]):
+                declarations[field] -= 1
+                break
+            ending = re.match(boundary + r"(?:[ \t]*[.;])?", line[value_end:], re.I)
+            if not ending:
+                break
+            end = value_end + ending.end()
+            if re.match(r"[ \t]*(?:\(\s*`?[\w][\w.-]*`?\s*\)|\[[^\]]+\])", line[end:]):
+                declarations[field] -= 1
+                break
+            candidates.setdefault(field, []).append({"source_locator": f"line:{index + 1}", "source_text": line[position:end], "start": position, "end": end})
+            position = end
+            while position < len(line) and line[position].isspace():
+                position += 1
+    bindings = {}
+    for field, count in declarations.items():
+        values = candidates.get(field, [])
+        if count > 1:
+            errors.append(f"report-owned metadata {field} has ambiguous source declarations")
+        elif len(values) == 1:
+            bindings[field] = values[0]
+    return bindings, errors
 
 
 def id_list(value: str) -> list[str]:
@@ -383,6 +479,12 @@ def id_list(value: str) -> list[str]:
 def literal_metadata(text: str) -> str:
     """Allow heading/line-wrap layout, preserving field values and link targets."""
     return re.sub(r"\s+", " ", re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)).strip()
+
+
+def literal_field_pattern(quote: str) -> str:
+    """Exact field spelling/link targets, never a substring of a larger word."""
+    literal = literal_metadata(quote)
+    return (r"(?<!\w)" if literal and (literal[0].isalnum() or literal[0] == "_") else "") + re.escape(literal) + (r"(?!\w)" if literal and (literal[-1].isalnum() or literal[-1] == "_") else "")
 
 
 def bounded_index(value: str, limit: int) -> int:
@@ -430,6 +532,9 @@ def validate_source_contract(
     if not isinstance(review, dict) or review.get("status") != "complete" or review.get("method") != "manual-clause-review" or not valid_checks or not checks <= set(recorded_checks):
         errors.append("source inventory needs complete manual-clause-review of atomic-units, source-types, semantic-support and material-omissions")
     source_lines = source.splitlines()
+    metadata_bindings, metadata_errors = report_metadata_bindings(source_lines)
+    errors.extend(metadata_errors)
+    metadata_units: set[str] = set()
     covered = [set() for _ in source_lines]
     units: dict[str, dict] = {}
     raw_units = inventory.get("source_units", [])
@@ -457,6 +562,19 @@ def validate_source_contract(
             errors.append(f"source unit {unit_id} factual/analysis support needs exact claim_ids")
         if kind == "source_metadata" and claims:
             errors.append(f"source unit {unit_id} metadata must not carry claim_ids")
+        metadata_field = unit.get("metadata_field", "")
+        if kind == "source_metadata":
+            binding = metadata_bindings.get(metadata_field) if isinstance(metadata_field, str) else None
+            if not isinstance(metadata_field, str) or metadata_field not in METADATA_FIELDS:
+                errors.append(f"source unit {unit_id} metadata needs a known metadata_field")
+            elif metadata_field in metadata_units:
+                errors.append(f"source inventory repeats metadata_field {metadata_field}")
+            elif not binding or locator != binding["source_locator"] or quote != binding["source_text"]:
+                errors.append(f"source unit {unit_id} metadata must match its complete independently resolved source field")
+            if isinstance(metadata_field, str):
+                metadata_units.add(metadata_field)
+        elif not isinstance(metadata_field, str) or metadata_field:
+            errors.append(f"source unit {unit_id} metadata_field is only allowed on source_metadata")
         for claim in claims:
             if not re.search(rf"(?<![\w.-]){re.escape(claim)}(?![\w.-])", source):
                 errors.append(f"source unit {unit_id} claim_id {claim} does not occur verbatim in source")
@@ -470,6 +588,10 @@ def validate_source_contract(
         if start < 0 or line.find(quote, start + 1) >= 0:
             errors.append(f"source unit {unit_id} source_text must occur exactly once at {locator}")
             continue
+        for field, binding in metadata_bindings.items():
+            if locator == binding["source_locator"] and start < binding["end"] and start + len(quote) > binding["start"]:
+                if kind != "source_metadata" or metadata_field != field or quote != binding["source_text"]:
+                    errors.append(f"source unit {unit_id} overlaps report-owned field {field}; require its complete IDless source_metadata binding")
         covered[line_number - 1].update(range(start, start + len(quote)))
     for index, line in enumerate(source_lines):
         # Markdown headings organize source prose; their wording is still quoted
@@ -546,6 +668,8 @@ def validate_source_contract(
         if parent is None:
             errors.append(f"support {support_id} has no canonical output statement {statement_id}")
             continue
+        if child["kind"] != "source_metadata" and child["metadata_field"]:
+            errors.append(f"support {support_id} metadata_field is only allowed on source_metadata")
         supports.setdefault(statement_id, []).append(child)
         fragment = normalized_prose(child["output_text"])
         occurrences = list(re.finditer(re.escape(fragment), normalized_prose(parent["output_text"]))) if fragment else []
@@ -570,6 +694,8 @@ def validate_source_contract(
             errors.append(f"support {support_id} kind, locator and claim_ids must match its exact source unit")
         if parent["statement_type"] == "source_metadata" and child["kind"] != "source_metadata":
             errors.append(f"metadata statement {statement_id} contains non-metadata support")
+        if child["kind"] == "source_metadata" and (child["metadata_field"] not in METADATA_FIELDS or child["metadata_field"] != unit.get("metadata_field")):
+            errors.append(f"metadata support {support_id} must name its exact metadata_field")
         if child["kind"] == "source_metadata" and literal_metadata(child["output_text"]) != literal_metadata(unit["source_text"]):
             errors.append(f"metadata support {support_id} must reproduce only its literal source field")
         if child["kind"] == "source_metadata" and literal_metadata(child["output_text"]) not in literal_metadata(parent["output_text"]):
@@ -580,6 +706,7 @@ def validate_source_contract(
         text = normalized_prose(parent["output_text"])
         positions: set[int] = set()
         child_claims: set[str] = set()
+        child_spans: list[tuple[dict, int, int]] = []
         for child in children:
             fragment = normalized_prose(child["output_text"])
             matches = list(re.finditer(re.escape(fragment), text)) if fragment else []
@@ -587,11 +714,35 @@ def validate_source_contract(
             if 1 <= occurrence <= len(matches):
                 match = matches[occurrence - 1]
                 positions.update(range(match.start(), match.end()))
+                child_spans.append((child, match.start(), match.end()))
             child_claims.update(id_list(child["claim_ids"]))
         if any(char.isalnum() and index not in positions for index, char in enumerate(text)):
             errors.append(f"statement {statement_id} has copy without atomic support records")
         if set(id_list(parent["claim_ids"])) != child_claims:
             errors.append(f"statement {statement_id} claim_ids must equal its atomic support claims")
+        # Reserve exact known field occurrences without guessing at paraphrases.
+        # A shared title word or identical external date may instead have its
+        # own literal, genuinely cited source-unit provenance; nearby IDs alone
+        # do not qualify. Semantic support of those IDs remains manual review.
+        literal_parent = literal_metadata(parent["output_text"])
+        for field, source_binding in metadata_bindings.items():
+            pattern = literal_field_pattern(source_binding["source_text"])
+            field_text = normalized_prose(source_binding["source_text"])
+            for occurrence in re.finditer(pattern, literal_parent):
+                prefix = literal_parent[:occurrence.start()]
+                start = len(normalized_prose(prefix)) + (1 if prefix.endswith(" ") and normalized_prose(prefix) else 0)
+                end = start + len(field_text)
+                supported = False
+                for child, child_start, child_end in child_spans:
+                    unit = units.get(child["source_unit_id"])
+                    if not unit or child_start > start or child_end < end:
+                        continue
+                    if child["kind"] == "source_metadata" and child["metadata_field"] == field and unit.get("kind") == "source_metadata" and unit.get("metadata_field") == field:
+                        supported = True
+                    elif child["kind"] in {"sourced_fact", "analysis"} and unit.get("kind") == child["kind"] and unit.get("claim_ids") and re.search(pattern, literal_metadata(unit["source_text"])) and re.search(pattern, literal_metadata(child["output_text"])):
+                        supported = True
+                if not supported:
+                    errors.append(f"statement {statement_id} literal field {field} needs its metadata_field-bound or exact cited source-unit support")
     coverage: dict[tuple[str, str], dict] = {}
     raw_coverage = inventory.get("coverage", [])
     if not isinstance(raw_coverage, list):

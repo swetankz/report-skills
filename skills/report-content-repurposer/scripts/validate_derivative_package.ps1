@@ -115,6 +115,86 @@ function Get-ContractKey {
     return (@($Parts | ForEach-Object { "$($_.Length):$_" }) -join '')
 }
 
+function Get-LiteralFieldPattern {
+    param([string]$Quote)
+    $literal = Normalize-LiteralMetadata -Text $Quote
+    $left = if ($literal -and ([char]::IsLetterOrDigit($literal[0]) -or $literal[0] -eq '_')) { '(?<!\w)' } else { '' }
+    $right = if ($literal -and ([char]::IsLetterOrDigit($literal[$literal.Length - 1]) -or $literal[$literal.Length - 1] -eq '_')) { '(?!\w)' } else { '' }
+    return $left + [regex]::Escape($literal) + $right
+}
+
+function Test-MetadataCalendarValue {
+    param([string]$Value, [string]$Field)
+    $culture = [System.Globalization.CultureInfo]::InvariantCulture
+    $style = [System.Globalization.DateTimeStyles]::None
+    $dateFormats = [string[]]@('yyyy-MM-dd', 'MMMM d, yyyy', 'MMMM dd, yyyy')
+    $first = [datetime]::MinValue; $last = [datetime]::MinValue
+    if ($Field -ceq 'evidence_cutoff') { return [datetime]::TryParseExact($Value, $dateFormats, $culture, $style, [ref]$first) }
+    $parts = @([regex]::Split($Value, ' (?:through|to) ', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase))
+    if ($parts.Count -ne 2) { return $false }
+    if ([datetime]::TryParseExact($parts[0], $dateFormats, $culture, $style, [ref]$first) -and [datetime]::TryParseExact($parts[1], $dateFormats, $culture, $style, [ref]$last)) { return $first -le $last }
+    if (-not [datetime]::TryParseExact($parts[1], 'MMMM yyyy', $culture, $style, [ref]$last)) { return $false }
+    $firstText = $parts[0]
+    if ($firstText -notmatch '[0-9]{4}$') { $firstText += ' ' + $last.Year.ToString('D4') }
+    if (-not [datetime]::TryParseExact($firstText, 'MMMM yyyy', $culture, $style, [ref]$first)) { return $false }
+    return $first -le $last
+}
+
+function Get-ReportMetadataBindings {
+    param([string[]]$Lines)
+    # A bounded source-syntax adapter, not semantic fact extraction. Inventory
+    # labels cannot create fields, and unsupported prose has no metadata binding.
+    $months = '(?:January|February|March|April|May|June|July|August|September|October|November|December)'
+    $datePattern = "(?:[0-9]{4}-[0-9]{2}-[0-9]{2}|$months [0-9]{1,2}, [0-9]{4})"
+    $periodPattern = "(?:$datePattern (?:through|to) $datePattern|$months(?: [0-9]{4})? (?:through|to) $months [0-9]{4})"
+    $labelPattern = '(?:reporting[ _]period|evidence[ _]cutoff)'
+    $headPattern = "^(?:and )?(?:the )?(?<label>$labelPattern)(?: runs from | is |[ \t]*[:=][ \t]*)"
+    $boundary = "^(?=[ \t]*(?:[.;]|$|and (?:the )?$labelPattern\b))(?:[ \t]*[.;])?"
+    $candidates = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
+    $declarations = [System.Collections.Generic.Dictionary[string,int]]::new([System.StringComparer]::Ordinal)
+    $bindings = [System.Collections.Generic.Dictionary[string,hashtable]]::new([System.StringComparer]::Ordinal)
+    $bindingErrors = [System.Collections.Generic.List[string]]::new()
+    $titleFound = $false
+    for ($lineIndex = 0; $lineIndex -lt $Lines.Count; $lineIndex++) {
+        $line = $Lines[$lineIndex]
+        $title = [regex]::Match($line, '^\s*#\s+(.*?)\s*$')
+        if ($title.Success -and -not $titleFound) {
+            $titleFound = $true
+            $candidates.Add('report_title', [System.Collections.Generic.List[hashtable]]::new())
+            $candidates['report_title'].Add(@{ source_locator = "line:$($lineIndex + 1)"; source_text = $title.Groups[1].Value; start = $title.Groups[1].Index; end = $title.Groups[1].Index + $title.Groups[1].Length })
+            $declarations.Add('report_title', 1)
+        }
+        $position = $line.Length - $line.TrimStart().Length
+        while ($position -lt $line.Length) {
+            $head = [regex]::Match($line.Substring($position), $headPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if (-not $head.Success) { break }
+            $field = $head.Groups['label'].Value.ToLowerInvariant().Replace(' ', '_')
+            if (-not $declarations.ContainsKey($field)) { $declarations.Add($field, 0) }
+            $declarations[$field]++
+            $valuePattern = if ($field -ceq 'reporting_period') { $periodPattern } else { $datePattern }
+            $valueStart = $position + $head.Length
+            $value = [regex]::Match($line.Substring($valueStart), "^(?<value>$valuePattern)(?![0-9A-Za-z])", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if (-not $value.Success -or -not (Test-MetadataCalendarValue -Value $value.Groups['value'].Value -Field $field)) { break }
+            $valueEnd = $valueStart + $value.Length
+            # Explicitly cited dates remain ordinary sourced facts.
+            if ([regex]::IsMatch($line.Substring($valueEnd), '^[ \t]*(?:\(\s*`?[\w][\w.-]*`?\s*\)|\[[^\]]+\])')) { $declarations[$field]--; break }
+            $ending = [regex]::Match($line.Substring($valueEnd), $boundary, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if (-not $ending.Success) { break }
+            $end = $valueEnd + $ending.Length
+            if ([regex]::IsMatch($line.Substring($end), '^[ \t]*(?:\(\s*`?[\w][\w.-]*`?\s*\)|\[[^\]]+\])')) { $declarations[$field]--; break }
+            if (-not $candidates.ContainsKey($field)) { $candidates.Add($field, [System.Collections.Generic.List[hashtable]]::new()) }
+            $candidates[$field].Add(@{ source_locator = "line:$($lineIndex + 1)"; source_text = $line.Substring($position, $end - $position); start = $position; end = $end })
+            $position = $end
+            while ($position -lt $line.Length -and [char]::IsWhiteSpace($line[$position])) { $position++ }
+        }
+    }
+    foreach ($field in $declarations.Keys) {
+        if ($declarations[$field] -gt 1) { $bindingErrors.Add("report-owned metadata $field has ambiguous source declarations") }
+        elseif ($candidates.ContainsKey($field) -and $candidates[$field].Count -eq 1) { $bindings.Add($field, $candidates[$field][0]) }
+    }
+    return @{ Bindings = $bindings; Errors = $bindingErrors.ToArray() }
+}
+
 function Resolve-SafeArtifact {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -176,6 +256,11 @@ function Test-SourceContract {
         $errors.Add('source inventory needs complete manual-clause-review of atomic-units, source-types, semantic-support and material-omissions')
     }
     $lines = @($SourceText -split '\r\n|\n|\r')
+    $metadataResolution = Get-ReportMetadataBindings -Lines $lines
+    $metadataBindings = $metadataResolution.Bindings
+    foreach ($metadataError in $metadataResolution.Errors) { $errors.Add($metadataError) }
+    $metadataFields = @('report_title', 'reporting_period', 'evidence_cutoff')
+    $metadataUnits = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     $covered = [System.Collections.Generic.List[object]]::new()
     foreach ($line in $lines) { $covered.Add([System.Collections.Generic.HashSet[int]]::new()) }
     $units = [System.Collections.Generic.Dictionary[string,hashtable]]::new([System.StringComparer]::Ordinal)
@@ -194,6 +279,14 @@ function Test-SourceContract {
         $units.Add($unitId, $unit)
         if ($kind -cin @('sourced_fact', 'analysis') -and $claims.Count -eq 0) { $errors.Add("source unit $unitId factual/analysis support needs exact claim_ids") }
         if ($kind -ceq 'source_metadata' -and $claims.Count) { $errors.Add("source unit $unitId metadata must not carry claim_ids") }
+        $metadataField = ''
+        if ($unit.ContainsKey('metadata_field')) { $metadataField = $unit['metadata_field'] }
+        if ($kind -ceq 'source_metadata') {
+            $binding = if ($metadataField -is [string] -and $metadataBindings.ContainsKey($metadataField)) { $metadataBindings[$metadataField] } else { $null }
+            if ($metadataField -isnot [string] -or $metadataFields -cnotcontains $metadataField) { $errors.Add("source unit $unitId metadata needs a known metadata_field") }
+            elseif (-not $metadataUnits.Add($metadataField)) { $errors.Add("source inventory repeats metadata_field $metadataField") }
+            elseif (-not $binding -or $locator -cne $binding['source_locator'] -or $quote -cne $binding['source_text']) { $errors.Add("source unit $unitId metadata must match its complete independently resolved source field") }
+        } elseif ($metadataField -isnot [string] -or $metadataField) { $errors.Add("source unit $unitId metadata_field is only allowed on source_metadata") }
         foreach ($claim in $claims) {
             if (-not [regex]::IsMatch($SourceText, '(?<![\w.-])' + [regex]::Escape($claim) + '(?![\w.-])')) { $errors.Add("source unit $unitId claim_id $claim does not occur verbatim in source") }
         }
@@ -204,6 +297,12 @@ function Test-SourceContract {
         $line = [string]$lines[$lineNumber - 1]
         $start = $line.IndexOf($quote, [System.StringComparison]::Ordinal)
         if ($start -lt 0 -or $line.IndexOf($quote, $start + 1, [System.StringComparison]::Ordinal) -ge 0) { $errors.Add("source unit $unitId source_text must occur exactly once at $locator"); continue }
+        foreach ($field in $metadataBindings.Keys) {
+            $binding = $metadataBindings[$field]
+            if ($locator -ceq $binding['source_locator'] -and $start -lt $binding['end'] -and $start + $quote.Length -gt $binding['start']) {
+                if ($kind -cne 'source_metadata' -or $metadataField -cne $field -or $quote -cne $binding['source_text']) { $errors.Add("source unit $unitId overlaps report-owned field $field; require its complete IDless source_metadata binding") }
+            }
+        }
         for ($i = $start; $i -lt $start + $quote.Length; $i++) { [void]$covered[$lineNumber - 1].Add($i) }
     }
     for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++) {
@@ -239,7 +338,7 @@ function Test-SourceContract {
         if ($records.Count -eq 0) { throw 'statement support CSV has no header' }
         $headers = @($records[0].Fields)
         if (@($headers | Sort-Object -Unique).Count -ne $headers.Count) { throw 'statement support CSV has duplicate header names' }
-        foreach ($column in @('support_id', 'statement_id', 'source_unit_id', 'output_text', 'output_occurrence', 'claim_ids', 'source_locator', 'kind', 'reason')) { if ($headers -cnotcontains $column) { throw 'statement support CSV is missing required columns' } }
+        foreach ($column in @('support_id', 'statement_id', 'source_unit_id', 'output_text', 'output_occurrence', 'claim_ids', 'source_locator', 'kind', 'metadata_field', 'reason')) { if ($headers -cnotcontains $column) { throw 'statement support CSV is missing required columns' } }
     } catch { $errors.Add("cannot read statement support CSV: $($_.Exception.Message)"); return }
     $supports = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
     $uses = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
@@ -254,6 +353,7 @@ function Test-SourceContract {
         if (-not $supportId -or -not $supportIds.Add($supportId)) { $errors.Add('statement support has empty or duplicate support_id') }
         if (-not $mapped.ContainsKey($statementId)) { $errors.Add("support $supportId has no canonical output statement $statementId"); continue }
         $parent = $mapped[$statementId]
+        if ($child['kind'] -cne 'source_metadata' -and $child['metadata_field']) { $errors.Add("support $supportId metadata_field is only allowed on source_metadata") }
         if (-not $supports.ContainsKey($statementId)) { $supports.Add($statementId, [System.Collections.Generic.List[hashtable]]::new()) }
         $supports[$statementId].Add($child)
         $fragment = if ($child['output_text']) { Normalize-AccessibleText -Text $child['output_text'] } else { '' }
@@ -275,6 +375,7 @@ function Test-SourceContract {
         $claimsDiffer = ($childClaims.Count -ne $unitClaims.Count) -or @($childClaims | Where-Object { $unitClaims -cnotcontains $_ }).Count
         if ($child['kind'] -cne $unit['kind'] -or $child['source_locator'] -cne $unit['source_locator'] -or $claimsDiffer) { $errors.Add("support $supportId kind, locator and claim_ids must match its exact source unit") }
         if ($parent['statement_type'] -ceq 'source_metadata' -and $child['kind'] -cne 'source_metadata') { $errors.Add("metadata statement $statementId contains non-metadata support") }
+        if ($child['kind'] -ceq 'source_metadata' -and ($metadataFields -cnotcontains $child['metadata_field'] -or $child['metadata_field'] -cne $unit['metadata_field'])) { $errors.Add("metadata support $supportId must name its exact metadata_field") }
         if ($child['kind'] -ceq 'source_metadata' -and (Normalize-LiteralMetadata -Text $child['output_text']) -cne (Normalize-LiteralMetadata -Text $unit['source_text'])) { $errors.Add("metadata support $supportId must reproduce only its literal source field") }
         if ($child['kind'] -ceq 'source_metadata' -and -not (Normalize-LiteralMetadata -Text $parent['output_text']).Contains((Normalize-LiteralMetadata -Text $child['output_text']), [System.StringComparison]::Ordinal)) { $errors.Add("metadata support $supportId must preserve its literal field in canonical output") }
         $useKey = Get-ContractKey -Parts @($child['source_unit_id'], $parent['deliverable_id'])
@@ -285,18 +386,48 @@ function Test-SourceContract {
         $parent = $mapped[$statementId]; $text = Normalize-AccessibleText -Text $parent['output_text']
         $positions = [System.Collections.Generic.HashSet[int]]::new()
         $childClaims = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        $childSpans = [System.Collections.Generic.List[hashtable]]::new()
         $children = if ($supports.ContainsKey($statementId)) { @($supports[$statementId]) } else { @() }
         foreach ($child in $children) {
             $fragment = if ($child['output_text']) { Normalize-AccessibleText -Text $child['output_text'] } else { '' }
             $occurrence = 0L
             if ($child['output_occurrence'] -match '^[1-9][0-9]*$') { [void][long]::TryParse($child['output_occurrence'], [ref]$occurrence) }
             $matches = if ($fragment) { @([regex]::Matches($text, [regex]::Escape($fragment))) } else { @() }
-            if ($occurrence -ge 1 -and $occurrence -le $matches.Count) { $match = $matches[$occurrence - 1]; for ($i = $match.Index; $i -lt $match.Index + $match.Length; $i++) { [void]$positions.Add($i) } }
+            if ($occurrence -ge 1 -and $occurrence -le $matches.Count) {
+                $match = $matches[$occurrence - 1]
+                for ($i = $match.Index; $i -lt $match.Index + $match.Length; $i++) { [void]$positions.Add($i) }
+                $childSpans.Add(@{ Child = $child; Start = $match.Index; End = $match.Index + $match.Length })
+            }
             foreach ($claim in @($child['claim_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) { [void]$childClaims.Add($claim) }
         }
         for ($i = 0; $i -lt $text.Length; $i++) { if ([char]::IsLetterOrDigit($text[$i]) -and -not $positions.Contains($i)) { $errors.Add("statement $statementId has copy without atomic support records"); break } }
         $parentClaims = @($parent['claim_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -CaseSensitive -Unique)
         if ($parentClaims.Count -ne $childClaims.Count -or @($parentClaims | Where-Object { -not $childClaims.Contains($_) }).Count) { $errors.Add("statement $statementId claim_ids must equal its atomic support claims") }
+        # Exact fields need literal provenance, not an unlinked nonfactual label
+        # or nearby ID. Alternative cited source quotes may contain the same
+        # field/title words; their semantic support still needs manual review.
+        $literalParent = Normalize-LiteralMetadata -Text $parent['output_text']
+        foreach ($field in $metadataBindings.Keys) {
+            $sourceBinding = $metadataBindings[$field]
+            $pattern = Get-LiteralFieldPattern -Quote $sourceBinding['source_text']
+            $fieldText = Normalize-AccessibleText -Text $sourceBinding['source_text']
+            foreach ($fieldOccurrence in [regex]::Matches($literalParent, $pattern)) {
+                $prefix = $literalParent.Substring(0, $fieldOccurrence.Index)
+                $normalizedPrefix = if ($prefix) { Normalize-AccessibleText -Text $prefix } else { '' }
+                $start = $normalizedPrefix.Length
+                if ($prefix.EndsWith(' ', [System.StringComparison]::Ordinal) -and $normalizedPrefix) { $start++ }
+                $end = $start + $fieldText.Length
+                $supported = $false
+                foreach ($span in $childSpans) {
+                    $child = $span['Child']
+                    if (-not $units.ContainsKey($child['source_unit_id']) -or $span['Start'] -gt $start -or $span['End'] -lt $end) { continue }
+                    $unit = $units[$child['source_unit_id']]
+                    if ($child['kind'] -ceq 'source_metadata' -and $child['metadata_field'] -ceq $field -and $unit['kind'] -ceq 'source_metadata' -and $unit['metadata_field'] -ceq $field) { $supported = $true }
+                    elseif ($child['kind'] -cin @('sourced_fact', 'analysis') -and $unit['kind'] -ceq $child['kind'] -and @($unit['claim_ids']).Count -and [regex]::IsMatch((Normalize-LiteralMetadata -Text $unit['source_text']), $pattern) -and [regex]::IsMatch((Normalize-LiteralMetadata -Text $child['output_text']), $pattern)) { $supported = $true }
+                }
+                if (-not $supported) { $errors.Add("statement $statementId literal field $field needs its metadata_field-bound or exact cited source-unit support") }
+            }
+        }
     }
     $coverage = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     if ($inventory['coverage'] -isnot [array]) { $errors.Add('source inventory coverage must be an array') }
