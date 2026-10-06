@@ -4,6 +4,7 @@ All notable repository-level changes are documented here.
 
 ## 0.2.0
 
+- Bind evaluation method v48 to bounded grammatical handling of unverified participial metadata phrases, while preserving rejection of affirmative actor/passive external-action claims. Scope negation to each action occurrence so unrelated limitations or denials cannot hide a completed action. Earlier failed evidence remains diagnostic; all qualification must be fresh on a clean v48 candidate, with the selected GPT 6.1 Sol Ultra Fast profile and unchanged release gates.
 - Bind evaluation method v47 to the selected GPT 6.1 Sol Ultra profile with explicit Fast service-tier controls in every invocation, prompt probe, and identity receipt. Recognize only complete literal PowerShell numeric index ranges in the trace guard, without exempting adjacent paths or other boundary controls; earlier receipts are not reused and release thresholds are unchanged.
 - Include both Codex and ZCode manifests plus the marketplace descriptor in the plugin archive, and independently reject archives missing either client metadata even when their inventory is self-consistent.
 - Reconcile repurposed copy against a source-byte-bound inventory and atomic clause-support records, including source recommendations, measurements and stop rules without claim IDs. Distinguish one accessibility output unit from its clause-level mappings, preserve explicit semantic review, and clarify visual-audit pass names and coverage-only severity records.
