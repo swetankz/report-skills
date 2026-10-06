@@ -248,8 +248,8 @@ class ToolingTests(unittest.TestCase):
             "visual-hygiene-auditor/references/three-pass-audit-protocol.md": ("separate `severity` field", "prose such as `Impact: high` does not populate"),
             "motion-performance-qa/SKILL.md": ("`proposed_correction`", "distinct fields"),
             "motion-performance-qa/references/motion-measurement-protocol.md": ("## Finding separation", "`proposed_correction: none`"),
-            "report-content-repurposer/SKILL.md": ("claim-to-deliverable mapping row", "actual proposed alternative-text string"),
-            "report-content-repurposer/references/derivative-workflow.md": ("claim-by-deliverable coverage table", "actual alternative-text string"),
+            "report-content-repurposer/SKILL.md": ("claim-to-deliverable mapping row", "actual proposed alternative-text string", "avoid `..` array-range slices"),
+            "report-content-repurposer/references/derivative-workflow.md": ("claim-by-deliverable coverage table", "actual alternative-text string", "avoid `..` array-range slices"),
             "pencil-safe-editor/SKILL.md": ("`observed_state`", "`proposed_next_step`"),
             "pencil-safe-editor/references/pencil-edit-protocol.md": ("## Blocked handoff", "specific user action or safe observation"),
             "interactive-report-publisher/SKILL.md": (
