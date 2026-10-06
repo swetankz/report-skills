@@ -261,6 +261,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
             "-NoProfile",
             "-File",
             str(POWERSHELL_VALIDATOR_PATH),
+            "-StructuralOnly",
             "-ArtifactsRoot",
             str(self.root),
             "-Mapping",
@@ -270,7 +271,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
         ]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn("validation passed", result.stdout)
+        self.assertIn("Structural checks passed", result.stdout)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell Core is not installed")
     def test_powershell_validator_rejects_factual_row_without_claim_id(self) -> None:
@@ -283,6 +284,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
             "-NoProfile",
             "-File",
             str(POWERSHELL_VALIDATOR_PATH),
+            "-StructuralOnly",
             "-ArtifactsRoot",
             str(self.root),
             "-Mapping",
@@ -310,6 +312,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
                 "-NoProfile",
                 "-File",
                 str(POWERSHELL_VALIDATOR_PATH),
+                "-StructuralOnly",
                 "-ArtifactsRoot",
                 str(self.root),
                 "-Mapping",
@@ -411,6 +414,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
                 "-NoProfile",
                 "-File",
                 str(POWERSHELL_VALIDATOR_PATH),
+                "-StructuralOnly",
                 "-ArtifactsRoot",
                 str(self.root),
                 "-Mapping",
@@ -437,6 +441,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
                 "-NoProfile",
                 "-File",
                 str(POWERSHELL_VALIDATOR_PATH),
+                "-StructuralOnly",
                 "-ArtifactsRoot",
                 str(self.root),
                 "-Mapping",
@@ -466,6 +471,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
                 "-NoProfile",
                 "-File",
                 str(POWERSHELL_VALIDATOR_PATH),
+                "-StructuralOnly",
                 "-ArtifactsRoot",
                 str(self.root),
                 "-Mapping",
@@ -579,6 +585,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
                 "-NoProfile",
                 "-File",
                 str(POWERSHELL_VALIDATOR_PATH),
+                "-StructuralOnly",
                 "-ArtifactsRoot",
                 str(self.root),
                 "-Mapping",
@@ -848,6 +855,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
                     "-NoProfile",
                     "-File",
                     str(POWERSHELL_VALIDATOR_PATH),
+                    "-StructuralOnly",
                     "-ArtifactsRoot",
                     str(self.root),
                     "-Mapping",

@@ -13,7 +13,10 @@ param(
     [Parameter(Mandatory = $true)][string]$ArtifactsRoot,
     [Parameter(Mandatory = $true)][string]$Mapping,
     [Parameter(Mandatory = $true)][string]$Deliverables,
-    [Parameter(Mandatory = $false)][string]$SourceReport
+    [Parameter(Mandatory = $false)][string]$SourceReport,
+    [Parameter(Mandatory = $false)][string]$SourceInventory,
+    [Parameter(Mandatory = $false)][string]$StatementSupport,
+    [switch]$StructuralOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,9 +37,34 @@ $markdownProvenanceFields = @(
     'source_claim_ids', 'transformation_type', 'dimensions', 'aspect_ratio', 'status'
 )
 $errors = [System.Collections.Generic.List[string]]::new()
+if ($StructuralOnly -and ($SourceReport -or $SourceInventory -or $StatementSupport)) {
+    Write-Output 'StructuralOnly is mutually exclusive with SourceReport, SourceInventory and StatementSupport.'
+    exit 1
+}
+if (-not $StructuralOnly -and -not $SourceReport) {
+    Write-Output 'SourceReport is required for handoff validation.'
+    exit 1
+}
 
 function Read-StrictCsv {
     param([Parameter(Mandatory = $true)][string]$Path)
+    # TextFieldParser skips blank physical lines. Reject empty logical records
+    # first, while retaining embedded line breaks inside quoted fields.
+    $rawCsv = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+    $insideQuotes = $false
+    $recordHasContent = $false
+    for ($characterIndex = 0; $characterIndex -lt $rawCsv.Length; $characterIndex++) {
+        $character = $rawCsv[$characterIndex]
+        if ($character -eq '"') {
+            $recordHasContent = $true
+            if ($insideQuotes -and $characterIndex + 1 -lt $rawCsv.Length -and $rawCsv[$characterIndex + 1] -eq '"') { $characterIndex++; continue }
+            $insideQuotes = -not $insideQuotes
+        } elseif (-not $insideQuotes -and ($character -eq "`r" -or $character -eq "`n")) {
+            if (-not $recordHasContent) { throw 'CSV has a blank logical record' }
+            $recordHasContent = $false
+            if ($character -eq "`r" -and $characterIndex + 1 -lt $rawCsv.Length -and $rawCsv[$characterIndex + 1] -eq "`n") { $characterIndex++ }
+        } elseif (-not [char]::IsWhiteSpace($character)) { $recordHasContent = $true }
+    }
     Add-Type -AssemblyName Microsoft.VisualBasic
     $parser = [Microsoft.VisualBasic.FileIO.TextFieldParser]::new(
         $Path,
@@ -60,6 +88,11 @@ function Read-StrictCsv {
     } finally {
         $parser.Close()
     }
+    if ($records.Count) {
+        $csvHeaders = @($records[0].Fields)
+        $headerSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($csvHeader in $csvHeaders) { if (-not $csvHeader.Trim() -or -not $headerSet.Add($csvHeader)) { throw 'CSV has a blank or duplicate header name' } }
+    }
     return [pscustomobject]@{ Records = $records.ToArray() }
 }
 
@@ -69,6 +102,17 @@ function Normalize-AccessibleText {
     $normalized = [regex]::Replace($normalized, '\[([^\]]+)\]\([^)]*\)', '$1')
     $normalized = [regex]::Replace($normalized, '[*`_~]', '')
     return [regex]::Replace($normalized, '\s+', ' ').Trim().ToLowerInvariant()
+}
+
+function Normalize-LiteralMetadata {
+    param([string]$Text)
+    $normalized = [regex]::Replace($Text, '(?m)^\s{0,3}#{1,6}\s+', '')
+    return [regex]::Replace($normalized, '\s+', ' ').Trim()
+}
+
+function Get-ContractKey {
+    param([string[]]$Parts)
+    return (@($Parts | ForEach-Object { "$($_.Length):$_" }) -join '')
 }
 
 function Resolve-SafeArtifact {
@@ -103,6 +147,178 @@ function Resolve-SafeArtifact {
         }
     }
     return $full
+}
+
+function Test-SourceContract {
+    param([string]$Root, [object[]]$Rows, [string[]]$FormatIds, [string]$SourceText,
+        [string]$SourceHash, [string]$InventoryPath, [string]$SupportPath)
+    # This checks a reviewed inventory. Clause boundaries, classification,
+    # entailment and materiality remain the declared manual review.
+    try {
+        $inventoryRelative = [System.IO.Path]::GetRelativePath($Root, [System.IO.Path]::GetFullPath($InventoryPath))
+        $supportRelative = [System.IO.Path]::GetRelativePath($Root, [System.IO.Path]::GetFullPath($SupportPath))
+        $inventoryFile = Resolve-SafeArtifact -Root $Root -RelativePath $inventoryRelative
+        $supportFile = Resolve-SafeArtifact -Root $Root -RelativePath $supportRelative
+        $inventory = [System.IO.File]::ReadAllText($inventoryFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json -AsHashtable
+    } catch { $errors.Add("required source inventory and statement support cannot be read: $($_.Exception.Message)"); return }
+    foreach ($contract in $manifestContracts) {
+        foreach ($field in @('source_inventory', 'statement_support')) {
+            $expectedPath = if ($field -ceq 'source_inventory') { $inventoryRelative.Replace('\', '/') } else { $supportRelative.Replace('\', '/') }
+            $pointer = $contract[$field]
+            if ($pointer -isnot [string] -or $pointer.Replace('\', '/') -cne $expectedPath) { $errors.Add("manifest $($contract['path']) $field must name the exact validated relative path $expectedPath") }
+        }
+    }
+    if ($inventory -isnot [hashtable] -or $inventory['schema_version'] -cne '1.0') { $errors.Add('source inventory must use schema_version 1.0'); return }
+    if ($inventory['source_report_hash'] -cne $SourceHash) { $errors.Add('source inventory hash does not match source report bytes') }
+    $review = $inventory['review']
+    $requiredChecks = @('atomic-units', 'source-types', 'semantic-support', 'material-omissions')
+    if ($review -isnot [hashtable] -or $review['status'] -cne 'complete' -or $review['method'] -cne 'manual-clause-review' -or $review['checks'] -isnot [array] -or @($review['checks'] | Where-Object { $_ -isnot [string] }).Count -or @($requiredChecks | Where-Object { @($review['checks']) -cnotcontains $_ }).Count) {
+        $errors.Add('source inventory needs complete manual-clause-review of atomic-units, source-types, semantic-support and material-omissions')
+    }
+    $lines = @($SourceText -split '\r\n|\n|\r')
+    $covered = [System.Collections.Generic.List[object]]::new()
+    foreach ($line in $lines) { $covered.Add([System.Collections.Generic.HashSet[int]]::new()) }
+    $units = [System.Collections.Generic.Dictionary[string,hashtable]]::new([System.StringComparer]::Ordinal)
+    $kinds = @('sourced_fact', 'analysis', 'recommendation', 'safeguard', 'stop_rule', 'measurement', 'source_metadata', 'nonfactual')
+    if ($inventory['source_units'] -isnot [array] -or @($inventory['source_units']).Count -eq 0) { $errors.Add('source inventory needs nonempty source_units') }
+    foreach ($unit in @($inventory['source_units'])) {
+        if ($unit -isnot [hashtable]) { $errors.Add('source inventory unit must be an object'); continue }
+        $unitId = $unit['source_unit_id']
+        if ($unitId -isnot [string] -or -not $unitId -or $units.ContainsKey($unitId)) { $errors.Add('source inventory has empty or duplicate source_unit_id'); continue }
+        $kind = $unit['kind']; $quote = $unit['source_text']; $locator = $unit['source_locator']
+        if ($kind -isnot [string] -or $kinds -cnotcontains $kind -or $quote -isnot [string] -or -not $quote) { $errors.Add("source unit $unitId needs a supported kind and literal source_text"); continue }
+        $claims = @($unit['claim_ids'])
+        if ($unit['claim_ids'] -isnot [array] -or @($claims | Where-Object { $_ -isnot [string] -or -not $_ }).Count -or @($claims | Sort-Object -CaseSensitive -Unique).Count -ne $claims.Count) {
+            $errors.Add("source unit $unitId needs a unique claim_ids array"); continue
+        }
+        $units.Add($unitId, $unit)
+        if ($kind -cin @('sourced_fact', 'analysis') -and $claims.Count -eq 0) { $errors.Add("source unit $unitId factual/analysis support needs exact claim_ids") }
+        if ($kind -ceq 'source_metadata' -and $claims.Count) { $errors.Add("source unit $unitId metadata must not carry claim_ids") }
+        foreach ($claim in $claims) {
+            if (-not [regex]::IsMatch($SourceText, '(?<![\w.-])' + [regex]::Escape($claim) + '(?![\w.-])')) { $errors.Add("source unit $unitId claim_id $claim does not occur verbatim in source") }
+        }
+        $match = if ($locator -is [string]) { [regex]::Match($locator, '^line:([1-9][0-9]*)$') } else { [regex]::Match('', '^line:([1-9][0-9]*)$') }
+        $lineNumber = 0
+        if ($match.Success) { [void][int]::TryParse($match.Groups[1].Value, [ref]$lineNumber) }
+        if ($lineNumber -lt 1 -or $lineNumber -gt $lines.Count) { $errors.Add("source unit $unitId needs an exact line:N locator"); continue }
+        $line = [string]$lines[$lineNumber - 1]
+        $start = $line.IndexOf($quote, [System.StringComparison]::Ordinal)
+        if ($start -lt 0 -or $line.IndexOf($quote, $start + 1, [System.StringComparison]::Ordinal) -ge 0) { $errors.Add("source unit $unitId source_text must occur exactly once at $locator"); continue }
+        for ($i = $start; $i -lt $start + $quote.Length; $i++) { [void]$covered[$lineNumber - 1].Add($i) }
+    }
+    for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++) {
+        $line = [string]$lines[$lineIndex]
+        if (-not $line.Trim() -or $line -match '^\s*#{1,6}\s') { continue }
+        for ($i = 0; $i -lt $line.Length; $i++) {
+            if (-not [char]::IsWhiteSpace($line[$i]) -and -not $covered[$lineIndex].Contains($i)) { $errors.Add("source line $($lineIndex + 1) has text missing from the upstream inventory: $($line.Substring(0, [Math]::Min(100, $line.Length)))"); break }
+        }
+    }
+    if ($FormatIds.Count -eq 0) { $errors.Add('source reconciliation needs explicit requested-format manifest entries') }
+    $mapped = [System.Collections.Generic.Dictionary[string,hashtable]]::new([System.StringComparer]::Ordinal)
+    foreach ($row in $Rows) { if ($row['status'] -cne 'omitted' -and $row['statement_id'] -and -not $mapped.ContainsKey($row['statement_id'])) { $mapped.Add($row['statement_id'], $row) } }
+    $formatPaths = @{}
+    foreach ($statementId in $mapped.Keys) {
+        $row = $mapped[$statementId]
+        if (-not $manifestDeliverableRoles.ContainsKey($row['deliverable_id'])) { $errors.Add("output statement $statementId references an absent manifest deliverable_id") }
+        if ($FormatIds -ccontains $row['deliverable_id']) {
+            if (-not $formatPaths.ContainsKey($row['deliverable_id'])) { $formatPaths[$row['deliverable_id']] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal) }
+            [void]$formatPaths[$row['deliverable_id']].Add($row['output_path'])
+        }
+        if ($declared.ContainsKey($row['output_path']) -and [System.IO.Path]::GetExtension($row['output_path']).ToLowerInvariant() -eq '.md') {
+            $headerText = [System.IO.File]::ReadAllText($declared[$row['output_path']], [System.Text.Encoding]::UTF8)
+            $headerParts = @($headerText -split '---', 3)
+            $header = if ($headerParts.Count -gt 1) { $headerParts[1] } else { '' }
+            $identityMatch = [regex]::Match($header, '(?m)^deliverable_id:\s*["'']?([^\r\n"'']+)["'']?\s*$')
+            if (-not $identityMatch.Success -or $identityMatch.Groups[1].Value.Trim() -cne $row['deliverable_id']) { $errors.Add("output statement $statementId deliverable_id disagrees with its file header") }
+        }
+    }
+    foreach ($formatId in $FormatIds) { if (-not $formatPaths.ContainsKey($formatId) -or $formatPaths[$formatId].Count -ne 1) { $errors.Add("requested format $formatId must bind exactly one copy-bearing output file") } }
+    try {
+        $supportCsv = Read-StrictCsv -Path $supportFile
+        $records = @($supportCsv.Records)
+        if ($records.Count -eq 0) { throw 'statement support CSV has no header' }
+        $headers = @($records[0].Fields)
+        if (@($headers | Sort-Object -Unique).Count -ne $headers.Count) { throw 'statement support CSV has duplicate header names' }
+        foreach ($column in @('support_id', 'statement_id', 'source_unit_id', 'output_text', 'output_occurrence', 'claim_ids', 'source_locator', 'kind', 'reason')) { if ($headers -cnotcontains $column) { throw 'statement support CSV is missing required columns' } }
+    } catch { $errors.Add("cannot read statement support CSV: $($_.Exception.Message)"); return }
+    $supports = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
+    $uses = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
+    $supportIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $occurrenceBindings = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    for ($recordIndex = 1; $recordIndex -lt $records.Count; $recordIndex++) {
+        $fields = @($records[$recordIndex].Fields)
+        if ($fields.Count -ne $headers.Count) { $errors.Add("statement support row $($recordIndex + 1) has the wrong field count"); continue }
+        $child = @{}
+        for ($c = 0; $c -lt $headers.Count; $c++) { $child[$headers[$c]] = [string]$fields[$c].Trim() }
+        $supportId = $child['support_id']; $statementId = $child['statement_id']
+        if (-not $supportId -or -not $supportIds.Add($supportId)) { $errors.Add('statement support has empty or duplicate support_id') }
+        if (-not $mapped.ContainsKey($statementId)) { $errors.Add("support $supportId has no canonical output statement $statementId"); continue }
+        $parent = $mapped[$statementId]
+        if (-not $supports.ContainsKey($statementId)) { $supports.Add($statementId, [System.Collections.Generic.List[hashtable]]::new()) }
+        $supports[$statementId].Add($child)
+        $fragment = if ($child['output_text']) { Normalize-AccessibleText -Text $child['output_text'] } else { '' }
+        $occurrences = if ($fragment) { @([regex]::Matches((Normalize-AccessibleText -Text $parent['output_text']), [regex]::Escape($fragment))) } else { @() }
+        $occurrence = 0L
+        if ($child['output_occurrence'] -match '^[1-9][0-9]*$') { [void][long]::TryParse($child['output_occurrence'], [ref]$occurrence) }
+        $binding = Get-ContractKey -Parts @($statementId, $fragment, [string]$occurrence)
+        if ($occurrence -lt 1 -or $occurrence -gt $occurrences.Count) { $errors.Add("support $supportId output_text is not a literal fragment of $statementId") }
+        elseif (-not $occurrenceBindings.Add($binding)) { $errors.Add("support $supportId repeats an output occurrence binding") }
+        if ($child['kind'] -ceq 'nonfactual' -and -not $child['source_unit_id']) {
+            if ($child['claim_ids'] -or $child['source_locator'] -or -not $child['reason']) { $errors.Add("nonfactual support $supportId needs rationale and no evidence values") }
+            if ($parent['statement_type'] -cnotin @('nonfactual', 'accessibility_copy')) { $errors.Add("support $supportId cannot classify factual or metadata output as nonfactual") }
+            continue
+        }
+        if (-not $units.ContainsKey($child['source_unit_id'])) { $errors.Add("support $supportId references an absent source_unit_id"); continue }
+        $unit = $units[$child['source_unit_id']]
+        $childClaims = @($child['claim_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -CaseSensitive -Unique)
+        $unitClaims = @($unit['claim_ids'] | Sort-Object -CaseSensitive -Unique)
+        $claimsDiffer = ($childClaims.Count -ne $unitClaims.Count) -or @($childClaims | Where-Object { $unitClaims -cnotcontains $_ }).Count
+        if ($child['kind'] -cne $unit['kind'] -or $child['source_locator'] -cne $unit['source_locator'] -or $claimsDiffer) { $errors.Add("support $supportId kind, locator and claim_ids must match its exact source unit") }
+        if ($parent['statement_type'] -ceq 'source_metadata' -and $child['kind'] -cne 'source_metadata') { $errors.Add("metadata statement $statementId contains non-metadata support") }
+        if ($child['kind'] -ceq 'source_metadata' -and (Normalize-LiteralMetadata -Text $child['output_text']) -cne (Normalize-LiteralMetadata -Text $unit['source_text'])) { $errors.Add("metadata support $supportId must reproduce only its literal source field") }
+        if ($child['kind'] -ceq 'source_metadata' -and -not (Normalize-LiteralMetadata -Text $parent['output_text']).Contains((Normalize-LiteralMetadata -Text $child['output_text']), [System.StringComparison]::Ordinal)) { $errors.Add("metadata support $supportId must preserve its literal field in canonical output") }
+        $useKey = Get-ContractKey -Parts @($child['source_unit_id'], $parent['deliverable_id'])
+        if (-not $uses.ContainsKey($useKey)) { $uses.Add($useKey, [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)) }
+        [void]$uses[$useKey].Add($statementId)
+    }
+    foreach ($statementId in $mapped.Keys) {
+        $parent = $mapped[$statementId]; $text = Normalize-AccessibleText -Text $parent['output_text']
+        $positions = [System.Collections.Generic.HashSet[int]]::new()
+        $childClaims = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        $children = if ($supports.ContainsKey($statementId)) { @($supports[$statementId]) } else { @() }
+        foreach ($child in $children) {
+            $fragment = if ($child['output_text']) { Normalize-AccessibleText -Text $child['output_text'] } else { '' }
+            $occurrence = 0L
+            if ($child['output_occurrence'] -match '^[1-9][0-9]*$') { [void][long]::TryParse($child['output_occurrence'], [ref]$occurrence) }
+            $matches = if ($fragment) { @([regex]::Matches($text, [regex]::Escape($fragment))) } else { @() }
+            if ($occurrence -ge 1 -and $occurrence -le $matches.Count) { $match = $matches[$occurrence - 1]; for ($i = $match.Index; $i -lt $match.Index + $match.Length; $i++) { [void]$positions.Add($i) } }
+            foreach ($claim in @($child['claim_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) { [void]$childClaims.Add($claim) }
+        }
+        for ($i = 0; $i -lt $text.Length; $i++) { if ([char]::IsLetterOrDigit($text[$i]) -and -not $positions.Contains($i)) { $errors.Add("statement $statementId has copy without atomic support records"); break } }
+        $parentClaims = @($parent['claim_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -CaseSensitive -Unique)
+        if ($parentClaims.Count -ne $childClaims.Count -or @($parentClaims | Where-Object { -not $childClaims.Contains($_) }).Count) { $errors.Add("statement $statementId claim_ids must equal its atomic support claims") }
+    }
+    $coverage = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    if ($inventory['coverage'] -isnot [array]) { $errors.Add('source inventory coverage must be an array') }
+    foreach ($entry in @($inventory['coverage'])) {
+        if ($entry -isnot [hashtable]) { $errors.Add('source coverage entry must be an object'); continue }
+        $unitId = $entry['source_unit_id']; $formatId = $entry['deliverable_id']
+        if ($unitId -isnot [string] -or $formatId -isnot [string]) { $errors.Add('source coverage needs string source_unit_id and deliverable_id'); continue }
+        $key = Get-ContractKey -Parts @($unitId, $formatId)
+        if (-not $unitId -or -not $units.ContainsKey($unitId) -or $FormatIds -cnotcontains $formatId -or -not $coverage.Add($key)) { $errors.Add('source coverage has unknown or duplicate source-unit/format pair'); continue }
+        $actual = if ($uses.ContainsKey($key)) { @($uses[$key]) } else { @() }
+        $stated = @($entry['statement_ids'])
+        if ($entry['statement_ids'] -isnot [array] -or @($stated | Where-Object { $_ -isnot [string] }).Count -or @($stated | Sort-Object -CaseSensitive -Unique).Count -ne $stated.Count) { $errors.Add("source coverage $key needs unique statement_ids"); continue }
+        $status = $entry['status']; $omitted = $entry['context_omitted']
+        if ($status -ceq 'omitted') {
+            if ($stated.Count -or $actual.Count -or $omitted -cne $units[$unitId]['source_text'] -or -not $entry['reason']) { $errors.Add("omitted source coverage $key needs no output, its complete source_text and a reason") }
+        } elseif ($status -cin @('used', 'shortened')) {
+            if ($actual.Count -eq 0 -or $actual.Count -ne $stated.Count -or @($actual | Where-Object { $stated -cnotcontains $_ }).Count) { $errors.Add("source coverage $key must list exactly its supported output statements") }
+            if ($status -ceq 'used' -and $omitted -cne 'none') { $errors.Add("used source coverage $key needs context_omitted none") }
+            if ($status -ceq 'shortened' -and ($omitted -isnot [string] -or -not $omitted -or $omitted -ceq 'none' -or -not $units[$unitId]['source_text'].Contains($omitted, [System.StringComparison]::Ordinal) -or -not $entry['reason'])) { $errors.Add("shortened source coverage $key needs literal omitted source text and a reason") }
+        } else { $errors.Add("source coverage $key has unsupported status") }
+    }
+    foreach ($unitId in $units.Keys) { foreach ($formatId in $FormatIds) { if (-not $coverage.Contains((Get-ContractKey -Parts @($unitId, $formatId)))) { $errors.Add("source unit $unitId has no retained/shortened/omitted coverage for $formatId") } } }
 }
 
 function Read-OutputStatements {
@@ -257,6 +473,8 @@ function Get-ProvenanceHashes {
     $parentHashes = [System.Collections.Generic.List[string]]::new()
     $deliverableRoles = @{}
     $sourceHash = $null
+    $inventoryPointer = $null
+    $supportPointer = $null
     if ($extension -eq '.csv') {
         $data = Read-StrictCsv -Path $Path
         $records = @($data.Records)
@@ -285,12 +503,23 @@ function Get-ProvenanceHashes {
         try {
             $document = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($document.source_report.hash) { $sourceHash = [string]$document.source_report.hash }
-            foreach ($item in @($document.deliverables)) { if ($item.deliverable_id) { $deliverableRoles[[string]$item.deliverable_id] = [string]$item.role } }
+            $inventoryPointer = $document.source_inventory
+            $supportPointer = $document.statement_support
+            foreach ($item in @($document.deliverables)) {
+                if ($item.deliverable_id) {
+                    if ($deliverableRoles.ContainsKey([string]$item.deliverable_id)) { throw "manifest has duplicate deliverable_id $($item.deliverable_id)" }
+                    $deliverableRoles[[string]$item.deliverable_id] = [string]$item.role
+                }
+            }
             $parentMatches = [regex]::Matches([System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8), '"parent_report_hash"\s*:\s*"([^"]+)"')
             foreach ($match in $parentMatches) { $parentHashes.Add($match.Groups[1].Value.Trim()) }
-        } catch { }
+        } catch { $errors.Add("cannot read JSON provenance: $($_.Exception.Message)") }
     } else {
         $text = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+        $inventoryMatches = @([regex]::Matches($text, '(?m)^source_inventory:\s*(.*?)\s*$'))
+        $supportMatches = @([regex]::Matches($text, '(?m)^statement_support:\s*(.*?)\s*$'))
+        if ($inventoryMatches.Count -eq 1) { $inventoryPointer = $inventoryMatches[0].Groups[1].Value.Trim().Trim('"', "'") }
+        if ($supportMatches.Count -eq 1) { $supportPointer = $supportMatches[0].Groups[1].Value.Trim().Trim('"', "'") }
         $parentMatches = [regex]::Matches($text, '(?m)^\s*parent_report_hash:\s*["'']?([^\r\n"'']+)["'']?\s*$')
         foreach ($match in $parentMatches) { $parentHashes.Add($match.Groups[1].Value.Trim()) }
         $deliverableSection = [regex]::Match($text, '(?ms)^deliverables:\s*\r?\n(?<section>(?:[ \t]+[^\r\n]*(?:\r?\n|$))*)')
@@ -302,7 +531,9 @@ function Get-ProvenanceHashes {
                 $entryEnd = if ($index + 1 -lt $idMatches.Count) { $idMatches[$index + 1].Index } else { $sectionText.Length }
                 $entry = $sectionText.Substring($idMatch.Index + $idMatch.Length, $entryEnd - ($idMatch.Index + $idMatch.Length))
                 $roleMatch = [regex]::Match($entry, '(?m)^\s*role:\s*["'']?([^\r\n"'']+)["'']?\s*$')
-                $deliverableRoles[$idMatch.Groups[1].Value.Trim()] = if ($roleMatch.Success) { $roleMatch.Groups[1].Value.Trim() } else { '' }
+                $deliverableId = $idMatch.Groups[1].Value.Trim()
+                if ($deliverableRoles.ContainsKey($deliverableId)) { throw "manifest has duplicate deliverable_id $deliverableId" }
+                $deliverableRoles[$deliverableId] = if ($roleMatch.Success) { $roleMatch.Groups[1].Value.Trim() } else { '' }
             }
         }
         $sourceSection = [regex]::Match($text, '(?ms)^source_report:\s*\r?\n(?<section>(?:[ \t]+[^\r\n]*(?:\r?\n|$))*)')
@@ -311,7 +542,7 @@ function Get-ProvenanceHashes {
             if ($hashMatch.Success) { $sourceHash = $hashMatch.Groups[1].Value.Trim() }
         }
     }
-    return [pscustomobject]@{ ParentHashes = @($parentHashes | Select-Object -Unique); SourceHash = $sourceHash; DeliverableRoles = $deliverableRoles }
+    return [pscustomobject]@{ ParentHashes = @($parentHashes | Select-Object -Unique); SourceHash = $sourceHash; DeliverableRoles = $deliverableRoles; SourceInventory = $inventoryPointer; StatementSupport = $supportPointer }
 }
 
 try {
@@ -386,13 +617,18 @@ try {
 
     $manifestSourceHashes = [System.Collections.Generic.List[string]]::new()
     $manifestDeliverableRoles = @{}
+    $manifestContracts = [System.Collections.Generic.List[hashtable]]::new()
     $provenanceByPath = @{}
     $approvedTitle = $null
     foreach ($relative in $declared.Keys) {
         $provenance = Get-ProvenanceHashes -Path $declared[$relative]
         $provenanceByPath[$relative] = @($provenance.ParentHashes)
         if ($provenance.SourceHash) { $manifestSourceHashes.Add($provenance.SourceHash) }
-        foreach ($deliverableId in $provenance.DeliverableRoles.Keys) { $manifestDeliverableRoles[[string]$deliverableId] = [string]$provenance.DeliverableRoles[$deliverableId] }
+        if ($provenance.DeliverableRoles.Count) { $manifestContracts.Add(@{ path = $relative; source_inventory = $provenance.SourceInventory; statement_support = $provenance.StatementSupport }) }
+        foreach ($deliverableId in $provenance.DeliverableRoles.Keys) {
+            if ($manifestDeliverableRoles.ContainsKey([string]$deliverableId)) { $errors.Add('declared manifests repeat deliverable_id entries') }
+            $manifestDeliverableRoles[[string]$deliverableId] = [string]$provenance.DeliverableRoles[$deliverableId]
+        }
     }
     $manifestSourceHashes = @($manifestSourceHashes | Select-Object -Unique)
     $manifestDeliverableIds = @($manifestDeliverableRoles.Keys)
@@ -487,7 +723,9 @@ try {
         if ($accessRows.Count -ne 1) { $errors.Add("visual unit $unit needs exactly one accessibility_copy mapping row") }
         $expectedRelated = @($visualUnits[$unitKey] | Sort-Object -Unique)
         foreach ($accessRow in $accessRows) {
-            $related = @($accessRow['related_statement_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+            $relatedList = @($accessRow['related_statement_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            $related = @($relatedList | Sort-Object -CaseSensitive -Unique)
+            if ($related.Count -ne $relatedList.Count) { $errors.Add("accessibility_copy for visual unit $unit has duplicate related_statement_ids") }
             if (Compare-Object -ReferenceObject $expectedRelated -DifferenceObject $related) { $errors.Add("accessibility_copy for visual unit $unit must reference every visual statement_id exactly") }
             $normalizedAccessText = Normalize-AccessibleText -Text $accessRow['output_text']
             foreach ($sourceStatementId in $visualUnits[$unitKey]) {
@@ -536,6 +774,11 @@ try {
             }
         } catch { $errors.Add("$relative frame cross-check failed: $($_.Exception.Message)") }
     }
+    if ($SourceReport) {
+        if (-not $SourceInventory) { $SourceInventory = Join-Path $root 'source-inventory.json' }
+        if (-not $StatementSupport) { $StatementSupport = Join-Path $root 'statement-support.csv' }
+        Test-SourceContract -Root $root -Rows @($mapRows) -FormatIds $requestedFormatIds -SourceText $sourceText -SourceHash $sourceHashFromFile -InventoryPath $SourceInventory -SupportPath $StatementSupport
+    }
 } catch {
     $errors.Add($_.Exception.Message)
 }
@@ -545,5 +788,6 @@ if ($errors.Count -gt 0) {
     foreach ($message in $errors) { Write-Output "- $message" }
     exit 1
 }
-Write-Output 'Derivative traceability validation passed: all declared statement IDs and verbatim output text reconcile.'
+if ($StructuralOnly) { Write-Output 'Structural checks passed only; source completeness and semantic support NOT VERIFIED; not a handoff pass.' }
+else { Write-Output 'Derivative traceability validation passed: declared output and source-inventory records reconcile; semantic support remains the documented manual review.' }
 exit 0

@@ -39,6 +39,7 @@ from evaluation_common import (
     tracked_directory_sha256,
     validate_task_evidence_binding,
     load_json,
+    model_isolation_profile_validation_errors,
     planned_task_workspace_input_hashes,
     repository_receipt,
     require_clean_stage_execution,
@@ -611,6 +612,10 @@ def evidence_identity(
     repository = document.get("repository")
     if not isinstance(profile, dict) or not isinstance(repository, dict):
         issues.append(f"{label}:missing evaluation identity")
+        return None
+    isolation_issues = model_isolation_profile_validation_errors(profile, label)
+    if isolation_issues:
+        issues.extend(isolation_issues)
         return None
     if profile.get("codex_invocation") != CODEX_INVOCATION_MODE:
         issues.append(f"{label}:unsupported Codex invocation method")

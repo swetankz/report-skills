@@ -45,7 +45,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v46"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v47"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -60,6 +60,8 @@ TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v4"
 TASK_COLLABORATION_GUARD = "no-collaboration-tool-events-v1"
 MODEL_MULTI_AGENT_FEATURES = ("multi_agent", "multi_agent_v2")
 MODEL_AGENT_TOOLS_CONFIG = "agents.enabled=false"
+MODEL_SERVICE_TIER = "fast"
+MODEL_SERVICE_TIER_CONFIG = 'service_tier="fast"'
 MODEL_MULTI_AGENT_GUARD = "feature-and-agent-tools-disabled-v2"
 MODEL_PROMPT_ISOLATION_PROBE_METHOD = "debug-prompt-input-no-agent-context-v2"
 MODEL_PROMPT_ISOLATION_PROBE_SCHEMA = "prompt-input-list-with-sentinel-v1"
@@ -74,7 +76,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v7"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v8"
 TASK_TRANSIENT_CAPACITY_RETRY_POLICY = (
     "explicit-model-capacity-no-output-unchanged-workspace-two-retries-v1"
 )
@@ -82,6 +84,7 @@ TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS = (30, 60)
 PROFILE_IDENTITY_KEYS = (
     "model",
     "reasoning_effort",
+    "service_tier",
     "codex_invocation",
     "codex_timeout_enforcement",
     "codex_cli_version",
@@ -589,6 +592,8 @@ def canonical_model_isolation_receipt() -> dict[str, Any]:
             f"--disable {feature}" for feature in MODEL_MULTI_AGENT_FEATURES
         ],
         "agent_tools_override": f"--config {MODEL_AGENT_TOOLS_CONFIG}",
+        "service_tier": MODEL_SERVICE_TIER,
+        "service_tier_override": f"--config {MODEL_SERVICE_TIER_CONFIG}",
         "prompt_context_probe": {
             "method": MODEL_PROMPT_ISOLATION_PROBE_METHOD,
             "schema": MODEL_PROMPT_ISOLATION_PROBE_SCHEMA,
@@ -803,6 +808,8 @@ def model_isolation_profile_validation_errors(
     if not isinstance(profile, dict):
         return [f"{label} has no execution profile for model-isolation probing"]
     errors: list[str] = []
+    if profile.get("service_tier") != MODEL_SERVICE_TIER:
+        errors.append(f"{label} has a missing or unsupported service tier")
     if profile.get("model_isolation_prompt_probe") != MODEL_PROMPT_ISOLATION_PROBE_METHOD:
         errors.append(f"{label} has a missing or unsupported prompt-isolation probe")
     if profile.get("model_isolation_prompt_schema") != MODEL_PROMPT_ISOLATION_PROBE_SCHEMA:
@@ -2113,6 +2120,24 @@ def task_trace_isolation_validation_errors(
             for match in metadata_path.finditer(normalized)
         )
 
+    # Parenthesized range endpoints otherwise make the numeric `)..(` operator
+    # look like a parent-path token. Recognize only complete variable indexers
+    # with data-only numeric endpoints adjacent to the operator. Spaced ` .. `
+    # can be a literal path argument in a nested non-PowerShell command; it and
+    # command-bearing or path-bearing indexers retain the traversal check.
+    numeric_slice_atom = (
+        r"(?:[+-]?[0-9]+|\$[A-Za-z_][A-Za-z0-9_]*\.(?:Count|Length))"
+    )
+    numeric_slice_arithmetic = rf"{numeric_slice_atom}(?:\s*[+-]\s*[0-9]+)*"
+    numeric_slice_endpoint = (
+        rf"(?:{numeric_slice_arithmetic}|\(\s*{numeric_slice_arithmetic}\s*\))"
+    )
+    numeric_slice = re.compile(
+        rf"\$[A-Za-z_][A-Za-z0-9_]*\[\s*{numeric_slice_endpoint}"
+        rf"\.\.{numeric_slice_endpoint}\s*\]",
+        re.IGNORECASE,
+    )
+
     for item in items:
         if item.get("type") != "command_execution":
             continue
@@ -2136,6 +2161,11 @@ def task_trace_isolation_validation_errors(
             r"-ceq\s+['\"\\/]*\.\.['\"\\/]*|-cne\s+['\"\\/]*\.\.['\"\\/]*)",
             " SAFE_PARENT_LITERAL ",
             normalized_command,
+        )
+        # Mask the operator alone, retaining every operand and adjacent path
+        # token for all existing boundary checks.
+        parent_scan = numeric_slice.sub(
+            lambda match: match.group(0).replace("..", "  ", 1), parent_scan
         )
         if contains_git_invocation(command):
             command_violations.add("Git command")
@@ -2802,6 +2832,8 @@ def _codex_model_isolation_prompt_probe(
             "--config",
             MODEL_AGENT_TOOLS_CONFIG,
             "--config",
+            MODEL_SERVICE_TIER_CONFIG,
+            "--config",
             f"model={json.dumps(model)}",
             "--config",
             f"model_reasoning_effort={json.dumps(reasoning_effort)}",
@@ -3006,6 +3038,21 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
             f"Reasoning effort {reasoning_effort!r} is not supported by {model}; "
             f"available efforts: {sorted(value for value in supported if value)}"
         )
+    speed_tiers = selected.get("additional_speed_tiers", [])
+    service_tiers = selected.get("service_tiers", [])
+    fast_supported = (
+        isinstance(speed_tiers, list) and MODEL_SERVICE_TIER in speed_tiers
+    ) or (
+        isinstance(service_tiers, list)
+        and any(
+            isinstance(tier, dict) and tier.get("id") in {"fast", "priority"}
+            for tier in service_tiers
+        )
+    )
+    if not fast_supported:
+        raise EvaluationError(
+            f"Fast service tier is not advertised by the live Codex catalog for {model}"
+        )
     isolation_prompt_probe = _codex_model_isolation_prompt_probe(
         implementation,
         model,
@@ -3030,6 +3077,7 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
     return {
         "model": model,
         "reasoning_effort": reasoning_effort,
+        "service_tier": MODEL_SERVICE_TIER,
         "codex_invocation": CODEX_INVOCATION_MODE,
         "codex_timeout_enforcement": CODEX_TIMEOUT_ENFORCEMENT_MODE,
         "codex_cli_version": version,
@@ -3288,6 +3336,7 @@ def model_invocation_isolation_validation_errors(
 
     allowed_config_values = {
         MODEL_AGENT_TOOLS_CONFIG,
+        MODEL_SERVICE_TIER_CONFIG,
         *(f'model_reasoning_effort="{effort}"' for effort in REASONING_EFFORTS),
     }
     unsupported_config_values = [
@@ -3336,6 +3385,13 @@ def model_invocation_isolation_validation_errors(
     if agent_namespace_overrides != [MODEL_AGENT_TOOLS_CONFIG]:
         errors.append(
             f"{label} must set {MODEL_AGENT_TOOLS_CONFIG} exactly once"
+        )
+    service_tier_overrides = [
+        value for value in config_values if config_key(value) == "service_tier"
+    ]
+    if service_tier_overrides != [MODEL_SERVICE_TIER_CONFIG]:
+        errors.append(
+            f"{label} must set {MODEL_SERVICE_TIER_CONFIG} exactly once"
         )
     return errors
 
@@ -3848,6 +3904,8 @@ def codex_base_command(
         MODEL_MULTI_AGENT_FEATURES[1],
         "--config",
         MODEL_AGENT_TOOLS_CONFIG,
+        "--config",
+        MODEL_SERVICE_TIER_CONFIG,
         "--ephemeral",
         "--ignore-user-config",
         "--ignore-rules",

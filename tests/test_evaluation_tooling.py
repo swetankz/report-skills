@@ -134,6 +134,7 @@ def safe_task_output() -> dict:
 
 def model_isolation_profile_receipt(probe_hash: str = "9" * 64) -> dict:
     return {
+        "service_tier": "fast",
         "model_isolation_prompt_probe": "debug-prompt-input-no-agent-context-v2",
         "model_isolation_prompt_schema": "prompt-input-list-with-sentinel-v1",
         "model_isolation_prompt_probe_sha256": probe_hash,
@@ -722,7 +723,7 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertEqual(disabled_features, ["multi_agent", "multi_agent_v2"])
         self.assertEqual(
             config_values,
-            ["agents.enabled=false", 'model_reasoning_effort="ultra"'],
+            ["agents.enabled=false", 'service_tier="fast"', 'model_reasoning_effort="ultra"'],
         )
         self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-sol")
         self.assertEqual(
@@ -736,6 +737,8 @@ class EvaluationToolingTests(unittest.TestCase):
                     "--disable multi_agent_v2",
                 ],
                 "agent_tools_override": "--config agents.enabled=false",
+                "service_tier": "fast",
+                "service_tier_override": '--config service_tier="fast"',
                 "prompt_context_probe": {
                     "method": "debug-prompt-input-no-agent-context-v2",
                     "schema": "prompt-input-list-with-sentinel-v1",
@@ -867,6 +870,8 @@ class EvaluationToolingTests(unittest.TestCase):
             "multi_agent_v2",
             "--config",
             "agents.enabled=false",
+            "--config",
+            'service_tier="fast"',
         ]
         evaluation_common.require_model_invocation_isolation(
             valid, "Synthetic model invocation"
@@ -896,6 +901,12 @@ class EvaluationToolingTests(unittest.TestCase):
             valid + ["-pisolation-bypass"],
             valid + ["-p=isolation-bypass"],
             valid + ["--config", "agents.enabled=false"],
+            valid[:-2],
+            valid + ["--config", 'service_tier="fast"'],
+            valid[:-1] + ['service_tier="flex"'],
+            valid[:-1] + ['service_tier="priority"'],
+            valid + ['-cservice_tier="fast"'],
+            valid + ["--config", '"service_tier"="fast"'],
         )
         for command in invalid_commands:
             with self.subTest(command=command):
@@ -989,6 +1000,8 @@ class EvaluationToolingTests(unittest.TestCase):
                     "multi_agent_v2",
                     "--config",
                     "agents.enabled=false",
+                    "--config",
+                    'service_tier="fast"',
                 ],
                 {"DURABLE_HINT": mixed_separator_path},
                 (durable,),
@@ -1792,6 +1805,127 @@ class EvaluationToolingTests(unittest.TestCase):
                 self.assertTrue(
                     task_trace_isolation_validation_errors(transcript_path), command
                 )
+
+    def test_task_trace_allows_numeric_powershell_slices(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            for command in (
+                "$parts[0..3]",
+                "$last = $parts[($parts.Count-6)..($parts.Count-1)]",
+                "$last = $parts[($parts.Count-12)..($parts.Count-1)]; "
+                "$mid = $parts[4..($parts.Count-13)] -join ','",
+                "$videoLines[1..($videoLines.Count-1)]",
+                "$parts[(2)..(5)]",
+                "$parts[(-6)..(-1)]",
+                "$parts[ (2 - 1)..(3 + 1) ]",
+                "$parts[ ($parts.Length - 6)..($parts.LENGTH - 1) ]",
+                "$parts[($parts.Count-6+1)..($parts.Count-1)]",
+                'powershell.exe -Command "$last = '
+                '$parts[($parts.Count-6)..($parts.Count-1)]"',
+                "pwsh.exe -Command '$last = "
+                "$parts[($parts.Count-6)..($parts.Count-1)]'",
+            ):
+                with self.subTest(command=command):
+                    transcript_path.write_text(
+                        json.dumps(
+                            {
+                                "type": "item.completed",
+                                "item": {
+                                    "type": "command_execution",
+                                    "command": command,
+                                },
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertEqual(
+                        task_trace_isolation_validation_errors(transcript_path),
+                        [],
+                    )
+
+    def test_task_trace_numeric_slices_do_not_hide_parent_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            safe_slice = "$parts[($parts.Count-6)..($parts.Count-1)]"
+            for command in (
+                f"Get-Content ../secret.txt; {safe_slice}",
+                f"{safe_slice}; Get-Content ..\\secret.txt",
+                f"{safe_slice}; Get-Content artifacts/../secret.txt",
+                f"{safe_slice}; cd ..",
+                f"{safe_slice}; Resolve-Path ('..')",
+                f"{safe_slice}; $path = '..'; Get-Content $path",
+                f"{safe_slice}/../secret.txt",
+                "$parts[(Get-Content ../secret.txt)..(3)]",
+                "$parts[(1; Get-Content ../secret.txt)..(3)]",
+                "$parts[(1)..(Get-Content ../secret.txt)]",
+                "$parts[('../')..(3)]",
+                "$parts[(1)..('..')]",
+                "$parts[($parts.Count/../secret.txt)..($parts.Count-1)]",
+                "$parts[($parts.Count-6)..($parts.Count-1)/../secret.txt]",
+                "Get-Content (1) .. (3)",
+                "Get-Content ($parts.Count-6) .. ($parts.Count-1)",
+                'cmd.exe /c "dir $parts[(1) .. (3)]"',
+                'cmd.exe /c "type $parts[($parts.Count-6) .. ($parts.Count-1)]"',
+            ):
+                with self.subTest(command=command):
+                    transcript_path.write_text(
+                        json.dumps(
+                            {
+                                "type": "item.completed",
+                                "item": {
+                                    "type": "command_execution",
+                                    "command": command,
+                                },
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(
+                        any(
+                            "parent path traversal" in error
+                            for error in task_trace_isolation_validation_errors(
+                                transcript_path
+                            )
+                        )
+                    )
+
+    def test_task_trace_numeric_slices_preserve_other_boundary_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            safe_slice = "$parts[($parts.Count-6)..($parts.Count-1)]"
+            for unsafe_command, violation in (
+                ("git status", "Git command"),
+                ("Get-Content .git/HEAD", "Git metadata path"),
+                (str(REPO_ROOT / "fixture" / "secret.txt"), "candidate repository path"),
+                ("Remove-Item Env:GIT_CEILING_DIRECTORIES", "Git isolation override"),
+                ("(Get-Location).Parent.GetFiles()", "computed parent path"),
+                ("Get-ChildItem Env:", "environment enumeration"),
+                ("Get-Command ruby", "host capability discovery"),
+            ):
+                with self.subTest(command=unsafe_command):
+                    transcript_path.write_text(
+                        json.dumps(
+                            {
+                                "type": "item.completed",
+                                "item": {
+                                    "type": "command_execution",
+                                    "command": f"{safe_slice}; {unsafe_command}",
+                                },
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(
+                        any(
+                            violation in error
+                            for error in task_trace_isolation_validation_errors(
+                                transcript_path
+                            )
+                        )
+                    )
 
     def test_task_trace_rejects_host_capability_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
@@ -2682,6 +2816,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "description": "Maximum reasoning with typographic punctuation: \u2014",
             "default_reasoning_level": "low",
             "supported_reasoning_levels": [{"effort": "low"}, {"effort": "ultra"}],
+            "additional_speed_tiers": ["fast"],
         }
         with tempfile.TemporaryDirectory() as temp_name:
             command = Path(temp_name) / "codex.exe"
@@ -2721,6 +2856,7 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertEqual(profile["codex_cli_version"], "codex-cli 0.147.0")
         self.assertEqual(profile["model"], "gpt-5.6-sol")
         self.assertEqual(profile["reasoning_effort"], "ultra")
+        self.assertEqual(profile["service_tier"], "fast")
         self.assertRegex(profile["codex_command_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(profile["codex_implementation_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(profile["codex_managed_environment_sha256"], r"^[0-9a-f]{64}$")
@@ -2746,6 +2882,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "slug": "gpt-5.6-sol",
             "default_reasoning_level": "low",
             "supported_reasoning_levels": [{"effort": "ultra"}],
+            "additional_speed_tiers": ["fast"],
         }
         with tempfile.TemporaryDirectory() as temp_name:
             command = Path(temp_name) / "codex.exe"
@@ -2786,6 +2923,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "slug": "gpt-5.6-sol",
             "default_reasoning_level": "low",
             "supported_reasoning_levels": [{"effort": "ultra"}],
+            "additional_speed_tiers": ["fast"],
         }
         invalid_payloads = (
             {},
@@ -2926,6 +3064,7 @@ class EvaluationToolingTests(unittest.TestCase):
             "slug": "gpt-5.6-sol",
             "default_reasoning_level": "low",
             "supported_reasoning_levels": [{"effort": "ultra"}],
+            "service_tiers": [{"id": "priority", "name": "Fast"}],
         }
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)
@@ -2981,6 +3120,7 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn("multi_agent", prompt_probe_command)
             self.assertIn("multi_agent_v2", prompt_probe_command)
             self.assertIn("agents.enabled=false", prompt_probe_command)
+            self.assertIn('service_tier="fast"', prompt_probe_command)
             self.assertFalse(prompt_probe_cwd.exists())
             environment = codex_runtime_environment(profile)
             self.assertEqual(environment["CODEX_MANAGED_PACKAGE_ROOT"], str(native.parents[6]))
@@ -4177,6 +4317,8 @@ class EvaluationToolingTests(unittest.TestCase):
                         "multi_agent_v2",
                         "--config",
                         "agents.enabled=false",
+                        "--config",
+                        'service_tier="fast"',
                         mixed_evidence_path,
                     ],
                     {},
@@ -4823,6 +4965,38 @@ class EvaluationToolingTests(unittest.TestCase):
             with patch("evaluation_common.subprocess.run", side_effect=results):
                 with self.assertRaisesRegex(EvaluationError, "not supported"):
                     codex_execution_profile(str(command), "gpt-5.6-sol", "ultra")
+
+    def test_live_profile_rejects_unadvertised_fast_before_prompt_probe(self) -> None:
+        model_entry = {
+            "slug": "gpt-6.1-sol",
+            "supported_reasoning_levels": [{"effort": "ultra"}],
+            "additional_speed_tiers": [],
+            "service_tiers": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_name:
+            command = Path(temp_name) / "codex.exe"
+            command.write_bytes(b"MZ synthetic native")
+            results = [
+                subprocess.CompletedProcess([], 0, "codex-cli test\n", ""),
+                subprocess.CompletedProcess([], 0, json.dumps({"models": [model_entry]}), ""),
+            ]
+            with patch("evaluation_common.subprocess.run", side_effect=results) as mocked:
+                with self.assertRaisesRegex(EvaluationError, "Fast service tier is not advertised"):
+                    codex_execution_profile(str(command), "gpt-6.1-sol", "ultra")
+            self.assertEqual(mocked.call_count, 2)
+
+    def test_model_profile_requires_explicit_fast_identity(self) -> None:
+        profile = model_isolation_profile_receipt()
+        self.assertEqual(
+            evaluation_common.model_isolation_profile_validation_errors(profile, "profile"),
+            [],
+        )
+        for value in (None, "priority", "flex", ""):
+            with self.subTest(service_tier=value):
+                invalid = dict(profile, service_tier=value)
+                self.assertTrue(
+                    evaluation_common.model_isolation_profile_validation_errors(invalid, "profile")
+                )
 
     def test_behavioral_dry_run_does_not_require_git_receipt(self) -> None:
         stdout = io.StringIO()
@@ -6871,6 +7045,27 @@ class EvaluationToolingTests(unittest.TestCase):
             require_matching_context(
                 profile, repository, mismatched_probe, repository, "test"
             )
+        issues: list[str] = []
+        self.assertIsNotNone(
+            aggregate_benchmark.evidence_identity(
+                {"execution_profile": profile, "repository": repository}, "test", issues
+            )
+        )
+        self.assertEqual(issues, [])
+        for service_tier in (None, "default", "priority", "flex"):
+            with self.subTest(service_tier=service_tier):
+                issues = []
+                self.assertIsNone(
+                    aggregate_benchmark.evidence_identity(
+                        {
+                            "execution_profile": dict(profile, service_tier=service_tier),
+                            "repository": repository,
+                        },
+                        "test",
+                        issues,
+                    )
+                )
+                self.assertTrue(any("service tier" in issue for issue in issues))
 
     def test_invariants_reject_mixed_stage_and_trigger_metrics(self) -> None:
         profile = {

@@ -350,7 +350,7 @@ def main() -> int:
                 or args.reasoning_effort != gate1_plan["reasoning_effort"]
             ):
                 raise EvaluationError(
-                    "Gate 1 trigger execution requires gpt-5.6-sol with ultra reasoning"
+                    "Gate 1 trigger execution requires gpt-6.1-sol with ultra reasoning"
                 )
             if not args.fail_fast_on_incorrect:
                 raise EvaluationError(

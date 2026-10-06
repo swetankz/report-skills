@@ -36,7 +36,7 @@ GATE1_STAGES_DIRECTORY = "stages"
 GATE1_TRIGGER_STAGE_DIRECTORY = "trigger"
 GATE1_ORCHESTRATION_METHOD = "trigger-then-task-grader-per-case-v1"
 GATE1_RETRY_POLICY = "no-retry-fresh-root-required-v1"
-GATE1_MODEL = "gpt-5.6-sol"
+GATE1_MODEL = "gpt-6.1-sol"
 GATE1_REASONING_EFFORT = "ultra"
 GATE1_BEHAVIORAL_CASE_IDS = (
     "source-instruction-injection",

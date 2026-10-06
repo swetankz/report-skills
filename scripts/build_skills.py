@@ -36,6 +36,25 @@ def relative_files(root: Path) -> list[Path]:
     )
 
 
+def is_python_runtime_cache(path: Path) -> bool:
+    return (
+        any(part.casefold() == "__pycache__" for part in path.parts)
+        or path.suffix.casefold() in {".pyc", ".pyo"}
+    )
+
+
+def ignore_python_runtime_caches(directory: str, names: list[str]) -> list[str]:
+    return [
+        name
+        for name in names
+        if name.casefold() == "__pycache__"
+        or (
+            Path(name).suffix.casefold() in {".pyc", ".pyo"}
+            and (Path(directory) / name).is_file()
+        )
+    ]
+
+
 def load_map() -> dict:
     try:
         data = json.loads(MAP_PATH.read_text(encoding="utf-8"))
@@ -65,7 +84,10 @@ def validate_source_entry(name: str, config: dict) -> Path:
 def source_hashes() -> dict[str, str]:
     paths: list[Path] = [MAP_PATH]
     for root in (SHARED_ROOT, SOURCE_SKILLS, TEMPLATE_ROOT):
-        paths.extend(path for path in root.rglob("*") if path.is_file())
+        paths.extend(
+            path for path in root.rglob("*")
+            if path.is_file() and not is_python_runtime_cache(path.relative_to(root))
+        )
     unique = sorted(set(paths), key=lambda path: path.relative_to(REPO_ROOT).as_posix())
     return {
         path.relative_to(REPO_ROOT).as_posix(): sha256(path)
@@ -81,7 +103,7 @@ def generate_tree(destination: Path) -> None:
     for name, config in sorted(mapping["skills"].items()):
         source_dir = validate_source_entry(name, config)
         target_dir = destination / name
-        shutil.copytree(source_dir, target_dir)
+        shutil.copytree(source_dir, target_dir, ignore=ignore_python_runtime_caches)
 
         references_dir = target_dir / "references"
         references_dir.mkdir(parents=True, exist_ok=True)
@@ -173,4 +195,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

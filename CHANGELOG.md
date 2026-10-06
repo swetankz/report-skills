@@ -2,7 +2,12 @@
 
 All notable repository-level changes are documented here.
 
-## 0.2.0 — 2026-08-23
+## 0.2.0
+
+- Bind evaluation method v47 to the selected GPT 6.1 Sol Ultra profile with explicit Fast service-tier controls in every invocation, prompt probe, and identity receipt. Recognize only complete literal PowerShell numeric index ranges in the trace guard, without exempting adjacent paths or other boundary controls; earlier receipts are not reused and release thresholds are unchanged.
+- Include both Codex and ZCode manifests plus the marketplace descriptor in the plugin archive, and independently reject archives missing either client metadata even when their inventory is self-consistent.
+- Reconcile repurposed copy against a source-byte-bound inventory and atomic clause-support records, including source recommendations, measurements and stop rules without claim IDs. Distinguish one accessibility output unit from its clause-level mappings, preserve explicit semantic review, and clarify visual-audit pass names and coverage-only severity records.
+- Exclude Python runtime caches from canonical generation inputs and hashes, keeping cache-bearing source workspaces reproducible while continuing to reject unexpected files in generated packages.
 
 - Require workflow manifests to carry a complete evidence-defect register and exact per-stage input/output contracts, including blocked future stages, so handoffs remain inspectable without consulting side files.
 - Run graders, blind comparators, and trigger observations in disposable reviewed workspace sandboxes on the pinned Windows runtime, while immutable input/output hashes and cleanup validation continue to fail closed on staged-evidence mutation.

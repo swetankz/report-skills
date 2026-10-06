@@ -21,6 +21,11 @@ DIST = REPO_ROOT / "dist"
 PLUGIN_MANIFEST = REPO_ROOT / ".codex-plugin" / "plugin.json"
 FIXED_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 FIXED_ZIP_MODE = 0o100644
+REQUIRED_PLUGIN_METADATA = {
+    ".codex-plugin/plugin.json",
+    ".zcode-plugin/plugin.json",
+    "marketplace.json",
+}
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -145,6 +150,13 @@ def verify_archive(
                 f"Archive manifest file count mismatch: {archive.name}",
             )
         payload_names = set(names) - {manifest_name}
+        if manifest_name == "RELEASE_MANIFEST.json":
+            missing_metadata = sorted(REQUIRED_PLUGIN_METADATA - payload_names)
+            require(
+                not missing_metadata,
+                "Required plugin metadata is missing from archive: "
+                + ", ".join(missing_metadata),
+            )
         require(
             set(file_hashes) == payload_names,
             f"Archive manifest entry set mismatch: {archive.name}",

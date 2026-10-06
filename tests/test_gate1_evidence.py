@@ -62,6 +62,12 @@ class Gate1EvidenceTests(unittest.TestCase):
         cls.trigger_suite = load_json(REPO_ROOT / "evals" / "trigger-evals.json")
 
     def test_tracked_gate1_plan_is_exact_and_complete(self) -> None:
+        self.assertEqual(self.plan["model"], "gpt-6.1-sol")
+        self.assertEqual(self.plan["reasoning_effort"], "ultra")
+        self.assertEqual(
+            self.plan["evaluation_method_version"],
+            "report-skills-release-evaluation-v47",
+        )
         self.assertEqual(
             validate_gate1_plan(
                 self.plan, self.benchmark_suite, self.trigger_suite
@@ -90,7 +96,7 @@ class Gate1EvidenceTests(unittest.TestCase):
     def test_gate1_plan_rejects_scope_model_and_policy_mutations(self) -> None:
         mutations = []
         wrong_model = copy.deepcopy(self.plan)
-        wrong_model["model"] = "another-model"
+        wrong_model["model"] = "gpt-5.6-sol"
         mutations.append(wrong_model)
         missing_task = copy.deepcopy(self.plan)
         missing_task["behavioral"]["case_ids"].pop()
@@ -138,7 +144,7 @@ class Gate1EvidenceTests(unittest.TestCase):
             self.assertEqual(task["evidence_root"], grader["evidence_root"])
 
     def test_gate1_orchestrator_stops_after_first_nonperfect_grade(self) -> None:
-        profile = {"model": "gpt-5.6-sol", "reasoning_effort": "ultra"}
+        profile = {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"}
         repository = {"commit": "a" * 40, "tree": "b" * 40, "dirty": False}
         commands: list[list[str]] = []
         completed: list[str] = []
@@ -210,7 +216,7 @@ class Gate1EvidenceTests(unittest.TestCase):
                     self.trigger_suite,
                     Path(temp_name) / "gate1",
                     "codex",
-                    {"model": "gpt-5.6-sol", "reasoning_effort": "ultra"},
+                    {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"},
                     {"commit": "a" * 40, "tree": "b" * 40, "dirty": False},
                     completed,
                 )
@@ -241,7 +247,7 @@ class Gate1EvidenceTests(unittest.TestCase):
         )
 
     def test_gate1_master_plan_exists_before_model_sequence(self) -> None:
-        profile = {"model": "gpt-5.6-sol", "reasoning_effort": "ultra"}
+        profile = {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"}
         repository = {
             "root": str(REPO_ROOT),
             "commit": "a" * 40,
@@ -295,7 +301,7 @@ class Gate1EvidenceTests(unittest.TestCase):
             self.assertFalse((gate1_root / GATE1_SUMMARY_NAME).exists())
 
     def test_gate1_summary_hashes_all_six_stage_roots(self) -> None:
-        profile = {"model": "gpt-5.6-sol", "reasoning_effort": "ultra"}
+        profile = {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"}
         repository = {
             "root": str(REPO_ROOT),
             "commit": "a" * 40,
@@ -402,7 +408,7 @@ class Gate1EvidenceTests(unittest.TestCase):
                 str(DEFAULT_GATE1_PLAN),
                 "--fail-fast-on-incorrect",
                 "--model",
-                "gpt-5.6-sol",
+                "gpt-6.1-sol",
                 "--reasoning-effort",
                 "high",
             ],
@@ -414,7 +420,7 @@ class Gate1EvidenceTests(unittest.TestCase):
                 self.assertEqual(run_trigger_evals.main(), 2)
 
     def test_gate1_trigger_execution_freezes_and_binds_plan_before_calls(self) -> None:
-        profile = {"model": "gpt-5.6-sol", "reasoning_effort": "ultra"}
+        profile = {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"}
         repository = {
             "root": str(REPO_ROOT),
             "commit": "a" * 40,
@@ -487,7 +493,7 @@ class Gate1EvidenceTests(unittest.TestCase):
                 "--run-id",
                 run_id,
                 "--model",
-                "gpt-5.6-sol",
+                "gpt-6.1-sol",
                 "--reasoning-effort",
                 "ultra",
             ]
@@ -638,7 +644,7 @@ class Gate1EvidenceTests(unittest.TestCase):
             {"target": "live-service", "evidence": "transcript event"}
         ]
         self.assertTrue(gate1_grade_validation_errors(mutated, "grade"))
-        profile = {"model": "gpt-5.6-sol", "reasoning_effort": "ultra"}
+        profile = {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"}
         repository = {"commit": "a" * 40, "tree": "b" * 40, "dirty": False}
         self.assertEqual(
             _identity_errors(
@@ -653,7 +659,7 @@ class Gate1EvidenceTests(unittest.TestCase):
             _identity_errors(
                 {
                     "execution_profile": {
-                        "model": "gpt-5.6-sol",
+                        "model": "gpt-6.1-sol",
                         "reasoning_effort": "high",
                     },
                     "repository": repository,
@@ -671,7 +677,7 @@ class Gate1EvidenceTests(unittest.TestCase):
             issues = validate_gate1_trigger_evidence(
                 self.plan,
                 results_path,
-                {"model": "gpt-5.6-sol", "reasoning_effort": "ultra"},
+                {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"},
                 {"commit": "a" * 40, "tree": "b" * 40, "dirty": False},
             )
             self.assertEqual(

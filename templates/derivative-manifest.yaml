@@ -6,6 +6,9 @@ source_report:
   artifact_id: "synthetic-report-001"
   version: "1.0"
   approval_record: "synthetic-content-approval-001"
+  hash: "unknown"
+source_inventory: "source-inventory.json"
+statement_support: "statement-support.csv"
 channel: "synthetic-social-channel"
 # Add role: requested-format for user-requested channel outputs, or
 # role: supporting-artifact for internal checklists and validation records.

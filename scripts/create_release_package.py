@@ -19,7 +19,7 @@ from release_inventory import copy_inventory, select_inventory, tracked_head_inv
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST = REPO_ROOT / "dist"
 MANIFEST_PATH = REPO_ROOT / ".codex-plugin" / "plugin.json"
-ROOT_FILES = ["README.md", "LICENSE", "CHANGELOG.md", "SECURITY.md"]
+ROOT_FILES = ["README.md", "LICENSE", "CHANGELOG.md", "SECURITY.md", "marketplace.json"]
 DOC_FILES = [
     "docs/architecture.md",
     "docs/evaluation.md",
@@ -29,7 +29,11 @@ DOC_FILES = [
     "docs/asset-license-ledger.csv",
 ]
 PUBLIC_FILES = {PurePosixPath(path) for path in ROOT_FILES + DOC_FILES}
-PLUGIN_PREFIXES = {".codex-plugin", "skills"}
+REQUIRED_PLUGIN_FILES = PUBLIC_FILES | {
+    PurePosixPath(".codex-plugin/plugin.json"),
+    PurePosixPath(".zcode-plugin/plugin.json"),
+}
+PLUGIN_PREFIXES = {".codex-plugin", ".zcode-plugin", "skills"}
 MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 EXTERNAL_LINK_PATTERN = re.compile(r"^(?:https?://|mailto:)", re.IGNORECASE)
 
@@ -60,7 +64,7 @@ def plugin_inventory():
         lambda path: path in PUBLIC_FILES or (path.parts and path.parts[0] in PLUGIN_PREFIXES),
     )
     selected_paths = {item.path for item in selected}
-    missing = sorted(path.as_posix() for path in PUBLIC_FILES - selected_paths)
+    missing = sorted(path.as_posix() for path in REQUIRED_PLUGIN_FILES - selected_paths)
     if missing:
         raise SystemExit(f"Required tracked plugin release files are missing: {missing}")
     for prefix in sorted(PLUGIN_PREFIXES):

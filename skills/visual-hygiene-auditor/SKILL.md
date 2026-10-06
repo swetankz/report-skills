@@ -91,7 +91,7 @@ Base comprehension claims on walkthrough evidence, not personal preference alone
 
 For every finding, record:
 
-- Pass: `structural`, `optical`, or `reader`.
+- Pass: `structural`, `optical`, or `reader-comprehension`.
 - Exact page, route, component, state, and viewport.
 - Observation and evidence reference.
 - `severity`: exactly one of `critical`, `high`, `medium`, or `low`.
@@ -108,7 +108,7 @@ Use a stable finding template so location and follow-up evidence cannot be lost:
 ID | pass | severity | artifact/location | viewport or format | evidence and evidence type | impact | recommended correction | verification status
 ```
 
-For every finding, fill the `viewport or format` field explicitly; a global viewport matrix does not replace per-finding location. If a finding is not viewport-specific, name the inspected format and say `viewport: not applicable`. Every finding and revision-log entry must use the exact field `severity` with one allowed value (`critical`, `high`, `medium`, `low`); an `Impact: high` label is not a severity field. Keep the impact explanation separate. For each revision-log entry, repeat `severity`, `evidence`, `recommended correction`, and `verification status` directly in that entry; do not rely on a linked finding to supply missing fields. In addition, `revision-log.md` must contain three distinct pass-coverage entries with exact `pass` values `structural`, `optical`, and `reader-comprehension`, even when a pass has no finding or requires no change. For a pass-coverage-only entry, record `finding_id: none`, evidence inspected, and `disposition: no-change`; use `severity: not-applicable` because no finding is being rated. Do not invent a revision or finding just to populate this coverage record. If only source files are available, use an explicit narrow-screen test target such as `375×812 CSS px`, label the finding `source-derived` and the viewport check `not-verified`; never say the viewport was observed or passed without a rendered capture or measurement.
+For every finding, fill the `viewport or format` field explicitly; a global viewport matrix does not replace per-finding location. If a finding is not viewport-specific, name the inspected format and say `viewport: not applicable`. Every finding and finding-linked revision-log entry must use the exact field `severity` with one allowed value (`critical`, `high`, `medium`, `low`); an `Impact: high` label is not a severity field. Keep the impact explanation separate. For each finding-linked revision-log entry, repeat `severity`, `evidence`, `recommended correction`, and `verification status` directly in that entry; do not rely on a linked finding to supply missing fields. In addition, `revision-log.md` must contain three distinct pass-coverage entries with exact `pass` values `structural`, `optical`, and `reader-comprehension`, even when a pass has no finding or requires no change. These coverage-only records are not findings: record `finding_id: none`, evidence inspected, and `disposition: no-change`; use `severity: not-applicable` because no finding is being rated. Do not invent a revision or finding just to populate this coverage record. If only source files are available, use an explicit narrow-screen test target such as `375×812 CSS px`, label the finding `source-derived` and the viewport check `not-verified`; never say the viewport was observed or passed without a rendered capture or measurement.
 
 ## 7. Set scoped verdicts
 

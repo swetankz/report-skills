@@ -315,11 +315,14 @@ def manifest_deliverable_roles(path: Path) -> dict[str, str]:
         except (OSError, UnicodeError, json.JSONDecodeError):
             return {}
         deliverables = document.get("deliverables", []) if isinstance(document, dict) else []
-        return {
-            str(item["deliverable_id"]).strip(): str(item.get("role", "")).strip()
-            for item in deliverables
-            if isinstance(item, dict) and item.get("deliverable_id")
-        }
+        roles = {}
+        for item in deliverables:
+            if isinstance(item, dict) and item.get("deliverable_id"):
+                key = str(item["deliverable_id"]).strip()
+                if key in roles:
+                    raise ValueError(f"manifest has duplicate deliverable_id {key}")
+                roles[key] = str(item.get("role", "")).strip()
+        return roles
     if suffix not in {".yaml", ".yml"}:
         return {}
     try:
@@ -339,11 +342,26 @@ def manifest_deliverable_roles(path: Path) -> dict[str, str]:
         deliverable_id = match.group(1).strip().strip("\"'")
         if not deliverable_id:
             continue
+        if deliverable_id in roles:
+            raise ValueError(f"manifest has duplicate deliverable_id {deliverable_id}")
         end = starts[index + 1].start() if index + 1 < len(starts) else len(section_text)
         entry = section_text[match.end() : end]
         role_match = re.search(r"(?m)^\s*role:\s*[\"']?([^\r\n\"']+)[\"']?\s*$", entry)
         roles[deliverable_id] = role_match.group(1).strip() if role_match else ""
     return roles
+
+
+def manifest_contract_paths(path: Path) -> dict[str, object]:
+    """Read the manifest's declared package-relative review records."""
+    text = path.read_text(encoding="utf-8-sig")
+    if path.suffix.casefold() == ".json":
+        document = json.loads(text)
+        return {key: document.get(key) for key in ("source_inventory", "statement_support")} if isinstance(document, dict) else {}
+    pointers = {}
+    for key in ("source_inventory", "statement_support"):
+        matches = list(re.finditer(rf"(?m)^{key}:\s*(.*?)\s*$", text))
+        pointers[key] = matches[0].group(1).strip().strip("\"'") if len(matches) == 1 else None
+    return pointers
 
 
 def normalized_prose(text: str) -> str:
@@ -352,6 +370,273 @@ def normalized_prose(text: str) -> str:
     text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"[*`_~]", "", text)
     return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+SUPPORT_COLUMNS = {"support_id", "statement_id", "source_unit_id", "output_text", "output_occurrence", "claim_ids", "source_locator", "kind", "reason"}
+SOURCE_KINDS = {"sourced_fact", "analysis", "recommendation", "safeguard", "stop_rule", "measurement", "source_metadata", "nonfactual"}
+
+
+def id_list(value: str) -> list[str]:
+    return [item.strip() for item in value.split(";") if item.strip()]
+
+
+def literal_metadata(text: str) -> str:
+    """Allow heading/line-wrap layout, preserving field values and link targets."""
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)).strip()
+
+
+def bounded_index(value: str, limit: int) -> int:
+    """Reject oversized indices before integer conversion."""
+    if not re.fullmatch(r"[1-9][0-9]*", value) or len(value) > len(str(limit)):
+        return 0
+    number = int(value)
+    return number if number <= limit else 0
+
+
+def validate_source_contract(
+    root: Path,
+    mapping_path: Path,
+    deliverable_paths: Iterable[Path],
+    source_report_path: Path,
+    inventory_path: Path,
+    support_path: Path,
+) -> list[str]:
+    """Reconcile a manually reviewed source inventory, not infer semantic support.
+
+    Literal line coverage prevents an inventory silently excluding source prose.
+    Clause boundaries, classifications, entailment and materiality still require
+    the declared manual review. A structurally valid inventory is not approval.
+    """
+    errors: list[str] = []
+    try:
+        root = root.resolve(strict=True)
+        inventory_file = safe_file(root, inventory_path.absolute().relative_to(root).as_posix())
+        support_file = safe_file(root, support_path.absolute().relative_to(root).as_posix())
+        if source_report_path.is_symlink() or not source_report_path.is_file():
+            return ["source report must be a regular non-link file"]
+        source = source_report_path.read_text(encoding="utf-8-sig")
+        source_hash = f"sha256:{hashlib.sha256(source_report_path.read_bytes()).hexdigest()}"
+        inventory = json.loads(inventory_file.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        return [f"required source inventory and statement support cannot be read: {exc}"]
+    if not isinstance(inventory, dict) or inventory.get("schema_version") != "1.0":
+        return ["source inventory must use schema_version 1.0"]
+    if inventory.get("source_report_hash") != source_hash:
+        errors.append("source inventory hash does not match source report bytes")
+    review = inventory.get("review", {})
+    checks = {"atomic-units", "source-types", "semantic-support", "material-omissions"}
+    recorded_checks = review.get("checks", []) if isinstance(review, dict) else []
+    valid_checks = isinstance(recorded_checks, list) and all(isinstance(check, str) for check in recorded_checks)
+    if not isinstance(review, dict) or review.get("status") != "complete" or review.get("method") != "manual-clause-review" or not valid_checks or not checks <= set(recorded_checks):
+        errors.append("source inventory needs complete manual-clause-review of atomic-units, source-types, semantic-support and material-omissions")
+    source_lines = source.splitlines()
+    covered = [set() for _ in source_lines]
+    units: dict[str, dict] = {}
+    raw_units = inventory.get("source_units", [])
+    if not isinstance(raw_units, list) or not raw_units:
+        errors.append("source inventory needs nonempty source_units")
+        raw_units = []
+    for unit in raw_units:
+        if not isinstance(unit, dict):
+            errors.append("source inventory unit must be an object")
+            continue
+        unit_id = unit.get("source_unit_id", "")
+        if not isinstance(unit_id, str) or not unit_id or unit_id in units:
+            errors.append("source inventory has empty or duplicate source_unit_id")
+            continue
+        kind, quote, locator = unit.get("kind"), unit.get("source_text"), unit.get("source_locator", "")
+        claims = unit.get("claim_ids", [])
+        if not isinstance(kind, str) or kind not in SOURCE_KINDS or not isinstance(quote, str) or not quote:
+            errors.append(f"source unit {unit_id} needs a supported kind and literal source_text")
+            continue
+        if not isinstance(claims, list) or any(not isinstance(claim, str) or not claim for claim in claims) or len(set(claims)) != len(claims):
+            errors.append(f"source unit {unit_id} needs a unique claim_ids array")
+            continue
+        units[unit_id] = unit
+        if kind in {"sourced_fact", "analysis"} and not claims:
+            errors.append(f"source unit {unit_id} factual/analysis support needs exact claim_ids")
+        if kind == "source_metadata" and claims:
+            errors.append(f"source unit {unit_id} metadata must not carry claim_ids")
+        for claim in claims:
+            if not re.search(rf"(?<![\w.-]){re.escape(claim)}(?![\w.-])", source):
+                errors.append(f"source unit {unit_id} claim_id {claim} does not occur verbatim in source")
+        match = re.fullmatch(r"line:([1-9][0-9]*)", locator) if isinstance(locator, str) else None
+        line_number = bounded_index(match.group(1), len(source_lines)) if match else 0
+        if not 1 <= line_number <= len(source_lines):
+            errors.append(f"source unit {unit_id} needs an exact line:N locator")
+            continue
+        line = source_lines[line_number - 1]
+        start = line.find(quote)
+        if start < 0 or line.find(quote, start + 1) >= 0:
+            errors.append(f"source unit {unit_id} source_text must occur exactly once at {locator}")
+            continue
+        covered[line_number - 1].update(range(start, start + len(quote)))
+    for index, line in enumerate(source_lines):
+        # Markdown headings organize source prose; their wording is still quoted
+        # when reused (notably the required visible report title).
+        if not line.strip() or re.match(r"^\s*#{1,6}\s", line):
+            continue
+        if any(not char.isspace() and offset not in covered[index] for offset, char in enumerate(line)):
+            errors.append(f"source line {index + 1} has text missing from the upstream inventory: {line[:100]}")
+
+    rows, mapping_errors = read_mapping(mapping_path)
+    errors.extend(mapping_errors)
+    mapped = {row["statement_id"]: row for row in rows if row["status"] != "omitted"}
+    formats: set[str] = set()
+    roles: dict[str, str] = {}
+    declared: dict[str, Path] = {}
+    for relative in deliverable_paths:
+        try:
+            target = safe_file(root, relative.as_posix())
+            declared[relative.as_posix()] = target
+            entry_roles = manifest_deliverable_roles(target)
+            if entry_roles:
+                pointers = manifest_contract_paths(target)
+                for key, checked_file in (("source_inventory", inventory_file), ("statement_support", support_file)):
+                    pointer = pointers.get(key)
+                    expected_path = checked_file.relative_to(root).as_posix()
+                    if not isinstance(pointer, str) or pointer.replace("\\", "/") != expected_path:
+                        errors.append(f"manifest {relative.as_posix()} {key} must name the exact validated relative path {expected_path}")
+            if roles.keys() & entry_roles.keys():
+                errors.append("declared manifests repeat deliverable_id entries")
+            roles.update(entry_roles)
+            formats.update(key for key, role in entry_roles.items() if role == "requested-format")
+        except (OSError, ValueError) as exc:
+            errors.append(str(exc))
+    if not formats:
+        errors.append("source reconciliation needs explicit requested-format manifest entries")
+    format_paths: dict[str, set[str]] = {}
+    for statement_id, row in mapped.items():
+        if row["deliverable_id"] not in roles:
+            errors.append(f"output statement {statement_id} references an absent manifest deliverable_id")
+        if row["deliverable_id"] in formats:
+            format_paths.setdefault(row["deliverable_id"], set()).add(row["output_path"])
+        target = declared.get(row["output_path"])
+        if target and target.suffix.casefold() == ".md":
+            match = re.search(r"(?m)^deliverable_id:\s*(.*?)\s*$", target.read_text(encoding="utf-8-sig").split("---", 2)[1] if "---" in target.read_text(encoding="utf-8-sig") else "")
+            if not match or match.group(1).strip().strip("\"'") != row["deliverable_id"]:
+                errors.append(f"output statement {statement_id} deliverable_id disagrees with its file header")
+    for format_id in formats:
+        if len(format_paths.get(format_id, set())) != 1:
+            errors.append(f"requested format {format_id} must bind exactly one copy-bearing output file")
+    try:
+        with support_file.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.reader(handle, strict=True)
+            headers = next(reader, [])
+            if any(not header.strip() for header in headers) or len({header.casefold() for header in headers}) != len(headers) or not SUPPORT_COLUMNS <= set(headers):
+                return errors + ["statement support CSV is missing required columns"]
+            support_rows = []
+            for number, values in enumerate(reader, 2):
+                if len(values) != len(headers) or not any(value.strip() for value in values):
+                    errors.append(f"statement support row {number} has the wrong field count")
+                    continue
+                support_rows.append(dict(zip(headers, (value.strip() for value in values))))
+    except (OSError, UnicodeError, csv.Error) as exc:
+        return errors + [f"cannot read statement support CSV: {exc}"]
+    supports: dict[str, list[dict[str, str]]] = {}
+    seen_support_ids: set[str] = set()
+    occurrence_bindings: set[tuple[str, str, int]] = set()
+    uses: dict[tuple[str, str], set[str]] = {}
+    for child in support_rows:
+        support_id, statement_id = child["support_id"], child["statement_id"]
+        if not support_id or support_id in seen_support_ids:
+            errors.append("statement support has empty or duplicate support_id")
+        seen_support_ids.add(support_id)
+        parent = mapped.get(statement_id)
+        if parent is None:
+            errors.append(f"support {support_id} has no canonical output statement {statement_id}")
+            continue
+        supports.setdefault(statement_id, []).append(child)
+        fragment = normalized_prose(child["output_text"])
+        occurrences = list(re.finditer(re.escape(fragment), normalized_prose(parent["output_text"]))) if fragment else []
+        occurrence = bounded_index(child["output_occurrence"], len(occurrences))
+        binding = (statement_id, fragment, occurrence)
+        if not occurrence or occurrence > len(occurrences):
+            errors.append(f"support {support_id} output_text is not a literal fragment of {statement_id}")
+        elif binding in occurrence_bindings:
+            errors.append(f"support {support_id} repeats an output occurrence binding")
+        occurrence_bindings.add(binding)
+        if child["kind"] == "nonfactual" and not child["source_unit_id"]:
+            if child["claim_ids"] or child["source_locator"] or not child["reason"]:
+                errors.append(f"nonfactual support {support_id} needs rationale and no evidence values")
+            if parent["statement_type"] not in {"nonfactual", "accessibility_copy"}:
+                errors.append(f"support {support_id} cannot classify factual or metadata output as nonfactual")
+            continue
+        unit = units.get(child["source_unit_id"])
+        if unit is None:
+            errors.append(f"support {support_id} references an absent source_unit_id")
+            continue
+        if child["kind"] != unit.get("kind") or child["source_locator"] != unit.get("source_locator") or set(id_list(child["claim_ids"])) != set(unit.get("claim_ids", [])):
+            errors.append(f"support {support_id} kind, locator and claim_ids must match its exact source unit")
+        if parent["statement_type"] == "source_metadata" and child["kind"] != "source_metadata":
+            errors.append(f"metadata statement {statement_id} contains non-metadata support")
+        if child["kind"] == "source_metadata" and literal_metadata(child["output_text"]) != literal_metadata(unit["source_text"]):
+            errors.append(f"metadata support {support_id} must reproduce only its literal source field")
+        if child["kind"] == "source_metadata" and literal_metadata(child["output_text"]) not in literal_metadata(parent["output_text"]):
+            errors.append(f"metadata support {support_id} must preserve its literal field in canonical output")
+        uses.setdefault((child["source_unit_id"], parent["deliverable_id"]), set()).add(statement_id)
+    for statement_id, parent in mapped.items():
+        children = supports.get(statement_id, [])
+        text = normalized_prose(parent["output_text"])
+        positions: set[int] = set()
+        child_claims: set[str] = set()
+        for child in children:
+            fragment = normalized_prose(child["output_text"])
+            matches = list(re.finditer(re.escape(fragment), text)) if fragment else []
+            occurrence = bounded_index(child["output_occurrence"], len(matches))
+            if 1 <= occurrence <= len(matches):
+                match = matches[occurrence - 1]
+                positions.update(range(match.start(), match.end()))
+            child_claims.update(id_list(child["claim_ids"]))
+        if any(char.isalnum() and index not in positions for index, char in enumerate(text)):
+            errors.append(f"statement {statement_id} has copy without atomic support records")
+        if set(id_list(parent["claim_ids"])) != child_claims:
+            errors.append(f"statement {statement_id} claim_ids must equal its atomic support claims")
+    coverage: dict[tuple[str, str], dict] = {}
+    raw_coverage = inventory.get("coverage", [])
+    if not isinstance(raw_coverage, list):
+        raw_coverage = []
+        errors.append("source inventory coverage must be an array")
+    for entry in raw_coverage:
+        if not isinstance(entry, dict):
+            errors.append("source coverage entry must be an object")
+            continue
+        unit_id, format_id = entry.get("source_unit_id"), entry.get("deliverable_id")
+        if not isinstance(unit_id, str) or not isinstance(format_id, str):
+            errors.append("source coverage needs string source_unit_id and deliverable_id")
+            continue
+        key = (unit_id, format_id)
+        if key[0] not in units or key[1] not in formats or key in coverage:
+            errors.append("source coverage has unknown or duplicate source-unit/format pair")
+            continue
+        coverage[key] = entry
+        actual = uses.get(key, set())
+        stated = entry.get("statement_ids", [])
+        if not isinstance(stated, list) or any(not isinstance(item, str) for item in stated) or len(set(stated)) != len(stated):
+            errors.append(f"source coverage {key} needs unique statement_ids")
+            continue
+        status = entry.get("status")
+        if not isinstance(status, str):
+            errors.append(f"source coverage {key} has unsupported status")
+            continue
+        omitted = entry.get("context_omitted", "")
+        if status == "omitted":
+            if stated or actual or omitted != units[key[0]]["source_text"] or not entry.get("reason"):
+                errors.append(f"omitted source coverage {key} needs no output, its complete source_text and a reason")
+        elif status in {"used", "shortened"}:
+            if not actual or set(stated) != actual:
+                errors.append(f"source coverage {key} must list exactly its supported output statements")
+            if status == "used" and omitted != "none":
+                errors.append(f"used source coverage {key} needs context_omitted none")
+            if status == "shortened" and (not isinstance(omitted, str) or not omitted or omitted == "none" or omitted not in units[key[0]]["source_text"] or not entry.get("reason")):
+                errors.append(f"shortened source coverage {key} needs literal omitted source text and a reason")
+        else:
+            errors.append(f"source coverage {key} has unsupported status")
+    for unit_id in units:
+        for format_id in formats:
+            if (unit_id, format_id) not in coverage:
+                errors.append(f"source unit {unit_id} has no retained/shortened/omitted coverage for {format_id}")
+    return errors
 
 
 def validate_package(
@@ -456,10 +741,13 @@ def validate_package(
         try:
             parent_values, source_hash = provenance_hashes(target)
             provenance_by_path[relative] = parent_values
-            manifest_roles.update(manifest_deliverable_roles(target))
+            entry_roles = manifest_deliverable_roles(target)
+            if manifest_roles.keys() & entry_roles.keys():
+                errors.append("declared manifests repeat deliverable_id entries")
+            manifest_roles.update(entry_roles)
             if source_hash:
                 manifest_source_hashes.add(source_hash)
-        except (OSError, UnicodeError, csv.Error) as exc:
+        except (OSError, UnicodeError, csv.Error, ValueError) as exc:
             errors.append(f"{relative}: cannot read report-hash provenance: {exc}")
     source_hash_from_file: str | None = None
     approved_title: str | None = None
@@ -577,7 +865,10 @@ def validate_package(
         if len(access_rows) != 1:
             errors.append(f"visual unit {unit} in {unit_path} needs exactly one accessibility_copy mapping row")
         for access_row in access_rows:
-            related = {item.strip() for item in access_row["related_statement_ids"].split(";") if item.strip()}
+            related_list = id_list(access_row["related_statement_ids"])
+            related = set(related_list)
+            if len(related_list) != len(related):
+                errors.append(f"accessibility_copy for visual unit {unit} has duplicate related_statement_ids")
             if related != statement_ids:
                 errors.append(f"accessibility_copy for visual unit {unit} must reference every visual statement_id exactly")
             access_text = normalized_prose(access_row["output_text"])
@@ -634,14 +925,30 @@ def main() -> int:
     parser.add_argument("--mapping", type=Path, required=True)
     parser.add_argument("--deliverable", type=Path, action="append", required=True)
     parser.add_argument("--source-report", type=Path)
+    parser.add_argument("--source-inventory", type=Path)
+    parser.add_argument("--statement-support", type=Path)
+    parser.add_argument("--structural-only", action="store_true")
     args = parser.parse_args()
+    if args.structural_only and (args.source_report or args.source_inventory or args.statement_support):
+        parser.error("structural-only is mutually exclusive with source-report, source-inventory and statement-support")
+    if not args.structural_only and args.source_report is None:
+        parser.error("source-report is required for handoff validation")
     errors = validate_package(args.artifacts_root, args.mapping, args.deliverable, args.source_report)
+    if args.source_report is not None:
+        errors.extend(validate_source_contract(
+            args.artifacts_root, args.mapping, args.deliverable, args.source_report,
+            args.source_inventory or args.artifacts_root / "source-inventory.json",
+            args.statement_support or args.artifacts_root / "statement-support.csv",
+        ))
     if errors:
         print(f"Derivative traceability validation failed with {len(errors)} issue(s):")
         for error in errors:
             print(f"- {error}")
         return 1
-    print("Derivative traceability validation passed: all declared statement IDs and verbatim output text reconcile.")
+    if args.structural_only:
+        print("Structural checks passed only; source completeness and semantic support NOT VERIFIED; not a handoff pass.")
+    else:
+        print("Derivative traceability validation passed: declared output and source-inventory records reconcile; semantic support remains the documented manual review.")
     return 0
 
 
