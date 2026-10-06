@@ -47,6 +47,8 @@ MAPPING_FIELDS = [
     "context_retained",
     "context_omitted",
     "reason",
+    "visual_unit_id",
+    "related_statement_ids",
 ]
 VIDEO_FIELDS = [
     "frame_id",
@@ -75,8 +77,9 @@ class DerivativeTraceabilityTests(unittest.TestCase):
         self.root.mkdir()
         self.mapping = self.root / "claim-mapping.csv"
         self.post_text = "A synthetic survey found 62 percent stated willingness."
+        self.post_alt = self.post_text
         self.video_text = "This is the on-screen statement."
-        self.manifest_text = "A frame reports that 405 of 500 respondents required a human option."
+        self.video_transcript = self.video_text
         (self.root / "post.md").write_text(
             "---\n"
             "deliverable_id: post\n"
@@ -89,39 +92,44 @@ class DerivativeTraceabilityTests(unittest.TestCase):
             "aspect_ratio: 4:5\n"
             "status: draft\n"
             "---\n\n"
-            f"<!-- statement_id: ST-001 -->\n{self.post_text}\n",
+            f"<!-- statement_id: ST-001 -->\n{self.post_text}\n\n"
+            f"<!-- statement_id: ST-004 -->\n{self.post_alt}\n",
             encoding="utf-8",
         )
         with (self.root / "video.csv").open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
             writer.writeheader()
+            common = {
+                "frame_id": "VF-01",
+                "duration_seconds": "5",
+                "visual_source": "synthetic survey data",
+                "transformation": "numeric emphasis",
+                "transition_intent": "cut from title",
+                "parent_report_id": "synthetic-report",
+                "parent_report_version": "1.0",
+                "parent_report_hash": "unknown",
+                "source_claim_ids": "SYN-S1",
+                "transformation_type": "typeset frame",
+                "dimensions": "1080x1920 specification",
+                "aspect_ratio": "9:16",
+                "status": "draft",
+            }
             writer.writerow(
                 {
-                    "frame_id": "VF-01",
-                    "duration_seconds": "5",
+                    **common,
                     "content_type": "on_screen_copy",
                     "statement_id": "ST-002",
                     "output_text": self.video_text,
-                    "visual_source": "synthetic survey data",
-                    "transformation": "numeric emphasis",
-                    "transition_intent": "cut from title",
-                    "parent_report_id": "synthetic-report",
-                    "parent_report_version": "1.0",
-                    "parent_report_hash": "unknown",
-                    "source_claim_ids": "SYN-S1",
-                    "transformation_type": "typeset frame",
-                    "dimensions": "1080x1920 specification",
-                    "aspect_ratio": "9:16",
-                    "status": "draft",
                 }
             )
-        (self.root / "manifest.yaml").write_text(
-            "accessibility_copy:\n"
-            "  - deliverable_id: video\n"
-            "    statement_id: ST-003\n"
-            f"    text: {self.manifest_text}\n",
-            encoding="utf-8",
-        )
+            writer.writerow(
+                {
+                    **common,
+                    "content_type": "accessibility_transcript",
+                    "statement_id": "ST-003",
+                    "output_text": self.video_transcript,
+                }
+            )
         rows = [
             {
                 "statement_id": "ST-001",
@@ -136,6 +144,24 @@ class DerivativeTraceabilityTests(unittest.TestCase):
                 "context_retained": "stated willingness",
                 "context_omitted": "none",
                 "reason": "Within the short post format.",
+                "visual_unit_id": "post-1",
+                "related_statement_ids": "",
+            },
+            {
+                "statement_id": "ST-004",
+                "claim_ids": "SYN-S1",
+                "source_locator": "complete-report.md#Findings",
+                "deliverable_id": "post",
+                "output_path": "post.md",
+                "output_location": "alternative text for post-1",
+                "statement_type": "accessibility_copy",
+                "output_text": self.post_alt,
+                "status": "used",
+                "context_retained": "same claim and qualifier as visible copy",
+                "context_omitted": "none",
+                "reason": "Accessible equivalent of the post copy.",
+                "visual_unit_id": "post-1",
+                "related_statement_ids": "ST-001",
             },
             {
                 "statement_id": "ST-002",
@@ -150,20 +176,24 @@ class DerivativeTraceabilityTests(unittest.TestCase):
                 "context_retained": "survey scope",
                 "context_omitted": "none",
                 "reason": "Single-frame copy.",
+                "visual_unit_id": "VF-01",
+                "related_statement_ids": "",
             },
             {
                 "statement_id": "ST-003",
                 "claim_ids": "SYN-S1",
                 "source_locator": "complete-report.md#Findings",
                 "deliverable_id": "video",
-                "output_path": "manifest.yaml",
-                "output_location": "accessibility_copy[ST-003].text",
-                "statement_type": "sourced_fact",
-                "output_text": self.manifest_text,
+                "output_path": "video.csv",
+                "output_location": "VF-01.accessibility_transcript",
+                "statement_type": "accessibility_copy",
+                "output_text": self.video_transcript,
                 "status": "used",
-                "context_retained": "human-option denominator",
+                "context_retained": "same statement and qualifier as on-screen copy",
                 "context_omitted": "none",
-                "reason": "Accessibility text for the visual.",
+                "reason": "Accessible frame transcript.",
+                "visual_unit_id": "VF-01",
+                "related_statement_ids": "ST-002",
             },
         ]
         self.write_mapping(rows)
@@ -181,21 +211,21 @@ class DerivativeTraceabilityTests(unittest.TestCase):
         errors = VALIDATOR.validate_package(
             self.root,
             self.mapping,
-            [Path("post.md"), Path("video.csv"), Path("manifest.yaml")],
+            [Path("post.md"), Path("video.csv")],
         )
         self.assertEqual([], errors)
 
     def test_rejects_unmapped_or_mismatched_output(self) -> None:
         video = self.root / "video.csv"
         text = video.read_text(encoding="utf-8")
-        video.write_text(text.replace("ST-002", "ST-004"), encoding="utf-8")
+        video.write_text(text.replace("ST-002", "ST-999"), encoding="utf-8")
         errors = VALIDATOR.validate_package(
             self.root,
             self.mapping,
-            [Path("post.md"), Path("video.csv"), Path("manifest.yaml")],
+            [Path("post.md"), Path("video.csv")],
         )
         self.assertTrue(any("absent from declared deliverables" in error for error in errors))
-        self.assertTrue(any("unmapped statement ST-004" in error for error in errors))
+        self.assertTrue(any("unmapped statement ST-999" in error for error in errors))
 
     def test_rejects_csv_missing_provenance(self) -> None:
         video = self.root / "video.csv"
@@ -206,7 +236,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
         errors = VALIDATOR.validate_package(
             self.root,
             self.mapping,
-            [Path("post.md"), Path("video.csv"), Path("manifest.yaml")],
+            [Path("post.md"), Path("video.csv")],
         )
         self.assertTrue(any("per-row provenance columns" in error for error in errors))
 
@@ -219,7 +249,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
         errors = VALIDATOR.validate_package(
             self.root,
             self.mapping,
-            [Path("post.md"), Path("video.csv"), Path("manifest.yaml")],
+            [Path("post.md"), Path("video.csv")],
         )
         self.assertTrue(any("each nonempty Markdown content block" in error for error in errors))
 
@@ -235,7 +265,7 @@ class DerivativeTraceabilityTests(unittest.TestCase):
             "-Mapping",
             str(self.mapping),
             "-Deliverables",
-            "post.md,video.csv,manifest.yaml",
+            "post.md,video.csv",
         ]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
@@ -257,11 +287,140 @@ class DerivativeTraceabilityTests(unittest.TestCase):
             "-Mapping",
             str(self.mapping),
             "-Deliverables",
-            "post.md,video.csv,manifest.yaml",
+            "post.md,video.csv",
         ]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         self.assertIn("factual statement ST-001 needs claim_ids", result.stdout)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell Core is not installed")
+    def test_powershell_validator_rejects_missing_frame_transcript(self) -> None:
+        video = self.root / "video.csv"
+        with video.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        rows = [row for row in rows if row["content_type"] != "accessibility_transcript"]
+        with video.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-File",
+                str(POWERSHELL_VALIDATOR_PATH),
+                "-ArtifactsRoot",
+                str(self.root),
+                "-Mapping",
+                str(self.mapping),
+                "-Deliverables",
+                "post.md,video.csv",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("exactly one accessibility_transcript", result.stdout)
+
+    def test_rejects_visual_unit_without_accessibility_mapping(self) -> None:
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        rows = [row for row in rows if row["statement_id"] != "ST-004"]
+        self.write_mapping(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertTrue(any("no accessibility_copy mapping row" in error for error in errors))
+
+    def test_rejects_frame_with_no_accessibility_transcript(self) -> None:
+        video = self.root / "video.csv"
+        with video.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        rows = [row for row in rows if row["content_type"] != "accessibility_transcript"]
+        with video.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertTrue(any("exactly one accessibility_transcript" in error for error in errors))
+
+    def test_rejects_frame_with_missing_or_unknown_content_type(self) -> None:
+        video = self.root / "video.csv"
+        with video.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        rows[0]["content_type"] = "some_text"
+        with video.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIDEO_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertTrue(any("unsupported frame content_type" in error for error in errors))
+
+    def test_rejects_source_metadata_with_unrelated_claim_ids(self) -> None:
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        rows[0]["statement_type"] = "source_metadata"
+        self.write_mapping(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertTrue(any("source metadata must not be assigned unrelated claim_ids" in error for error in errors))
+
+    def test_rejects_accessibility_mapping_that_omits_visual_statement(self) -> None:
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        next(row for row in rows if row["statement_id"] == "ST-003")["related_statement_ids"] = ""
+        self.write_mapping(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertTrue(any("must reference every visual statement_id exactly" in error for error in errors))
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell Core is not installed")
+    def test_powershell_validator_rejects_accessibility_relation_that_omits_statement(self) -> None:
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        next(row for row in rows if row["statement_id"] == "ST-003")["related_statement_ids"] = ""
+        self.write_mapping(rows)
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-File",
+                str(POWERSHELL_VALIDATOR_PATH),
+                "-ArtifactsRoot",
+                str(self.root),
+                "-Mapping",
+                str(self.mapping),
+                "-Deliverables",
+                "post.md,video.csv",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("must reference every visual statement_id exactly", result.stdout)
+
+    def test_omitted_recommendation_can_use_exact_source_locator_without_claim_id(self) -> None:
+        with self.mapping.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        rows.append(
+            {
+                "statement_id": "",
+                "claim_ids": "",
+                "source_locator": "complete-report.md#Recommendation / stop rule",
+                "deliverable_id": "post",
+                "output_path": "",
+                "output_location": "",
+                "statement_type": "recommendation",
+                "output_text": "",
+                "status": "omitted",
+                "context_retained": "none",
+                "context_omitted": "stop rule is not reproduced in this short post",
+                "reason": "Keep the limited channel space focused on the main pilot recommendation.",
+                "visual_unit_id": "",
+                "related_statement_ids": "",
+            }
+        )
+        self.write_mapping(rows)
+        errors = VALIDATOR.validate_package(self.root, self.mapping, [Path("post.md"), Path("video.csv")])
+        self.assertEqual([], errors)
 
 
 if __name__ == "__main__":

@@ -30,6 +30,8 @@ REQUIRED_COLUMNS = {
     "context_retained",
     "context_omitted",
     "reason",
+    "visual_unit_id",
+    "related_statement_ids",
 }
 CSV_PROVENANCE_COLUMNS = {
     "parent_report_id",
@@ -49,6 +51,7 @@ CSV_FRAME_COLUMNS = {
     "transformation",
     "transition_intent",
 }
+VIDEO_CONTENT_TYPES = {"on_screen_copy", "narration", "caption", "accessibility_transcript"}
 MARKDOWN_PROVENANCE_FIELDS = {
     "deliverable_id",
     "parent_report_id",
@@ -126,6 +129,7 @@ def read_deliverable(path: Path) -> tuple[dict[str, str], list[str]]:
                     if missing_frame_fields:
                         errors.append(f"{path.name}: frame CSV is missing production-plan columns: {', '.join(missing_frame_fields)}")
                 statements: dict[str, str] = {}
+                frame_types: dict[str, list[str]] = {}
                 for number, row in enumerate(reader, start=2):
                     if None in row or any(value is None for value in row.values()):
                         errors.append(f"{path.name}: CSV row {number} has the wrong field count")
@@ -143,6 +147,25 @@ def read_deliverable(path: Path) -> tuple[dict[str, str], list[str]]:
                             errors.append(f"{path.name}: CSV row {number} has empty provenance field {column}")
                     if (row.get("status") or "").strip() not in {"draft", "ready-for-approval"}:
                         errors.append(f"{path.name}: CSV row {number} has an invalid release status")
+                    if "frame_id" in headers:
+                        frame_id = (row.get("frame_id") or "").strip()
+                        content_type = (row.get("content_type") or "").strip()
+                        for column in CSV_FRAME_COLUMNS:
+                            if not (row.get(column) or "").strip():
+                                errors.append(f"{path.name}: CSV row {number} has empty frame field {column}")
+                        if content_type not in VIDEO_CONTENT_TYPES:
+                            errors.append(f"{path.name}: CSV row {number} has unsupported frame content_type {content_type!r}")
+                        if frame_id:
+                            frame_types.setdefault(frame_id, []).append(content_type)
+                        else:
+                            errors.append(f"{path.name}: CSV row {number} has an empty frame_id")
+                if "frame_id" in headers:
+                    for frame_id, content_types in frame_types.items():
+                        transcript_count = content_types.count("accessibility_transcript")
+                        if transcript_count != 1:
+                            errors.append(f"{path.name}: frame {frame_id} needs exactly one accessibility_transcript row")
+                        if not any(item in {"on_screen_copy", "narration", "caption"} for item in content_types):
+                            errors.append(f"{path.name}: frame {frame_id} has no visual or spoken copy row")
                 return statements, errors
         except (OSError, UnicodeError, csv.Error) as exc:
             return {}, [f"{path.name}: cannot parse CSV deliverable: {exc}"]
@@ -229,7 +252,9 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
 
     rows, row_errors = read_mapping(mapping)
     errors.extend(row_errors)
-    expected_ids: dict[str, tuple[str, str]] = {}
+    expected_ids: dict[str, dict[str, str]] = {}
+    mapped_rows: list[dict[str, str]] = []
+    allowed_statement_types = {"sourced_fact", "analysis", "recommendation", "source_metadata", "nonfactual", "accessibility_copy"}
     for number, row in enumerate(rows, start=2):
         status = row["status"]
         if status not in {"used", "shortened", "omitted"}:
@@ -238,8 +263,10 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
         if status == "omitted":
             if row["statement_id"] or row["output_path"] or row["output_text"]:
                 errors.append(f"omitted mapping row {number} must not claim an output statement")
-            if not row["claim_ids"] or not row["context_omitted"] or not row["reason"]:
-                errors.append(f"omitted mapping row {number} needs claim_ids, context_omitted, and reason")
+            if (not row["claim_ids"] and not row["source_locator"]) or not row["context_omitted"] or not row["reason"]:
+                errors.append(f"omitted mapping row {number} needs claim_ids or source_locator, context_omitted, and reason")
+            if row["statement_type"] not in allowed_statement_types:
+                errors.append(f"omitted mapping row {number} needs a supported statement_type")
             continue
 
         statement_id = row["statement_id"]
@@ -252,14 +279,35 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
         if not all(row[key] for key in ("deliverable_id", "output_path", "output_location", "statement_type", "output_text")):
             errors.append(f"mapping row {number} is missing output identity/location/text")
             continue
-        if row["statement_type"] in {"sourced_fact", "analysis", "source_metadata"}:
+        if row["statement_type"] not in allowed_statement_types:
+            errors.append(f"mapping row {number} has unsupported statement_type {row['statement_type']!r}")
+        if row["statement_type"] in {"sourced_fact", "analysis"}:
             if not row["claim_ids"] or not row["source_locator"]:
                 errors.append(f"mapping row {number} factual statement needs claim_ids and source_locator")
+        if row["statement_type"] == "source_metadata":
+            if not row["source_locator"]:
+                errors.append(f"mapping row {number} source metadata needs its exact metadata-field locator")
+            if row["claim_ids"]:
+                errors.append(f"mapping row {number} source metadata must not be assigned unrelated claim_ids")
         if row["statement_type"] == "recommendation" and not row["reason"]:
             errors.append(f"mapping row {number} recommendation needs its rationale")
+        if row["statement_type"] == "accessibility_copy" and (not row["visual_unit_id"] or not row["related_statement_ids"]):
+            errors.append(f"mapping row {number} accessibility copy needs visual_unit_id and related_statement_ids")
+        if row["statement_type"] in {"sourced_fact", "analysis", "recommendation", "nonfactual"} and not row["visual_unit_id"]:
+            errors.append(f"mapping row {number} visual content needs visual_unit_id")
+        if row["output_path"].casefold().endswith(".md") and row["statement_type"] != "accessibility_copy" and not row["visual_unit_id"]:
+            errors.append(f"mapping row {number} Markdown copy needs visual_unit_id")
         if status == "shortened" and (not row["context_omitted"] or not row["reason"]):
             errors.append(f"mapping row {number} shortened statement needs omitted context and reason")
-        expected_ids[statement_id] = (row["output_path"], row["output_text"])
+        expected_ids[statement_id] = {
+            "output_path": row["output_path"],
+            "output_text": row["output_text"],
+            "statement_type": row["statement_type"],
+            "visual_unit_id": row["visual_unit_id"],
+            "related_statement_ids": row["related_statement_ids"],
+            "output_location": row["output_location"],
+        }
+        mapped_rows.append(row)
 
     declared: dict[str, Path] = {}
     for relative in deliverable_paths:
@@ -289,7 +337,8 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
     for statement_id in sorted(found_ids.keys() - expected_ids.keys()):
         errors.append(f"unmapped statement {statement_id} appears in a declared deliverable")
     for statement_id in sorted(expected_ids.keys() & found_ids.keys()):
-        expected_path, output_text = expected_ids[statement_id]
+        expected = expected_ids[statement_id]
+        expected_path, output_text = expected["output_path"], expected["output_text"]
         found_path, body = found_ids[statement_id]
         try:
             normalized_expected = Path(expected_path).as_posix()
@@ -297,14 +346,68 @@ def validate_package(artifacts_root: Path, mapping_path: Path, deliverable_paths
             normalized_expected = expected_path
         if normalized_expected != found_path:
             errors.append(f"statement {statement_id} path mismatch: map={normalized_expected!r}, file={found_path!r}")
-        if target.suffix.casefold() == ".md":
+        extension = declared[found_path].suffix.casefold()
+        if extension == ".md":
             if output_text != body.strip():
                 errors.append(f"statement {statement_id} output_text is not the complete marked Markdown block")
-        elif target.suffix.casefold() == ".csv":
+        elif extension == ".csv":
             if output_text != body:
                 errors.append(f"statement {statement_id} output_text does not exactly match its CSV row")
         elif output_text not in body:
             errors.append(f"statement {statement_id} output_text does not match its marked output block")
+
+    visual_units: dict[tuple[str, str], set[str]] = {}
+    accessibility_rows: dict[str, list[dict[str, str]]] = {}
+    for row in mapped_rows:
+        unit = row["visual_unit_id"]
+        if not unit:
+            continue
+        unit_key = (row["output_path"], unit)
+        if row["statement_type"] == "accessibility_copy":
+            accessibility_rows.setdefault("::".join(unit_key), []).append(row)
+        else:
+            visual_units.setdefault(unit_key, set()).add(row["statement_id"])
+    for unit_key, statement_ids in visual_units.items():
+        unit_path, unit = unit_key
+        key = "::".join(unit_key)
+        access_rows = accessibility_rows.get(key, [])
+        if not access_rows:
+            errors.append(f"visual unit {unit} in {unit_path} has no accessibility_copy mapping row")
+            continue
+        if len(access_rows) != 1:
+            errors.append(f"visual unit {unit} in {unit_path} needs exactly one accessibility_copy mapping row")
+        for access_row in access_rows:
+            related = {item.strip() for item in access_row["related_statement_ids"].split(";") if item.strip()}
+            if related != statement_ids:
+                errors.append(f"accessibility_copy for visual unit {unit} must reference every visual statement_id exactly")
+    for key, access_rows in accessibility_rows.items():
+        if key not in {"::".join(key_parts) for key_parts in visual_units}:
+            errors.append(f"accessibility_copy mapping {access_rows[0]['statement_id']} has no matching visual copy unit")
+
+    rows_by_statement = {row["statement_id"]: row for row in mapped_rows}
+    for relative, target in declared.items():
+        if target.suffix.casefold() != ".csv":
+            continue
+        try:
+            with target.open("r", encoding="utf-8-sig", newline="") as handle:
+                reader = csv.DictReader(handle, strict=True)
+                if "frame_id" not in (reader.fieldnames or []):
+                    continue
+                for number, output_row in enumerate(reader, start=2):
+                    frame_id = (output_row.get("frame_id") or "").strip()
+                    statement_id = (output_row.get("statement_id") or "").strip()
+                    content_type = (output_row.get("content_type") or "").strip()
+                    mapped = rows_by_statement.get(statement_id)
+                    if not mapped or not frame_id:
+                        continue
+                    if mapped["visual_unit_id"] != frame_id:
+                        errors.append(f"{relative}: mapping for {statement_id} must use frame_id {frame_id} as visual_unit_id")
+                    if content_type == "accessibility_transcript" and mapped["statement_type"] != "accessibility_copy":
+                        errors.append(f"{relative}: accessibility_transcript {statement_id} must be mapped as accessibility_copy")
+                    if content_type != "accessibility_transcript" and mapped["statement_type"] == "accessibility_copy":
+                        errors.append(f"{relative}: accessibility_copy {statement_id} must use accessibility_transcript content_type")
+        except (OSError, UnicodeError, csv.Error) as exc:
+            errors.append(f"{relative}: cannot cross-check frame mapping: {exc}")
 
     return errors
 

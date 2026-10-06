@@ -19,13 +19,15 @@ $ErrorActionPreference = 'Stop'
 $requiredMapColumns = @(
     'statement_id', 'claim_ids', 'source_locator', 'deliverable_id', 'output_path',
     'output_location', 'statement_type', 'output_text', 'status', 'context_retained',
-    'context_omitted', 'reason'
+    'context_omitted', 'reason', 'visual_unit_id', 'related_statement_ids'
 )
 $csvProvenanceColumns = @(
     'parent_report_id', 'parent_report_version', 'parent_report_hash', 'source_claim_ids',
     'transformation_type', 'dimensions', 'aspect_ratio', 'status'
 )
 $csvFrameColumns = @('frame_id', 'duration_seconds', 'content_type', 'visual_source', 'transformation', 'transition_intent')
+$videoContentTypes = @('on_screen_copy', 'narration', 'caption', 'accessibility_transcript')
+$allowedStatementTypes = @('sourced_fact', 'analysis', 'recommendation', 'source_metadata', 'nonfactual', 'accessibility_copy')
 $markdownProvenanceFields = @(
     'deliverable_id', 'parent_report_id', 'parent_report_version', 'parent_report_hash',
     'source_claim_ids', 'transformation_type', 'dimensions', 'aspect_ratio', 'status'
@@ -117,6 +119,7 @@ function Read-OutputStatements {
             }
         }
         if ($localErrors.Count -gt 0) { return @{ Statements = @{}; Errors = $localErrors.ToArray() } }
+        $frameContentTypes = @{}
         for ($i = 1; $i -lt $records.Count; $i++) {
             $fields = @($records[$i].Fields)
             $lineNumber = $i + 1
@@ -140,7 +143,27 @@ function Read-OutputStatements {
                 if (-not $row[$column].Trim()) { $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): CSV row $lineNumber has empty provenance field $column") }
             }
             if ($row['status'].Trim() -notin @('draft', 'ready-for-approval')) { $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): CSV row $lineNumber has an invalid release status") }
+            if ($headers -ccontains 'frame_id') {
+                $frameId = $row['frame_id'].Trim()
+                $contentType = $row['content_type'].Trim()
+                foreach ($column in $csvFrameColumns) {
+                    if (-not $row[$column].Trim()) { $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): CSV row $lineNumber has empty frame field $column") }
+                }
+                if ($contentType -cnotin $videoContentTypes) { $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): CSV row $lineNumber has unsupported frame content_type '$contentType'") }
+                if ($frameId) {
+                    if (-not $frameContentTypes.ContainsKey($frameId)) { $frameContentTypes[$frameId] = [System.Collections.Generic.List[string]]::new() }
+                    $frameContentTypes[$frameId].Add($contentType)
+                } else { $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): CSV row $lineNumber has an empty frame_id") }
+            }
             $statements[$statementId] = $outputText
+        }
+        if ($headers -ccontains 'frame_id') {
+            foreach ($frameId in $frameContentTypes.Keys) {
+                $types = @($frameContentTypes[$frameId])
+                $transcriptCount = @($types | Where-Object { $_ -ceq 'accessibility_transcript' }).Count
+                if ($transcriptCount -ne 1) { $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): frame $frameId needs exactly one accessibility_transcript row") }
+                if (-not @($types | Where-Object { $_ -cin @('on_screen_copy', 'narration', 'caption') }).Count) { $localErrors.Add("$([System.IO.Path]::GetFileName($Path)): frame $frameId has no visual or spoken copy row") }
+            }
         }
         return @{ Statements = $statements; Errors = $localErrors.ToArray() }
     }
@@ -241,12 +264,14 @@ try {
     }
 
     $expected = @{}
+    $rowsByStatement = @{}
     foreach ($row in $mapRows) {
         $status = $row['status']
         if ($status -notin @('used', 'shortened', 'omitted')) { $errors.Add("mapping row has unsupported status '$status'"); continue }
         if ($status -eq 'omitted') {
             if ($row['statement_id'] -or $row['output_path'] -or $row['output_text']) { $errors.Add('omitted mapping row must not claim an output statement') }
-            if (-not $row['claim_ids'] -or -not $row['context_omitted'] -or -not $row['reason']) { $errors.Add('omitted mapping row needs claim_ids, context_omitted, and reason') }
+            if ((-not $row['claim_ids'] -and -not $row['source_locator']) -or -not $row['context_omitted'] -or -not $row['reason']) { $errors.Add('omitted mapping row needs claim_ids or source_locator, context_omitted, and reason') }
+            if ($row['statement_type'] -cnotin $allowedStatementTypes) { $errors.Add('omitted mapping row needs a supported statement_type') }
             continue
         }
         $statementId = $row['statement_id']
@@ -255,12 +280,21 @@ try {
         foreach ($field in @('deliverable_id', 'output_path', 'output_location', 'statement_type', 'output_text')) {
             if (-not $row[$field]) { $errors.Add("mapping statement $statementId is missing $field") }
         }
-        if ($row['statement_type'] -in @('sourced_fact', 'analysis', 'source_metadata')) {
+        if ($row['statement_type'] -cnotin $allowedStatementTypes) { $errors.Add("mapping statement $statementId has unsupported statement_type '$($row['statement_type'])'") }
+        if ($row['statement_type'] -in @('sourced_fact', 'analysis')) {
             if (-not $row['claim_ids'] -or -not $row['source_locator']) { $errors.Add("factual statement $statementId needs claim_ids and source_locator") }
         }
+        if ($row['statement_type'] -eq 'source_metadata') {
+            if (-not $row['source_locator']) { $errors.Add("source metadata $statementId needs its exact metadata-field locator") }
+            if ($row['claim_ids']) { $errors.Add("source metadata $statementId must not be assigned unrelated claim_ids") }
+        }
         if ($row['statement_type'] -eq 'recommendation' -and -not $row['reason']) { $errors.Add("recommendation $statementId needs its rationale") }
+        if ($row['statement_type'] -eq 'accessibility_copy' -and (-not $row['visual_unit_id'] -or -not $row['related_statement_ids'])) { $errors.Add("accessibility copy $statementId needs visual_unit_id and related_statement_ids") }
+        if ($row['statement_type'] -in @('sourced_fact', 'analysis', 'recommendation', 'nonfactual') -and -not $row['visual_unit_id']) { $errors.Add("visual content $statementId needs visual_unit_id") }
+        if ($row['output_path'].ToLowerInvariant().EndsWith('.md') -and $row['statement_type'] -cne 'accessibility_copy' -and -not $row['visual_unit_id']) { $errors.Add("Markdown copy $statementId needs visual_unit_id") }
         if ($status -eq 'shortened' -and (-not $row['context_omitted'] -or -not $row['reason'])) { $errors.Add("shortened statement $statementId needs omitted context and reason") }
         $expected[$statementId] = @{ Path = $row['output_path'].Replace('\', '/'); Text = $row['output_text'] }
+        $rowsByStatement[$statementId] = $row
     }
 
     $declared = @{}
@@ -294,6 +328,60 @@ try {
         } elseif (-not $actual.Body.Contains($mapped.Text, [System.StringComparison]::Ordinal)) {
             $errors.Add("statement $statementId output_text does not match its marked output block")
         }
+    }
+
+    $visualUnits = @{}
+    $accessibilityRows = @{}
+    foreach ($row in $mapRows) {
+        $unit = $row['visual_unit_id']
+        if (-not $unit -or $row['status'] -eq 'omitted') { continue }
+        $unitKey = "$($row['output_path'])::$unit"
+        if ($row['statement_type'] -eq 'accessibility_copy') {
+            if (-not $accessibilityRows.ContainsKey($unitKey)) { $accessibilityRows[$unitKey] = [System.Collections.Generic.List[hashtable]]::new() }
+            $accessibilityRows[$unitKey].Add($row)
+        } else {
+            if (-not $visualUnits.ContainsKey($unitKey)) { $visualUnits[$unitKey] = [System.Collections.Generic.List[string]]::new() }
+            $visualUnits[$unitKey].Add($row['statement_id'])
+        }
+    }
+    foreach ($unitKey in $visualUnits.Keys) {
+        $unit = $unitKey.Substring($unitKey.LastIndexOf('::', [System.StringComparison]::Ordinal) + 2)
+        if (-not $accessibilityRows.ContainsKey($unitKey)) { $errors.Add("visual unit $unit has no accessibility_copy mapping row"); continue }
+        $accessRows = @($accessibilityRows[$unitKey])
+        if ($accessRows.Count -ne 1) { $errors.Add("visual unit $unit needs exactly one accessibility_copy mapping row") }
+        $expectedRelated = @($visualUnits[$unitKey] | Sort-Object -Unique)
+        foreach ($accessRow in $accessRows) {
+            $related = @($accessRow['related_statement_ids'] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+            if (Compare-Object -ReferenceObject $expectedRelated -DifferenceObject $related) { $errors.Add("accessibility_copy for visual unit $unit must reference every visual statement_id exactly") }
+        }
+    }
+    foreach ($unitKey in $accessibilityRows.Keys) {
+        if (-not $visualUnits.ContainsKey($unitKey)) { $errors.Add("accessibility_copy mapping $($accessibilityRows[$unitKey][0]['statement_id']) has no matching visual copy unit") }
+    }
+
+    foreach ($relative in $declared.Keys) {
+        if ([System.IO.Path]::GetExtension($declared[$relative]).ToLowerInvariant() -ne '.csv') { continue }
+        try {
+            $csvData = Read-StrictCsv -Path $declared[$relative]
+            $records = @($csvData.Records)
+            if ($records.Count -lt 2 -or @($records[0].Fields) -cnotcontains 'frame_id') { continue }
+            $headers = @($records[0].Fields)
+            $frameIndex = [Array]::IndexOf($headers, 'frame_id')
+            $statementIndex = [Array]::IndexOf($headers, 'statement_id')
+            $typeIndex = [Array]::IndexOf($headers, 'content_type')
+            for ($recordIndex = 1; $recordIndex -lt $records.Count; $recordIndex++) {
+                $fields = @($records[$recordIndex].Fields)
+                if ($fields.Count -ne $headers.Count) { continue }
+                $frameId = [string]$fields[$frameIndex]
+                $statementId = [string]$fields[$statementIndex]
+                $contentType = [string]$fields[$typeIndex]
+                if (-not $rowsByStatement.ContainsKey($statementId)) { continue }
+                $mappedRow = $rowsByStatement[$statementId]
+                if ($mappedRow['visual_unit_id'] -cne $frameId) { $errors.Add("$relative mapping for $statementId must use frame_id $frameId as visual_unit_id") }
+                if ($contentType -ceq 'accessibility_transcript' -and $mappedRow['statement_type'] -cne 'accessibility_copy') { $errors.Add("$relative accessibility_transcript $statementId must be mapped as accessibility_copy") }
+                if ($contentType -cne 'accessibility_transcript' -and $mappedRow['statement_type'] -ceq 'accessibility_copy') { $errors.Add("$relative accessibility_copy $statementId must use accessibility_transcript content_type") }
+            }
+        } catch { $errors.Add("$relative frame cross-check failed: $($_.Exception.Message)") }
     }
 } catch {
     $errors.Add($_.Exception.Message)
