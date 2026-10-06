@@ -41,8 +41,27 @@ CSV_PROVENANCE_COLUMNS = {
     "aspect_ratio",
     "status",
 }
+CSV_FRAME_COLUMNS = {
+    "frame_id",
+    "duration_seconds",
+    "content_type",
+    "visual_source",
+    "transformation",
+    "transition_intent",
+}
+MARKDOWN_PROVENANCE_FIELDS = {
+    "deliverable_id",
+    "parent_report_id",
+    "parent_report_version",
+    "parent_report_hash",
+    "source_claim_ids",
+    "transformation_type",
+    "dimensions",
+    "aspect_ratio",
+    "status",
+}
 MARKDOWN_MARKER = re.compile(r"<!--\s*statement_id:\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*-->")
-YAML_MARKER = re.compile(r"(?m)^\s*statement_id:\s*[\"']?([A-Za-z0-9][A-Za-z0-9._-]*)[\"']?\s*$")
+YAML_MARKER = re.compile(r"(?m)^\s*(?:-\s*)?statement_id:\s*[\"']?([A-Za-z0-9][A-Za-z0-9._-]*)[\"']?\s*$")
 JSON_MARKER = re.compile(r'"statement_id"\s*:\s*"([A-Za-z0-9][A-Za-z0-9._-]*)"')
 
 
@@ -102,6 +121,10 @@ def read_deliverable(path: Path) -> tuple[dict[str, str], list[str]]:
                 missing_provenance = sorted(CSV_PROVENANCE_COLUMNS - headers)
                 if missing_provenance:
                     errors.append(f"{path.name}: CSV deliverable is missing per-row provenance columns: {', '.join(missing_provenance)}")
+                if "frame_id" in headers:
+                    missing_frame_fields = sorted(CSV_FRAME_COLUMNS - headers)
+                    if missing_frame_fields:
+                        errors.append(f"{path.name}: frame CSV is missing production-plan columns: {', '.join(missing_frame_fields)}")
                 statements: dict[str, str] = {}
                 for number, row in enumerate(reader, start=2):
                     if None in row or any(value is None for value in row.values()):
@@ -118,6 +141,8 @@ def read_deliverable(path: Path) -> tuple[dict[str, str], list[str]]:
                     for column in CSV_PROVENANCE_COLUMNS:
                         if not (row.get(column) or "").strip():
                             errors.append(f"{path.name}: CSV row {number} has empty provenance field {column}")
+                    if (row.get("status") or "").strip() not in {"draft", "ready-for-approval"}:
+                        errors.append(f"{path.name}: CSV row {number} has an invalid release status")
                 return statements, errors
         except (OSError, UnicodeError, csv.Error) as exc:
             return {}, [f"{path.name}: cannot parse CSV deliverable: {exc}"]
@@ -128,6 +153,23 @@ def read_deliverable(path: Path) -> tuple[dict[str, str], list[str]]:
         return {}, [f"{path.name}: cannot read deliverable: {exc}"]
 
     if suffix == ".md":
+        lines = text.splitlines(keepends=True)
+        if not lines or lines[0].strip() != "---":
+            errors.append(f"{path.name}: Markdown deliverables need a YAML provenance header")
+        else:
+            end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+            if end is None:
+                errors.append(f"{path.name}: unterminated YAML provenance header")
+                text = ""
+            else:
+                header = "".join(lines[1:end])
+                for field in sorted(MARKDOWN_PROVENANCE_FIELDS):
+                    if not re.search(rf"(?m)^\s*{re.escape(field)}:\s*\S.*$", header):
+                        errors.append(f"{path.name}: provenance header is missing nonempty {field}")
+                status_match = re.search(r"(?m)^\s*status:\s*(\S+)\s*$", header)
+                if status_match and status_match.group(1) not in {"draft", "ready-for-approval"}:
+                    errors.append(f"{path.name}: provenance header has an invalid release status")
+                text = "".join(lines[end + 1 :])
         statements = {}
         for block in re.split(r"\n\s*\n", text):
             content = block.strip()
@@ -149,6 +191,16 @@ def read_deliverable(path: Path) -> tuple[dict[str, str], list[str]]:
     if suffix not in {".yaml", ".yml", ".json"}:
         return {}, [f"{path.name}: unsupported deliverable format {suffix or '(no extension)'}"]
     matches = list(marker_pattern.finditer(text))
+    if suffix in {".yaml", ".yml"}:
+        access_match = re.search(r"(?m)^accessibility_copy:\s*$", text)
+        if access_match:
+            next_top_level = re.search(r"(?m)^(?!accessibility_copy:)\S[^\r\n]*:\s*(?:\r?$)", text[access_match.end() :])
+            access_end = access_match.end() + next_top_level.start() if next_top_level else len(text)
+            access_block = text[access_match.end() : access_end]
+            item_count = len(re.findall(r"(?m)^\s*-\s+deliverable_id:\s*\S+", access_block))
+            item_ids = len(YAML_MARKER.findall(access_block))
+            if item_count != item_ids:
+                errors.append(f"{path.name}: every accessibility_copy item needs exactly one statement_id")
     statements = {}
     for index, match in enumerate(matches):
         statement_id = match.group(1)

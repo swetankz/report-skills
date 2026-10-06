@@ -58,12 +58,28 @@ Every deliverable file must carry its own parent identity, source claim IDs, tra
 
 The statement-level mapping schema adds `source_locator` and verbatim `output_text` to the fields below. Include one distinct row per factual occurrence at its exact location; do not bundle several outputs or accessibility strings into one row.
 
-Use unique `statement_id` markers on every copy unit: `<!-- statement_id: ST-001 -->` before each Markdown block, a `statement_id` field for every YAML/JSON text item, and a `statement_id` column for each CSV copy row. A CSV video plan uses one row per frame-copy unit (for example, `on_screen_copy`, `narration`, or `accessibility_transcript`) with frame ID, content type, exact text, and provenance columns repeated on each row. The statement register is drafted first and is the source from which those copy units are materialized.
+Use unique `statement_id` markers on every copy unit: `<!-- statement_id: ST-001 -->` before each Markdown block, a `statement_id` field for every YAML/JSON text item, and a `statement_id` column for each CSV copy row. Markdown files also need a populated YAML front-matter header containing all per-file provenance fields. A CSV video plan uses one row per frame-copy unit (for example, `on_screen_copy`, `narration`, or `accessibility_transcript`) with frame ID, duration, content type, exact text, visual source, transformation, transition intent, and provenance columns repeated on each row. Every factual source-note, title/scope, or cutoff row needs a nonempty exact claim/source ID and source locator; if none exists, omit the factual text or block completion. The statement register is drafted first and is the source from which those copy units are materialized.
+
+Use this front matter in each Markdown derivative and replace every placeholder with the exact available value (use `unknown` only when the source truly does not supply an immutable hash):
+
+```yaml
+---
+deliverable_id: "launch-post-4x5"
+parent_report_id: "synthetic-report"
+parent_report_version: "1.0"
+parent_report_hash: "unknown"
+source_claim_ids: ["SYN-S1", "SYN-S2"]
+transformation_type: "concise social launch copy"
+dimensions: "1080x1350 specification"
+aspect_ratio: "4:5"
+status: "draft"
+---
+```
 
 From the workspace root, run the validator over every copy-bearing deliverable and its map, for example:
 
 ```text
-python .benchmark_skill/report-content-repurposer/scripts/validate_derivative_package.py --artifacts-root artifacts --mapping artifacts/claim-mapping.csv --deliverable launch-post.md --deliverable carousel.md --deliverable video-frames.csv --deliverable derivative-manifest.yaml
+pwsh -NoProfile -File .benchmark_skill/report-content-repurposer/scripts/validate_derivative_package.ps1 -ArtifactsRoot artifacts -Mapping artifacts/claim-mapping.csv -Deliverables "launch-post.md,carousel.md,video-frames.csv,derivative-manifest.yaml"
 ```
 
 Adjust the deliverable list to include every file containing output copy. A nonzero exit blocks a `pass`; repair the issue and rerun the same full command.
