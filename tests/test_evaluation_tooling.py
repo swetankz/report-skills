@@ -5,6 +5,7 @@ import copy
 import hashlib
 import io
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1950,6 +1951,224 @@ class EvaluationToolingTests(unittest.TestCase):
                             )
                         )
                     )
+
+    def test_task_trace_computed_parent_accepts_inert_regex_operands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            for operator in (
+                "-match", "-notmatch", "-cmatch", "-imatch", "-cnotmatch", "-inotmatch",
+            ):
+                for pattern in (
+                    "DirectoryInfo.Parent|Get-Location|Split-Path -Parent",
+                    "quoted''word|DirectoryInfo.Parent",
+                    "backslash\\|backtick`|DirectoryInfo.Parent",
+                ):
+                    command = (
+                        "Get-Content fixture/validator.ps1 | Where-Object { "
+                        f"$_ {operator} '{pattern}' }}"
+                    )
+                    with self.subTest(operator=operator, pattern=pattern):
+                        transcript_path.write_text(
+                            json.dumps({
+                                "type": "item.completed",
+                                "item": {"type": "command_execution", "command": command},
+                            }) + "\n",
+                            encoding="utf-8",
+                        )
+                        self.assertEqual(
+                            task_trace_isolation_validation_errors(transcript_path), []
+                        )
+
+    def test_task_trace_computed_parent_accepts_serialized_source_search(self) -> None:
+        # Synthetic local paths replace personal paths, but the shell-serialized
+        # quote sequence is the source-search command's exact regression shape.
+        command = json.loads(r'''{"command": "\"C:\\\\runtime\\\\pwsh.exe\" -Command '$lines = [System.IO.File]::ReadAllLines('\"'.benchmark_skill/report-content-repurposer/scripts/validate_derivative_package.ps1'); \"'$lines | Select-Object -First 120; $lines | Where-Object { $_ -match '\"'\"'^function |''^'\"\\\\s*\\\\\"'$required|''^'\"\\\\s*\\\\\"'$allowed|GetRelativePath|Get-Command|Get-Location|Directory.GetParent|DirectoryInfo.Parent|Split-Path|Get-Module|Invoke-Web|Start-Process|Get-Process|'\"\\\\\"'$env:|SourceContract'\"' }\""}''')["command"]
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            transcript_path.write_text(
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {"type": "command_execution", "command": command},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(task_trace_isolation_validation_errors(transcript_path), [])
+
+    def test_task_trace_computed_parent_regex_exclusion_fails_closed(self) -> None:
+        unsafe_commands = (
+            "(Get-Location).Parent.GetFiles()",
+            "(Get-Item .).Parent.GetFiles()",
+            "[IO.Directory]::GetParent('.')",
+            "[IO.DirectoryInfo]::new('.').Parent",
+            "Split-Path -Parent fixture",
+            "$_ -match 'DirectoryInfo.Parent'; (Get-Location).Parent",
+            "$_ -match 'DirectoryInfo.Parent'; Split-Path -Parent fixture",
+            "$_ -match \"$((Get-Location).Parent)\"",
+            "$_ -match 'DirectoryInfo.Parent' + (Get-Location).Parent",
+            "$_ -match 'DirectoryInfo.Parent",
+            "$_ -match @'\nDirectoryInfo.Parent\n'@",
+            "Invoke-Expression \"'source' -match 'DirectoryInfo.Parent'\"",
+            "iex 'Split-Path -Parent fixture'; $_ -match 'DirectoryInfo.Parent'",
+            "[ScriptBlock]::Create(\"'source' -match 'DirectoryInfo.Parent'\").Invoke()",
+            "$script = \"'source' -match 'DirectoryInfo.Parent'\"; & $executor $script",
+            "pwsh -Command \"$_ -match 'DirectoryInfo.Parent'; (Get-Location).Parent\"",
+            "bash -lc \"pwsh -Command \\\"$_ -match 'DirectoryInfo.Parent'; Split-Path -Parent fixture\\\"\"",
+            "$_ -match ('DirectoryInfo.Parent')",
+            "$_ -match $pattern # DirectoryInfo.Parent",
+            "$_ -match 'DirectoryInfo.Parent'; Get-Content ../secret.txt",
+            "$_ -match 'DirectoryInfo.Parent'; git status",
+            "$_ -match 'DirectoryInfo.Parent'; Get-ChildItem Env:",
+            "$_ -match 'DirectoryInfo.Parent'; Get-Command ruby",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            for command in unsafe_commands:
+                with self.subTest(command=command):
+                    transcript_path.write_text(
+                        json.dumps({
+                            "type": "item.completed",
+                            "item": {"type": "command_execution", "command": command},
+                        }) + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(task_trace_isolation_validation_errors(transcript_path))
+
+    def test_task_trace_computed_parent_accepts_only_constant_expression_spans(self) -> None:
+        commands = (
+            "$value -match 'DirectoryInfo.Parent'",
+            "{ $_ -MATCH 'DirectoryInfo.Parent' }",
+            "if ($value -notmatch 'DirectoryInfo.Parent') { Write-Output ok }",
+            "if ($value\n -CMATCH\n 'DirectoryInfo.Parent') { Write-Output ok }",
+            "$value -match 'DirectoryInfo.Parent'; Write-Output ok",
+            "$value -match 'DirectoryInfo.Parent'; $other -inotmatch 'Split-Path -Parent'",
+            "$value -match 'DirectoryInfo.Parent\\'",
+            "$value -match 'DirectoryInfo.Parent`'",
+            "$value -match 'single''quote|DirectoryInfo.Parent'",
+            "$value -match 'IEX|Start-Process|pwsh|DirectoryInfo.Parent'",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            for command in commands:
+                with self.subTest(command=command):
+                    transcript_path.write_text(
+                        json.dumps({
+                            "type": "item.completed",
+                            "item": {"type": "command_execution", "command": command},
+                        }) + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertEqual(task_trace_isolation_validation_errors(transcript_path), [])
+
+    def test_task_trace_computed_parent_serialized_envelope_is_complete(self) -> None:
+        safe_payload = (
+            "Get-Content fixture/validator.ps1 | Where-Object { "
+            "$_ -match 'DirectoryInfo.Parent' }"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+
+            def errors_for(command: str) -> list[str]:
+                transcript_path.write_text(
+                    json.dumps({
+                        "type": "item.completed",
+                        "item": {"type": "command_execution", "command": command},
+                    }) + "\n",
+                    encoding="utf-8",
+                )
+                return task_trace_isolation_validation_errors(transcript_path)
+
+            for executable in ("pwsh", "powershell.exe", '"C:/runtime/pwsh.exe"'):
+                for flag in ("-Command", "-c"):
+                    command = f"{executable} {flag} {shlex.quote(safe_payload)}"
+                    with self.subTest(command=command):
+                        self.assertEqual(errors_for(command), [])
+                    for actual_parent in (
+                        "(Get-Location).Parent", "(Get-Item .).Parent",
+                        "[IO.Directory]::GetParent('.')", "Split-Path -Parent fixture",
+                    ):
+                        for payload in (
+                            f"{actual_parent}; {safe_payload}",
+                            f"{safe_payload}; {actual_parent}",
+                        ):
+                            command = f"{executable} {flag} {shlex.quote(payload)}"
+                            with self.subTest(command=command):
+                                self.assertTrue(errors_for(command))
+
+            for command in (
+                f"unknown.exe -Command {shlex.quote(safe_payload)}",
+                f"pwsh -NoProfile -Command {shlex.quote(safe_payload)}",
+                f"pwsh -Command {shlex.quote(safe_payload)} extra",
+                f'pwsh -Command {shlex.quote(safe_payload)}"$EXTRA"',
+                f'pwsh -Command {shlex.quote(safe_payload)}"${{EXTRA}}"',
+                f"pwsh -Command {shlex.quote(safe_payload)}$EXTRA",
+                f'"$BIN/pwsh.exe" -Command {shlex.quote(safe_payload)}',
+                f'"${{BIN}}/pwsh.exe" -Command {shlex.quote(safe_payload)}',
+                f"pwsh -Command {shlex.quote(safe_payload)}; (Get-Location).Parent",
+                f"(Get-Location).Parent; pwsh -Command {shlex.quote(safe_payload)}",
+                'pwsh -Command "$_ -match \'DirectoryInfo.Parent\'"',
+                'pwsh -Command "$_ -match \'$((Get-Location).Parent)\'"',
+                'pwsh -EncodedCommand "$_ -match \'DirectoryInfo.Parent\'"',
+                "pwsh -Command '$_ -match 'DirectoryInfo.Parent",
+                "$_ -match 'DirectoryInfo.Parent'; pwsh -Command 'Write-Output ok'",
+                "$_ -match 'DirectoryInfo.Parent'; Invoke-Expression $script",
+                "$_ -match 'DirectoryInfo.Parent'; [ScriptBlock]::Create($script).Invoke()",
+                "$_ -match 'DirectoryInfo.Parent'; & $script",
+                "$_ -match 'DirectoryInfo.Parent'; & ($script)",
+                "$_ -match 'DirectoryInfo.Parent'; . $script",
+                "$_ -match 'DirectoryInfo.Parent'; & \"$runner\" $source",
+                "$_ -match 'DirectoryInfo.Parent'; & 'fixture/runner.ps1' $source",
+                "$_ -match 'DirectoryInfo.Parent'; . 'fixture/runner.ps1'",
+                "$_ -match 'DirectoryInfo.Parent'; I`EX $source",
+                '"$(I`EX $source)"; $_ -match \'DirectoryInfo.Parent\'',
+                "$source=[IO.File]::ReadAllText('fixture/parent-script.txt'); "
+                "if ($source -match 'directory]::getparent') { ([scriptblock]$source).Invoke() }",
+                "$_ -match 'DirectoryInfo.Parent'; ([System.Management.Automation.ScriptBlock]$source).InvokeReturnAsIs()",
+                "$_ -match 'DirectoryInfo.Parent'; { (& ([scriptblock]$source)) }",
+                "$_ -match 'DirectoryInfo.Parent'; (& $source)",
+                "$_ -match 'DirectoryInfo.Parent'; $delegate.Invoke()",
+                "$_ -match 'DirectoryInfo.Parent'; $command.GetScriptBlock()",
+                "$_ -match 'DirectoryInfo.Parent'; $ExecutionContext.InvokeCommand.NewScriptBlock($source)",
+                "Some-Cmdlet -match 'DirectoryInfo.Parent'",
+                "Write-Output $value -match 'DirectoryInfo.Parent'",
+                "$global:value -match 'DirectoryInfo.Parent'",
+                "$value.member -match 'DirectoryInfo.Parent'",
+                "$value[0] -match 'DirectoryInfo.Parent'",
+                "$value -match 'DirectoryInfo.Parent'.ToString()",
+                "$value -match 'DirectoryInfo.Parent' + ''",
+            ):
+                with self.subTest(command=command):
+                    self.assertTrue(errors_for(command))
+
+    def test_task_trace_computed_parent_exclusion_preserves_other_guards(self) -> None:
+        innocent = "$_ -match 'DirectoryInfo.Parent'"
+        unsafe_commands = (
+            ("git status", "Git command"),
+            ("Get-Content .git/HEAD", "Git metadata path"),
+            ("Get-Content ../secret.txt", "parent path traversal"),
+            (str(REPO_ROOT / "fixture" / "secret.txt"), "candidate repository path"),
+            ("Remove-Item Env:GIT_CEILING_DIRECTORIES", "Git isolation override"),
+            ("Get-Process | Select-Object Path", "process inspection"),
+            ("Get-ChildItem Env:", "environment enumeration"),
+            ("Get-Command ruby", "host capability discovery"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            for unsafe, violation in unsafe_commands:
+                with self.subTest(command=unsafe):
+                    transcript_path.write_text(
+                        json.dumps({
+                            "type": "item.completed",
+                            "item": {
+                                "type": "command_execution",
+                                "command": f"{innocent}; {unsafe}",
+                            },
+                        }) + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(any(
+                        violation in error
+                        for error in task_trace_isolation_validation_errors(transcript_path)
+                    ))
 
     def test_task_trace_rejects_host_capability_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
