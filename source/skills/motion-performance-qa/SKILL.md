@@ -81,7 +81,7 @@ Always include a reproducible reduced-motion validation procedure in the report,
 
 1. Capture frame timestamps or intervals during a controlled startup, scroll, or interaction fixture.
 2. Keep the route, viewport, input pattern, duration, browser state, and build hash fixed across comparisons.
-3. Run `python scripts/summarize_frame_intervals.py <trace-file>` to calculate deterministic interval statistics.
+3. Resolve the bundled [scripts/summarize_frame_intervals.py](scripts/summarize_frame_intervals.py) from the directory containing the activated `SKILL.md`, using the skill path supplied by the host, not from the task's working directory. Run `python "<resolved-helper-path>" "<trace-file>"` to calculate deterministic interval statistics. Keep the trace path relative to the task workspace; do not write task artifacts into the installed skill.
 4. Report sample count, median, 95th percentile, maximum, and threshold exceedances together with environment variance.
 5. Use the synthetic fixture thresholds only for that controlled fixture: no reveal gap above 100 ms after loader dismissal and a 95th-percentile frame interval no higher than 33.4 ms.
 6. Do not present fixture thresholds as universal smoothness guarantees or compare unlike devices without qualification.

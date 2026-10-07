@@ -134,10 +134,11 @@ status: "draft"
 
 When the approved source file is present, compute its SHA-256 once and reuse that exact hash in the manifest, every Markdown header, and every row of every CSV deliverable. The validator must receive the source file path so it can compare the source bytes with the manifest and derivative metadata; a manifest hash that disagrees with the file, or an `unknown` derivative hash while the file is available, blocks completion.
 
-From the workspace root, run the validator over every copy-bearing deliverable and its map, for example:
+Resolve the bundled `scripts/validate_derivative_package.ps1` from the directory containing the activated `SKILL.md`, using the skill path supplied by the host, not from this reference's directory or the task's working directory. Set `$repurposerSkillRoot` to that actual skill directory. Keep input and artifact paths relative to the task workspace; do not write task artifacts into the installed skill. From the workspace root, run the validator over every copy-bearing deliverable and its map, for example:
 
-```text
-pwsh -NoProfile -File .benchmark_skill/report-content-repurposer/scripts/validate_derivative_package.ps1 -ArtifactsRoot artifacts -Mapping artifacts/claim-mapping.csv -Deliverables "launch-post.md,carousel.md,video-frames.csv,derivative-manifest.yaml" -SourceReport fixture/inputs/complete-report.md -SourceInventory artifacts/source-inventory.json -StatementSupport artifacts/statement-support.csv
+```powershell
+$validator = Join-Path $repurposerSkillRoot 'scripts/validate_derivative_package.ps1'
+pwsh -NoProfile -File $validator -ArtifactsRoot artifacts -Mapping artifacts/claim-mapping.csv -Deliverables "launch-post.md,carousel.md,video-frames.csv,derivative-manifest.yaml" -SourceReport fixture/inputs/complete-report.md -SourceInventory artifacts/source-inventory.json -StatementSupport artifacts/statement-support.csv
 ```
 
 Adjust the deliverable list to include every file containing output copy. A nonzero exit blocks a `pass`; repair the issue and rerun the same full command.
