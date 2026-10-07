@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 import hashlib
 import unicodedata
 from dataclasses import dataclass
@@ -45,7 +46,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v48"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v49"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -817,6 +818,11 @@ def model_isolation_profile_validation_errors(
     probe_hash = profile.get("model_isolation_prompt_probe_sha256")
     if not isinstance(probe_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", probe_hash):
         errors.append(f"{label} has an invalid prompt-isolation probe hash")
+    if "selected_model_metadata" in profile:
+        try:
+            _validate_selected_model_metadata(profile)
+        except EvaluationError as error:
+            errors.append(f"{label}: {error}")
     return errors
 
 
@@ -3028,6 +3034,214 @@ def _codex_model_isolation_prompt_probe(
     }
 
 
+def selected_model_metadata_sha256(value: Any) -> str:
+    """Preserve the existing full selected-object digest, including ASCII escaping."""
+
+    try:
+        payload = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as error:
+        raise EvaluationError(f"Invalid selected model metadata: {error}") from error
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _validate_selected_model_metadata(profile: dict[str, Any]) -> None:
+    selected = profile.get("selected_model_metadata")
+    if not isinstance(selected, dict) or selected.get("slug") != profile.get("model"):
+        raise EvaluationError("Missing or mismatched exact selected model metadata")
+    if selected_model_metadata_sha256(selected) != profile.get("selected_model_sha256"):
+        raise EvaluationError("Selected model metadata does not match its full-object SHA256")
+
+
+def _strict_profile_json(text: str, label: str) -> dict[str, Any]:
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                raise EvaluationError(f"{label} contains duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    def constant(value: str) -> None:
+        raise EvaluationError(f"{label} contains a nonfinite JSON value: {value}")
+
+    try:
+        value = json.loads(text, object_pairs_hook=pairs, parse_constant=constant)
+        # Also rejects finite-looking JSON numbers that overflow to infinity.
+        json.dumps(value, allow_nan=False)
+    except (ValueError, TypeError, RecursionError) as error:
+        raise EvaluationError(f"Invalid {label}: {error}") from error
+    if not isinstance(value, dict):
+        raise EvaluationError(f"{label} must be a JSON object")
+    return value
+
+
+def _private_profile_path(path: Path) -> Path:
+    """Limit model metadata and anchors to the local ignored .build tree."""
+
+    root = REPO_ROOT.absolute()
+    candidate = path.absolute()
+    if ".." in candidate.parts:
+        raise EvaluationError("Private profile paths must not contain parent traversal")
+    try:
+        relative = candidate.relative_to(root / ".build")
+    except ValueError as error:
+        raise EvaluationError("Profile anchors and diagnostics must stay inside ignored .build") from error
+    if not relative.parts:
+        raise EvaluationError("A private profile file path is required")
+    # Check lexical ancestors before resolve(), which would hide a link escape.
+    for entry in (candidate, *candidate.parents):
+        try:
+            info = entry.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise EvaluationError(f"Cannot inspect private profile path: {error}") from error
+        if entry.is_symlink() or bool(getattr(info, "st_file_attributes", 0) & 0x400):
+            raise EvaluationError("Private profile paths must not use links or reparse points")
+        if entry != candidate and not stat.S_ISDIR(info.st_mode):
+            raise EvaluationError("Private profile ancestors must be regular directories")
+    if not is_relative_to(candidate, root / ".build"):
+        raise EvaluationError("Private profile path escapes ignored .build")
+    return candidate
+
+
+def _profile_anchor_bytes(path: Path) -> bytes:
+    path = _private_profile_path(path)
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4 * 1024 * 1024:
+            raise EvaluationError("Profile anchor must be a bounded regular file")
+        raw = path.read_bytes()
+        _private_profile_path(path)
+        if len(raw) > 4 * 1024 * 1024:
+            raise EvaluationError("Profile anchor exceeds the size limit")
+        return raw
+    except OSError as error:
+        raise EvaluationError(f"Cannot read profile anchor: {error}") from error
+
+
+def _validate_profile_anchor_record(value: dict[str, Any]) -> None:
+    keys = {"schema_version", "kind", "evaluation_method_version", "execution_profile",
+            "repository", "qualification_or_publication_authority"}
+    if set(value) != keys or value.get("schema_version") != "1.0" or value.get("kind") != "evaluation-profile-anchor":
+        raise EvaluationError("Invalid profile anchor schema or kind")
+    if value.get("evaluation_method_version") != EVALUATION_METHOD_VERSION:
+        raise EvaluationError("Profile anchor has a different evaluation method")
+    if value.get("qualification_or_publication_authority") is not False:
+        raise EvaluationError("A technical profile anchor cannot supply approval or qualification")
+    profile, repository = value.get("execution_profile"), value.get("repository")
+    if not isinstance(profile, dict) or not isinstance(repository, dict):
+        raise EvaluationError("Profile anchor is missing profile or repository identity")
+    if any(not isinstance(profile.get(key), str) or not profile[key].strip() for key in PROFILE_IDENTITY_KEYS):
+        raise EvaluationError("Profile anchor has incomplete execution identity")
+    for key in ("codex_command_sha256", "codex_implementation_sha256", "codex_managed_environment_sha256",
+                "selected_model_sha256", "model_isolation_prompt_probe_sha256"):
+        if re.fullmatch(r"[0-9a-f]{64}", profile[key]) is None:
+            raise EvaluationError(f"Profile anchor has invalid {key}")
+    if profile.get("codex_invocation") != CODEX_INVOCATION_MODE or profile.get("codex_timeout_enforcement") != CODEX_TIMEOUT_ENFORCEMENT_MODE:
+        raise EvaluationError("Profile anchor has unsupported native invocation or deadline enforcement")
+    errors = model_isolation_profile_validation_errors(profile, "Profile anchor")
+    if errors:
+        raise EvaluationError("; ".join(errors))
+    _validate_selected_model_metadata(profile)
+    selected = profile["selected_model_metadata"]
+    supported = selected.get("supported_reasoning_levels")
+    if not isinstance(supported, list) or not any(isinstance(row, dict) and row.get("effort") == profile["reasoning_effort"] for row in supported):
+        raise EvaluationError("Profile anchor reasoning effort is not advertised by selected metadata")
+    speeds, tiers = selected.get("additional_speed_tiers"), selected.get("service_tiers")
+    if not ((isinstance(speeds, list) and MODEL_SERVICE_TIER in speeds) or
+            (isinstance(tiers, list) and any(isinstance(row, dict) and row.get("id") in {"fast", "priority"} for row in tiers))):
+        raise EvaluationError("Profile anchor Fast tier is not advertised by selected metadata")
+    if repository.get("dirty") is not False or any(not isinstance(repository.get(key), str) or
+            re.fullmatch(r"[0-9a-f]{40,64}", repository[key]) is None for key in ("commit", "tree")):
+        raise EvaluationError("Profile anchor requires a clean commit/tree identity")
+    raw_root = repository.get("root")
+    if not isinstance(raw_root, str) or Path(raw_root).resolve() != REPO_ROOT.resolve():
+        raise EvaluationError("Profile anchor belongs to a different candidate checkout")
+
+
+def execution_profile_anchor_document(profile: dict[str, Any], repository: dict[str, Any]) -> dict[str, Any]:
+    value = {"schema_version": "1.0", "kind": "evaluation-profile-anchor",
+             "evaluation_method_version": EVALUATION_METHOD_VERSION,
+             "execution_profile": profile, "repository": repository,
+             "qualification_or_publication_authority": False}
+    _validate_profile_anchor_record(value)
+    return value
+
+
+def write_private_profile_json_exclusive(path: Path, value: dict[str, Any]) -> Path:
+    """Write private technical metadata exactly once, never replacing evidence."""
+
+    target = _private_profile_path(path)
+    try:
+        text = json.dumps(value, ensure_ascii=True, indent=2, allow_nan=False) + "\n"
+        if len(text.encode("utf-8")) > 4 * 1024 * 1024:
+            raise EvaluationError("Private profile record exceeds the size limit")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _private_profile_path(target)
+        with target.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _private_profile_path(target)
+    except (OSError, TypeError, ValueError) as error:
+        raise EvaluationError(f"Cannot create exclusive private profile record: {error}") from error
+    return target
+
+
+def load_execution_profile_anchor(path: Path | None, expected_sha256: str | None) -> dict[str, Any]:
+    if path is None or not isinstance(expected_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+        raise EvaluationError("Live evaluation requires --profile-anchor and its exact --profile-anchor-sha256")
+    raw = _profile_anchor_bytes(path)
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise EvaluationError("Profile anchor file does not match its pinned SHA256")
+    try:
+        value = _strict_profile_json(raw.decode("utf-8"), "profile anchor")
+    except UnicodeError as error:
+        raise EvaluationError(f"Profile anchor is not UTF-8: {error}") from error
+    _validate_profile_anchor_record(value)
+    value["_anchor_path"] = str(path.absolute())
+    value["_anchor_sha256"] = expected_sha256
+    return value
+
+
+def require_requested_profile_anchor(anchor: dict[str, Any], model: str | None, reasoning_effort: str | None) -> None:
+    """Reject configured request/candidate drift before any native discovery."""
+
+    expected = anchor["execution_profile"]
+    if model != expected["model"] or reasoning_effort != expected["reasoning_effort"]:
+        raise EvaluationError("Configured model or reasoning effort does not match the pinned profile anchor")
+    require_unchanged_repository(anchor["repository"])
+
+
+def preserve_execution_profile_discovery(anchor: dict[str, Any], profile: dict[str, Any], repository: dict[str, Any], label: str) -> Path:
+    """Keep actual metadata privately even when the following comparison rejects it."""
+
+    anchor_path = Path(anchor["_anchor_path"])
+    safe_label = re.sub(r"[^a-z0-9-]+", "-", label.casefold()).strip("-")[:64] or "stage"
+    target = anchor_path.parent / (anchor_path.name + ".discoveries") / f"{safe_label}-{uuid.uuid4().hex}.json"
+    return write_private_profile_json_exclusive(target, {
+        "schema_version": "1.0", "kind": "execution-profile-discovery-diagnostic",
+        "evaluation_method_version": EVALUATION_METHOD_VERSION, "stage": label,
+        "profile_anchor_sha256": anchor["_anchor_sha256"], "recorded_at": utc_now(),
+        "execution_profile": profile, "repository": repository,
+        "qualification_or_publication_authority": False,
+    })
+
+
+def require_execution_profile_anchor(anchor: dict[str, Any], profile: dict[str, Any], repository: dict[str, Any], label: str) -> None:
+    # Re-read after discovery. A changed but well-formed anchor must not silently
+    # rebase the candidate while a model-free probe is running.
+    reloaded = load_execution_profile_anchor(Path(anchor["_anchor_path"]), anchor["_anchor_sha256"])
+    if reloaded != anchor:
+        raise EvaluationError("Profile anchor changed during native discovery")
+    _validate_selected_model_metadata(profile)
+    require_matching_context(anchor["execution_profile"], anchor["repository"], profile, repository, label)
+    if repository.get("root") != anchor["repository"].get("root"):
+        raise EvaluationError("Profile discovery used a different candidate checkout")
+    require_unchanged_repository(repository)
+
+
 def codex_execution_profile(codex_command: str, model: str, reasoning_effort: str) -> dict[str, Any]:
     """Verify and record the exact Codex CLI/model profile used for live calls."""
 
@@ -3131,12 +3345,14 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
             "Cannot verify the live Codex model catalog: "
             + (catalog_result.stderr.strip() or catalog_result.stdout.strip())
         )
-    try:
-        catalog = json.loads(catalog_result.stdout)
-    except json.JSONDecodeError as exc:
-        raise EvaluationError(f"Codex returned an invalid model catalog: {exc}") from exc
+    catalog = _strict_profile_json(catalog_result.stdout, "Codex model catalog")
     entries = catalog.get("models", []) if isinstance(catalog, dict) else []
-    selected = next((item for item in entries if item.get("slug") == model), None)
+    if not isinstance(entries, list) or any(not isinstance(item, dict) for item in entries):
+        raise EvaluationError("Codex returned an invalid model inventory")
+    matches = [item for item in entries if item.get("slug") == model]
+    if len(matches) > 1:
+        raise EvaluationError(f"Codex returned an ambiguous selected model: {model}")
+    selected = matches[0] if matches else None
     if selected is None:
         raise EvaluationError(f"Pinned model is not available in the live Codex catalog: {model}")
     supported = {
@@ -3184,7 +3400,6 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
         sort_keys=True,
         separators=(",", ":"),
     )
-    selected_json = json.dumps(selected, sort_keys=True, separators=(",", ":"))
     return {
         "model": model,
         "reasoning_effort": reasoning_effort,
@@ -3204,7 +3419,10 @@ def codex_execution_profile(codex_command: str, model: str, reasoning_effort: st
             managed_environment_json.encode("utf-8")
         ).hexdigest(),
         "model_catalog_sha256": hashlib.sha256(catalog_result.stdout.encode("utf-8")).hexdigest(),
-        "selected_model_sha256": hashlib.sha256(selected_json.encode("utf-8")).hexdigest(),
+        "selected_model_sha256": selected_model_metadata_sha256(selected),
+        # Private evidence only. Retain the exact object hashed above, not a
+        # hand-selected projection that could hide an execution-relevant change.
+        "selected_model_metadata": selected,
         "model_default_reasoning_effort": str(selected.get("default_reasoning_level")),
         "model_supported_reasoning_efforts": sorted(value for value in supported if value),
         "model_isolation_prompt_probe": isolation_prompt_probe["method"],

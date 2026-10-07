@@ -20,9 +20,13 @@ from evaluation_common import (
     codex_execution_profile,
     file_sha256,
     find_codex_command,
+    load_execution_profile_anchor,
     load_json,
     normalize_suite,
+    preserve_execution_profile_discovery,
     repository_receipt,
+    require_execution_profile_anchor,
+    require_requested_profile_anchor,
     require_unchanged_repository,
     timestamp_id,
     utc_now,
@@ -60,8 +64,16 @@ def _run_stage_command(command: list[str], label: str) -> None:
         raise EvaluationError(f"{label} failed with exit code {result.returncode}")
 
 
-def _common_profile_arguments(codex_command: str) -> list[str]:
+def _common_profile_arguments(
+    codex_command: str,
+    profile_anchor: Path,
+    profile_anchor_sha256: str,
+) -> list[str]:
     return [
+        "--profile-anchor",
+        str(profile_anchor.resolve()),
+        "--profile-anchor-sha256",
+        profile_anchor_sha256,
         "--codex-command",
         codex_command,
         "--model",
@@ -80,13 +92,17 @@ def run_gate1_model_sequence(
     execution_profile: dict[str, Any],
     repository: dict[str, Any],
     completed_call_ids: list[str],
+    profile_anchor: Path,
+    profile_anchor_sha256: str,
 ) -> None:
     """Execute trigger, then five task/grader pairs with semantic checks between pairs."""
 
     stages_root = gate1_root / GATE1_STAGES_DIRECTORY
     trigger_root = stages_root / GATE1_TRIGGER_STAGE_DIRECTORY
     python = str(Path(sys.executable).resolve())
-    profile_arguments = _common_profile_arguments(codex_command)
+    profile_arguments = _common_profile_arguments(
+        codex_command, profile_anchor, profile_anchor_sha256
+    )
     trigger_command = [
         python,
         str((REPO_ROOT / "scripts" / "run_trigger_evals.py").resolve()),
@@ -181,6 +197,8 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-id")
     parser.add_argument("--codex-command")
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--profile-anchor", type=Path, help="Pinned private execution-profile anchor; required with --execute")
+    parser.add_argument("--profile-anchor-sha256", help="Expected SHA-256 of the profile anchor; required with --execute")
     parser.add_argument("--show-plan", action="store_true")
     return parser
 
@@ -191,6 +209,12 @@ def main() -> int:
     master_sha256: str | None = None
     completed_call_ids: list[str] = []
     try:
+        anchor = (
+            load_execution_profile_anchor(args.profile_anchor, args.profile_anchor_sha256)
+            if args.execute else None
+        )
+        if args.execute:
+            require_requested_profile_anchor(anchor, GATE1_MODEL, GATE1_REASONING_EFFORT)
         if args.plan.resolve() != DEFAULT_GATE1_PLAN.resolve():
             raise EvaluationError(
                 "Gate 1 orchestration requires the tracked gate1-release-plan.json"
@@ -225,7 +249,9 @@ def main() -> int:
         execution_profile = codex_execution_profile(
             codex_command, GATE1_MODEL, GATE1_REASONING_EFFORT
         )
-        repository = repository_receipt(require_clean=True)
+        repository = repository_receipt(require_clean=False)
+        preserve_execution_profile_discovery(anchor, execution_profile, repository, "gate1-master")
+        require_execution_profile_anchor(anchor, execution_profile, repository, "Gate 1 master")
         gate1_root.mkdir(parents=True)
         master = gate1_master_plan_document(
             plan,
@@ -248,6 +274,8 @@ def main() -> int:
             execution_profile,
             repository,
             completed_call_ids,
+            args.profile_anchor,
+            args.profile_anchor_sha256,
         )
         require_unchanged_repository(repository)
         summary = gate1_summary_document(

@@ -51,13 +51,17 @@ from evaluation_common import (
     execution_receipt_validation_errors,
     find_codex_command,
     fixture_csv_validation_errors,
+    load_execution_profile_anchor,
     load_json,
     normalize_suite,
     partition_task_artifact_validation_errors,
     persisted_run_plan_row,
+    preserve_execution_profile_discovery,
     repository_receipt,
+    require_execution_profile_anchor,
     require_isolated_model_invocation,
     require_pinned_profile,
+    require_requested_profile_anchor,
     require_unchanged_repository,
     resolve_suite,
     run_codex,
@@ -719,6 +723,8 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Print the run plan without invoking Codex (default)")
     parser.add_argument("--show-plan", action="store_true", help="Include every observation in dry-run JSON")
     parser.add_argument("--execute", action="store_true", help="Deliberately launch the planned Codex runs")
+    parser.add_argument("--profile-anchor", type=Path, help="Pinned private execution-profile anchor; required with --execute")
+    parser.add_argument("--profile-anchor-sha256", help="Expected SHA-256 of the profile anchor; required with --execute")
     parser.add_argument("--codex-command", help="Codex CLI executable name or path")
     parser.add_argument("--model", help="Model shared by every configuration; required with --execute")
     parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS, help="Reasoning effort shared by every configuration")
@@ -738,6 +744,12 @@ def main() -> int:
     if args.execute and args.dry_run:
         raise SystemExit("Choose either --dry-run or --execute, not both")
     try:
+        anchor = (
+            load_execution_profile_anchor(args.profile_anchor, args.profile_anchor_sha256)
+            if args.execute else None
+        )
+        if args.execute:
+            require_requested_profile_anchor(anchor, args.model, args.reasoning_effort)
         if args.execute and args.timeout != CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS:
             raise EvaluationError(
                 "Release task execution requires the canonical "
@@ -835,7 +847,9 @@ def main() -> int:
         execution_profile = codex_execution_profile(
             codex_command, str(args.model), str(args.reasoning_effort)
         )
-        repo_receipt = repository_receipt(require_clean=True)
+        repo_receipt = repository_receipt(require_clean=False)
+        preserve_execution_profile_discovery(anchor, execution_profile, repo_receipt, "behavioral-task")
+        require_execution_profile_anchor(anchor, execution_profile, repo_receipt, "Behavioral task")
         plan_document["execution_profile"] = execution_profile
         plan_document["repository"] = repo_receipt
         suite_run_dir.mkdir(parents=True)
