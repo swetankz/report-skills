@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -118,6 +118,30 @@ import grade_behavioral_benchmark  # noqa: E402
 import run_behavioral_benchmark  # noqa: E402
 import run_blind_comparisons  # noqa: E402
 import run_trigger_evals  # noqa: E402
+
+
+def main_with_isolated_profile_anchor(module) -> int:
+    """Keep older feature-isolation tests focused on their original contracts.
+
+    The real fail-closed anchor loader, discovery retention, and driver ordering
+    have their own non-bypassed synthetic coverage in test_profile_anchor.py.
+    These existing tests already mock native discovery/model calls and use
+    deliberately incomplete execution-profile fixtures.
+    """
+
+    with ExitStack() as stack:
+        argv = list(sys.argv)
+        if "--execute" in argv:
+            argv.extend([
+                "--profile-anchor", "synthetic-private-anchor-not-loaded.json",
+                "--profile-anchor-sha256", "a" * 64,
+            ])
+        stack.enter_context(patch.object(sys, "argv", argv))
+        stack.enter_context(patch.object(module, "load_execution_profile_anchor", return_value={}))
+        stack.enter_context(patch.object(module, "require_requested_profile_anchor"))
+        stack.enter_context(patch.object(module, "preserve_execution_profile_discovery"))
+        stack.enter_context(patch.object(module, "require_execution_profile_anchor"))
+        return module.main()
 
 
 def safe_task_output() -> dict:
@@ -3945,7 +3969,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 ),
                 redirect_stderr(stderr),
             ):
-                self.assertEqual(grade_behavioral_benchmark.main(), 2)
+                self.assertEqual(main_with_isolated_profile_anchor(grade_behavioral_benchmark), 2)
             self.assertIn("Partial grading evidence", stderr.getvalue())
 
             for module, argv in (
@@ -4000,7 +4024,7 @@ class EvaluationToolingTests(unittest.TestCase):
             ),
             redirect_stderr(stderr),
         ):
-            self.assertEqual(grade_behavioral_benchmark.main(), 2)
+            self.assertEqual(main_with_isolated_profile_anchor(grade_behavioral_benchmark), 2)
         self.assertIn("requires the canonical", stderr.getvalue())
 
     def test_task_execute_rejects_noncanonical_timeout_before_setup(self) -> None:
@@ -4037,7 +4061,7 @@ class EvaluationToolingTests(unittest.TestCase):
             ),
             redirect_stderr(stderr),
         ):
-            self.assertEqual(run_behavioral_benchmark.main(), 2)
+            self.assertEqual(main_with_isolated_profile_anchor(run_behavioral_benchmark), 2)
         self.assertIn("requires the canonical", stderr.getvalue())
 
     def test_trigger_execute_rejects_noncanonical_timeout_before_setup(self) -> None:
@@ -4074,7 +4098,7 @@ class EvaluationToolingTests(unittest.TestCase):
             ),
             redirect_stderr(stderr),
         ):
-            self.assertEqual(run_trigger_evals.main(), 2)
+            self.assertEqual(main_with_isolated_profile_anchor(run_trigger_evals), 2)
         self.assertIn("requires the canonical", stderr.getvalue())
 
     def test_comparator_execute_rejects_noncanonical_timeout_before_evidence(self) -> None:
@@ -4112,7 +4136,7 @@ class EvaluationToolingTests(unittest.TestCase):
             ),
             redirect_stderr(stderr),
         ):
-            self.assertEqual(run_blind_comparisons.main(), 2)
+            self.assertEqual(main_with_isolated_profile_anchor(run_blind_comparisons), 2)
         self.assertIn("requires the canonical", stderr.getvalue())
 
     def test_fresh_grader_binds_outputs_only_after_model_call(self) -> None:
@@ -4301,7 +4325,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()),
                 redirect_stderr(io.StringIO()),
             ):
-                self.assertEqual(grade_behavioral_benchmark.main(), 0)
+                self.assertEqual(main_with_isolated_profile_anchor(grade_behavioral_benchmark), 0)
 
             attempt = load_json(run_dir / "grader_attempt.json")
             grader_metadata = load_json(run_dir / "grader_metadata.json")
@@ -4589,7 +4613,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 redirect_stderr(io.StringIO()),
             ):
                 with self.assertRaises(KeyboardInterrupt):
-                    grade_behavioral_benchmark.main()
+                    main_with_isolated_profile_anchor(grade_behavioral_benchmark)
 
             self.assertFalse(captured["staging_root"].exists())
             attempt = load_json(run_dir / "grader_attempt.json")
@@ -4614,7 +4638,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 ),
                 redirect_stderr(error_output),
             ):
-                self.assertEqual(grade_behavioral_benchmark.main(), 2)
+                self.assertEqual(main_with_isolated_profile_anchor(grade_behavioral_benchmark), 2)
             self.assertIn("Partial grading evidence", error_output.getvalue())
 
     def test_blind_partial_evidence_refuses_without_model_call(self) -> None:
@@ -4665,7 +4689,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 ),
                 redirect_stderr(stderr),
             ):
-                self.assertEqual(run_blind_comparisons.main(), 2)
+                self.assertEqual(main_with_isolated_profile_anchor(run_blind_comparisons), 2)
             self.assertIn("Partial comparison evidence", stderr.getvalue())
 
     def test_blind_execution_stages_external_inputs_and_copies_back_exact_output(
@@ -4807,7 +4831,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()),
                 redirect_stderr(io.StringIO()),
             ):
-                self.assertEqual(run_blind_comparisons.main(), 0)
+                self.assertEqual(main_with_isolated_profile_anchor(run_blind_comparisons), 0)
 
             self.assertEqual(len(observed_workspaces), 1)
             self.assertFalse(observed_workspaces[0].exists())
@@ -4918,7 +4942,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 redirect_stderr(io.StringIO()),
             ):
                 with self.assertRaises(KeyboardInterrupt):
-                    run_blind_comparisons.main()
+                    main_with_isolated_profile_anchor(run_blind_comparisons)
 
             self.assertEqual(len(staged_workspaces), 1)
             self.assertFalse(staged_workspaces[0].exists())
@@ -4946,7 +4970,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 ),
                 redirect_stderr(error_output),
             ):
-                self.assertEqual(run_blind_comparisons.main(), 2)
+                self.assertEqual(main_with_isolated_profile_anchor(run_blind_comparisons), 2)
             self.assertIn("Partial comparison evidence", error_output.getvalue())
 
     def test_live_profile_rejects_unsupported_effort(self) -> None:
@@ -5071,7 +5095,7 @@ class EvaluationToolingTests(unittest.TestCase):
             ),
             redirect_stderr(stderr),
         ):
-            self.assertEqual(run_behavioral_benchmark.main(), 2)
+            self.assertEqual(main_with_isolated_profile_anchor(run_behavioral_benchmark), 2)
         self.assertIn("Fixture CSV validation failed", stderr.getvalue())
         self.assertIn("inputs/bad.csv row 3", stderr.getvalue())
 
@@ -5104,7 +5128,7 @@ class EvaluationToolingTests(unittest.TestCase):
             ),
             redirect_stderr(stderr),
         ):
-            self.assertEqual(run_behavioral_benchmark.main(), 2)
+            self.assertEqual(main_with_isolated_profile_anchor(run_behavioral_benchmark), 2)
         self.assertIn("unsafe projected path", stderr.getvalue())
 
     def test_aggregate_discovers_logical_run_in_compact_storage_directory(self) -> None:
@@ -5713,15 +5737,13 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertTrue(any("invalid evidence" in item for item in missing))
 
     def test_live_execution_requires_pinned_profile(self) -> None:
-        result = subprocess.run(
-            [sys.executable, str(SCRIPTS / "run_trigger_evals.py"), "--execute"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("requires both --model and --reasoning-effort", result.stderr)
+        stderr = io.StringIO()
+        with (
+            patch.object(sys, "argv", ["run_trigger_evals.py", "--execute"]),
+            redirect_stderr(stderr),
+        ):
+            self.assertEqual(main_with_isolated_profile_anchor(run_trigger_evals), 2)
+        self.assertIn("requires both --model and --reasoning-effort", stderr.getvalue())
 
     def test_grade_recalculation_detects_mismatch(self) -> None:
         contract = {
@@ -6400,7 +6422,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 ),
                 redirect_stderr(stderr),
             ):
-                self.assertEqual(run_trigger_evals.main(), 2)
+                self.assertEqual(main_with_isolated_profile_anchor(run_trigger_evals), 2)
         self.assertIn("Trigger suite validation failed", stderr.getvalue())
         self.assertIn("candidate_skill must be a canonical skill name", stderr.getvalue())
 
@@ -6523,7 +6545,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()),
                 redirect_stderr(io.StringIO()),
             ):
-                self.assertEqual(run_trigger_evals.main(), 0)
+                self.assertEqual(main_with_isolated_profile_anchor(run_trigger_evals), 0)
 
             self.assertEqual(len(observed_workspaces), 1)
             self.assertFalse(observed_workspaces[0].exists())
@@ -6653,7 +6675,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()),
                 redirect_stderr(io.StringIO()),
             ):
-                self.assertEqual(run_trigger_evals.main(), 2)
+                self.assertEqual(main_with_isolated_profile_anchor(run_trigger_evals), 2)
             self.assertEqual(model_calls, [])
 
     def test_trigger_rejects_malformed_and_mutated_staged_inputs(self) -> None:
@@ -6758,7 +6780,7 @@ class EvaluationToolingTests(unittest.TestCase):
                     redirect_stdout(io.StringIO()),
                     redirect_stderr(io.StringIO()),
                 ):
-                    self.assertEqual(run_trigger_evals.main(), 1)
+                    self.assertEqual(main_with_isolated_profile_anchor(run_trigger_evals), 1)
                 result = load_json(
                     output_root / f"trigger-{mode}-test" / "trigger-results.json"
                 )
@@ -6895,7 +6917,7 @@ class EvaluationToolingTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()),
                 redirect_stderr(io.StringIO()),
             ):
-                self.assertEqual(run_trigger_evals.main(), 1)
+                self.assertEqual(main_with_isolated_profile_anchor(run_trigger_evals), 1)
 
             self.assertEqual(len(model_calls), 1)
             result = load_json(

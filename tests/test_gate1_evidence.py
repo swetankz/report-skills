@@ -13,6 +13,8 @@ from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
+SYNTHETIC_PROFILE_ANCHOR = REPO_ROOT / ".build" / "synthetic-tests" / "profile-anchor.json"
+SYNTHETIC_PROFILE_ANCHOR_SHA256 = "c" * 64
 sys.path.insert(0, str(SCRIPTS))
 
 import run_trigger_evals  # noqa: E402
@@ -66,7 +68,7 @@ class Gate1EvidenceTests(unittest.TestCase):
         self.assertEqual(self.plan["reasoning_effort"], "ultra")
         self.assertEqual(
             self.plan["evaluation_method_version"],
-            "report-skills-release-evaluation-v48",
+            "report-skills-release-evaluation-v49",
         )
         self.assertEqual(
             validate_gate1_plan(
@@ -178,6 +180,8 @@ class Gate1EvidenceTests(unittest.TestCase):
                         profile,
                         repository,
                         completed,
+                        SYNTHETIC_PROFILE_ANCHOR,
+                        SYNTHETIC_PROFILE_ANCHOR_SHA256,
                     )
         self.assertEqual(len(commands), 3)
         self.assertTrue(commands[0][1].endswith("run_trigger_evals.py"))
@@ -219,6 +223,8 @@ class Gate1EvidenceTests(unittest.TestCase):
                     {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"},
                     {"commit": "a" * 40, "tree": "b" * 40, "dirty": False},
                     completed,
+                    SYNTHETIC_PROFILE_ANCHOR,
+                    SYNTHETIC_PROFILE_ANCHOR_SHA256,
                 )
         script_names = [Path(command[1]).name for command in commands]
         self.assertEqual(
@@ -267,6 +273,10 @@ class Gate1EvidenceTests(unittest.TestCase):
             argv = [
                 "run_gate1_evidence.py",
                 "--execute",
+                "--profile-anchor",
+                str(SYNTHETIC_PROFILE_ANCHOR),
+                "--profile-anchor-sha256",
+                SYNTHETIC_PROFILE_ANCHOR_SHA256,
                 "--output-root",
                 str(output_root),
                 "--run-id",
@@ -274,6 +284,12 @@ class Gate1EvidenceTests(unittest.TestCase):
             ]
             with (
                 patch.object(sys, "argv", argv),
+                patch.object(
+                    run_gate1_evidence, "load_execution_profile_anchor", return_value={}
+                ),
+                patch.object(run_gate1_evidence, "require_requested_profile_anchor"),
+                patch.object(run_gate1_evidence, "preserve_execution_profile_discovery"),
+                patch.object(run_gate1_evidence, "require_execution_profile_anchor"),
                 patch.object(
                     run_gate1_evidence, "find_codex_command", return_value="codex"
                 ),
@@ -404,6 +420,10 @@ class Gate1EvidenceTests(unittest.TestCase):
             [
                 "run_trigger_evals.py",
                 "--execute",
+                "--profile-anchor",
+                str(SYNTHETIC_PROFILE_ANCHOR),
+                "--profile-anchor-sha256",
+                SYNTHETIC_PROFILE_ANCHOR_SHA256,
                 "--observation-plan",
                 str(DEFAULT_GATE1_PLAN),
                 "--fail-fast-on-incorrect",
@@ -414,7 +434,9 @@ class Gate1EvidenceTests(unittest.TestCase):
             ],
         )
         for argv in cases:
-            with self.subTest(argv=argv), patch.object(sys, "argv", argv), redirect_stdout(
+            with self.subTest(argv=argv), patch.object(sys, "argv", argv), patch.object(
+                run_trigger_evals, "load_execution_profile_anchor", return_value={}
+            ), patch.object(run_trigger_evals, "require_requested_profile_anchor"), redirect_stdout(
                 io.StringIO()
             ), redirect_stderr(io.StringIO()):
                 self.assertEqual(run_trigger_evals.main(), 2)
@@ -485,6 +507,10 @@ class Gate1EvidenceTests(unittest.TestCase):
             argv = [
                 "run_trigger_evals.py",
                 "--execute",
+                "--profile-anchor",
+                str(SYNTHETIC_PROFILE_ANCHOR),
+                "--profile-anchor-sha256",
+                SYNTHETIC_PROFILE_ANCHOR_SHA256,
                 "--observation-plan",
                 str(DEFAULT_GATE1_PLAN),
                 "--fail-fast-on-incorrect",
@@ -500,6 +526,12 @@ class Gate1EvidenceTests(unittest.TestCase):
             stderr = io.StringIO()
             with (
                 patch.object(sys, "argv", argv),
+                patch.object(
+                    run_trigger_evals, "load_execution_profile_anchor", return_value={}
+                ),
+                patch.object(run_trigger_evals, "require_requested_profile_anchor"),
+                patch.object(run_trigger_evals, "preserve_execution_profile_discovery"),
+                patch.object(run_trigger_evals, "require_execution_profile_anchor"),
                 patch.object(
                     run_trigger_evals, "find_codex_command", return_value="codex"
                 ),

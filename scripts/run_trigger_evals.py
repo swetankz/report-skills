@@ -37,12 +37,16 @@ from evaluation_common import (
     execution_receipt_validation_errors,
     find_codex_command,
     lstat_path_entry_exists,
+    load_execution_profile_anchor,
     load_json,
     normalize_suite,
     parse_skill_description,
+    preserve_execution_profile_discovery,
     repository_receipt,
+    require_execution_profile_anchor,
     require_isolated_model_invocation,
     require_pinned_profile,
+    require_requested_profile_anchor,
     require_unchanged_repository,
     run_codex,
     timestamp_id,
@@ -291,6 +295,8 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--show-plan", action="store_true")
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--profile-anchor", type=Path, help="Pinned private execution-profile anchor; required with --execute")
+    parser.add_argument("--profile-anchor-sha256", help="Expected SHA-256 of the profile anchor; required with --execute")
     parser.add_argument("--codex-command")
     parser.add_argument("--model")
     parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS)
@@ -309,6 +315,12 @@ def main() -> int:
     if args.execute and args.dry_run:
         raise SystemExit("Choose either --dry-run or --execute, not both")
     try:
+        anchor = (
+            load_execution_profile_anchor(args.profile_anchor, args.profile_anchor_sha256)
+            if args.execute else None
+        )
+        if args.execute:
+            require_requested_profile_anchor(anchor, args.model, args.reasoning_effort)
         if args.execute and args.timeout != CANONICAL_TRIGGER_TIMEOUT_SECONDS:
             raise EvaluationError(
                 "Release trigger execution requires the canonical "
@@ -421,7 +433,9 @@ def main() -> int:
         execution_profile = codex_execution_profile(
             command_name, str(args.model), str(args.reasoning_effort)
         )
-        repo_receipt = repository_receipt(require_clean=True)
+        repo_receipt = repository_receipt(require_clean=False)
+        preserve_execution_profile_discovery(anchor, execution_profile, repo_receipt, "trigger")
+        require_execution_profile_anchor(anchor, execution_profile, repo_receipt, "Trigger")
         summary["execution_profile"] = execution_profile
         summary["repository"] = repo_receipt
         target.mkdir(parents=True)
