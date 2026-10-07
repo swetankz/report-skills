@@ -8,6 +8,7 @@ Use this checklist for each Report Skills release. It defines the required repos
 - [ ] `python scripts/run_behavioral_benchmark.py --dry-run` expands every required case, configuration, and repetition without making a model call.
 - [ ] `python scripts/run_trigger_evals.py --dry-run` expands every required trigger query and repetition without making a model call.
 - [ ] Repository unit, generation, standalone-package, and public-safety checks pass.
+- [ ] Bundled executable references resolve from the activated skill's `SKILL.md` directory in isolated plugin and standalone layouts. No production instruction depends on benchmark-only staging paths; relocated helpers pass deterministic valid/invalid synthetic input checks without aliases or writes into installed skills.
 - [ ] CI contains no authenticated, paid, or live model-evaluation step.
 - [ ] Native-executable resolution, wrapper-equivalent managed environment, process-tree timeout cleanup, and all canonical stage timeout receipts pass their offline regression tests.
 - [ ] One explicit evaluation-method version and exact canonical stage method are bound in every plan, task, grader attempt and final receipt, comparison, trigger observation and top-level result, and aggregate; downstream validation rejects missing, older, or mutated receipts.
