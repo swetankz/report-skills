@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "gate": "gate1-rc-preparation",
-  "evaluation_method_version": "report-skills-release-evaluation-v49",
+  "evaluation_method_version": "report-skills-release-evaluation-v50",
   "model": "gpt-6.1-sol",
   "reasoning_effort": "ultra",
   "orchestration": {

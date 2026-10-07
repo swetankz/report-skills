@@ -10,6 +10,7 @@ import math
 import os
 import platform
 import re
+import shlex
 import signal
 import shutil
 import stat
@@ -46,7 +47,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v49"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v50"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -77,7 +78,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v9"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v10"
 TASK_TRANSIENT_CAPACITY_RETRY_POLICY = (
     "explicit-model-capacity-no-output-unchanged-workspace-two-retries-v1"
 )
@@ -2237,6 +2238,145 @@ def task_trace_isolation_validation_errors(
             for match in metadata_path.finditer(normalized)
         )
 
+    def computed_parent_command_scan(command: str) -> str:
+        """Exclude only proven single-literal PowerShell regex operands.
+
+        A transcript may serialize the executable and its -Command argument
+        using concatenated POSIX quote tokens. Unfold only that complete,
+        three-token PowerShell launcher shape, then inspect its payload as
+        executable code. The envelope is serialization, not inert PS data.
+        Unknown wrappers, executable string consumers and ambiguous syntax
+        retain the original fail-closed scan. Every other boundary detector
+        continues to inspect the unchanged command.
+        """
+        payload = command
+        launcher = re.fullmatch(
+            r'\s*(?:"[^"\r\n]+"|[^\s\'";|&()<>]+)\s+'
+            r'-(?:command|c)\s+(?P<payload>.+)',
+            command,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if launcher is not None:
+            # Do not treat source-shell expansion as an inert inner literal.
+            if not launcher.group("payload").startswith("'") or "$(" in command or "`" in command:
+                return command
+            # shlex tokenization does not evaluate variable expansion. Verify
+            # the serializer consists only of constant fragments; PS variables
+            # inside its single-quoted payload fragments remain ordinary code.
+            shell_quote: str | None = None
+            shell_index = 0
+            while shell_index < len(command):
+                shell_character = command[shell_index]
+                if shell_quote == "'":
+                    if shell_character == "'":
+                        shell_quote = None
+                    shell_index += 1
+                    continue
+                if shell_character == "\\":
+                    if shell_index + 1 >= len(command):
+                        return command
+                    following = command[shell_index + 1]
+                    if following in "\r\n":
+                        return command
+                    # POSIX double quotes only escape these characters. In
+                    # other cases the backslash is literal, not a quote escape.
+                    if shell_quote is None or following in '\\"$`':
+                        shell_index += 2
+                        continue
+                if shell_character in {"$", "`"}:
+                    return command
+                if shell_quote == '"':
+                    if shell_character == '"':
+                        shell_quote = None
+                elif shell_character in {"'", '"'}:
+                    shell_quote = shell_character
+                shell_index += 1
+            if shell_quote is not None:
+                return command
+            try:
+                serialized = shlex.shlex(
+                    command, posix=True, punctuation_chars=";&|()<>",
+                )
+                serialized.whitespace_split = True
+                serialized.commenters = ""
+                tokens = list(serialized)
+            except ValueError:
+                return command
+            if (
+                len(tokens) != 3
+                or tokens[0].replace("\\", "/").rsplit("/", 1)[-1].casefold()
+                not in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
+                or tokens[1].casefold() not in {"-command", "-c"}
+            ):
+                return command
+            payload = tokens[2]
+
+        expression_prefix = re.compile(
+            r"(?:^|[;{(])\s*\$[A-Za-z_][A-Za-z0-9_]*\s+"
+            r"-(?:match|notmatch|cmatch|imatch|cnotmatch|inotmatch)\s+$",
+            re.IGNORECASE,
+        )
+        excluded: list[tuple[int, int]] = []
+        index = 0
+        while index < len(payload):
+            character = payload[index]
+            if character == "#" or payload.startswith("<#", index):
+                return command
+            if character == "`":
+                return command  # Obfuscated or continued executable tokens.
+            if character not in {"'", '"'}:
+                index += 1
+                continue
+            if index and payload[index - 1] == "@":
+                return command  # Here-strings are not ordinary literal operands.
+            start = index
+            quote = character
+            index += 1
+            while index < len(payload):
+                if quote == '"' and payload[index] == "`":
+                    index += 2
+                    continue
+                if payload[index] == quote:
+                    if index + 1 < len(payload) and payload[index + 1] == quote:
+                        index += 2
+                        continue
+                    break
+                index += 1
+            if index >= len(payload):
+                return command
+            end = index + 1
+            if quote == '"' and "$(" in payload[start:end]:
+                return command  # Expandable-string subexpressions execute code.
+            # PS single quotes escape only doubled quotes. Backslashes and
+            # backticks within them are data, never closing-quote escapes.
+            if quote == "'" and expression_prefix.search(payload[:start]):
+                following = payload[end:].lstrip()
+                if following and following[0] not in ";|)}":
+                    return command  # Concatenation, members and dynamic operands.
+                excluded.append((start, end))
+            index = end
+        if not excluded:
+            return command
+        characters = list(payload)
+        for start, end in excluded:
+            characters[start:end] = " " * (end - start)
+        scanned = "".join(characters)
+        # These contexts can reinterpret strings as executable code. Check
+        # after recognizing data spans so names in a source-search pattern are
+        # not mistaken for consumers, but keep all other strings visible.
+        if re.search(
+            r"\b(?:iex|invoke-expression|invoke-command|add-type|start-process)\b"
+            r"|\[[^]\r\n]*\bscriptblock\s*\]"
+            r"|\.\s*(?:invoke[A-Za-z_]*|getscriptblock|newscriptblock|createscriptblock)\s*\("
+            r"|(?:^|[;|{(\n])\s*[&.]"
+            r"|\b(?:pwsh|powershell|bash|sh|zsh|ksh|cmd)(?:\.exe)?\b"
+            r"|-(?:encodedcommand|enc|command|c)\b",
+            scanned,
+            re.IGNORECASE,
+        ):
+            return command
+        return scanned
+
     # Parenthesized range endpoints otherwise make the numeric `)..(` operator
     # look like a parent-path token. Recognize only complete variable indexers
     # with data-only numeric endpoints adjacent to the operator. Spaced ` .. `
@@ -2308,7 +2448,7 @@ def task_trace_isolation_validation_errors(
             command_violations.add("Git isolation override")
         if re.search(
             r"(?:get-location|get-item|\bpwd\b).*?\.parent\b|directory\]::getparent|directoryinfo.*?\.parent\b|split-path.*?-parent",
-            command,
+            computed_parent_command_scan(command),
             re.IGNORECASE,
         ):
             command_violations.add("computed parent path")
