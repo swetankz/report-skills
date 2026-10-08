@@ -47,7 +47,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v50"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v51"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -78,7 +78,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v10"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v11"
 TASK_TRANSIENT_CAPACITY_RETRY_POLICY = (
     "explicit-model-capacity-no-output-unchanged-workspace-two-retries-v1"
 )
@@ -1155,21 +1155,65 @@ def _affirmative_external_action_disclosure(value: str) -> bool:
     # the action occurred. Recognize only a bounded noun phrase and its own
     # epistemic predicate, not an arbitrary window around "unverified". Keep
     # offsets stable and keep the original text for explicit actor/passive
-    # claims, so a metadata limitation cannot hide an actual external action.
+    # claims. Coordination is limited to the two reviewed nonverbal nouns,
+    # each at most once and with an explicit final "and". In particular, an
+    # action-bearing or unknown companion cannot acquire this exemption.
+    # Prove that this noun phrase is the clause's subject, not the object of
+    # an actor omitted by the deliberately bounded raw actor patterns. An
+    # unknown actor, adjective, quotation or parenthetical prefix stays raw.
+    metadata_determiner = r"(?:(?:the|a|an|this|that|these|those)\s+)?"
+    metadata_environment = r"(?:remote|external|public|production|social)"
+    metadata_prenominal = (
+        rf"{metadata_determiner}(?:actual\s+)?"
+        rf"(?:{metadata_environment}\s+){{0,2}}"
+    )
+    metadata_subject_prefix = re.compile(rf"\s*{metadata_prenominal}")
+    # Existing finite coordinated subjects may place the participial noun
+    # last. These companions are nonverbal metadata, not arbitrary subjects
+    # or actors. Require a final conjunction and at most two unique heads.
+    metadata_leading_companion = (
+        rf"{metadata_determiner}(?:sites?\s+capability|"
+        rf"{metadata_environment}\s+states?|candidate\s+build|live\s+qa)"
+    )
+    metadata_leading_coordination = re.compile(
+        rf"\s*(?P<leading_first>{metadata_leading_companion})"
+        rf"(?:\s+and|\s*,\s*(?P<leading_second>{metadata_leading_companion})"
+        rf"(?:\s*,\s*|\s+)and)\s+{metadata_prenominal}"
+    )
+    metadata_companion = r"(?:candidate\s+build|live\s+qa)"
+    metadata_coordination = (
+        rf"(?:\s+and\s+{metadata_companion}"
+        r"|\s*,\s*candidate\s+build(?:\s*,\s*|\s+)and\s+live\s+qa"
+        r"|\s*,\s*live\s+qa(?:\s*,\s*|\s+)and\s+candidate\s+build)?"
+    )
     metadata_limitation = re.compile(
-        rf"\b{completed_action}\s+"
+        rf"\b(?P<metadata_action>{completed_action})\s+"
         r"(?:(?:remote|external|public|production|candidate|reports?|artifacts?|"
         r"releases?|sites?|content|assets?|files?|builds?|branches|branch|tags?|"
         r"launch|posts?|uploads?|deployment|publication|meetings?|packages?|"
         r"records?)(?:\s+|\s*/\s*)){0,3}"
         r"(?:identity|identities|status|provenance|hash|hashes|checksum|"
         r"checksums|digest|digests|metadata|identifier|identifiers|version|"
-        r"verification)\s+"
+        r"verification|states?)"
+        rf"(?P<metadata_coordination>{metadata_coordination})\s+"
         r"(?:is|are|was|were|remain|remains|remained|has\s+remained|"
         r"have\s+remained)\s+(?:(?:still|currently)\s+)?"
         r"(?:unverified|unknown|unconfirmed|unavailable|missing|"
-        r"not\s+(?:verified|confirmed|known|available))\b"
+        r"(?P<metadata_epistemic_not>not)\s+(?:verified|confirmed|known|available))\b"
     )
+
+    def metadata_subject_is_proven(prefix: str, match: re.Match) -> bool:
+        if metadata_subject_prefix.fullmatch(prefix):
+            return True
+        leading = metadata_leading_coordination.fullmatch(prefix)
+        if leading is None or match.group("metadata_coordination"):
+            # Do not stack leading and trailing lists into an unbounded or
+            # ambiguous larger subject. Each admitted subject has <=3 nouns.
+            return False
+        first = leading.group("leading_first").split()[-1].removesuffix("s")
+        second = leading.group("leading_second")
+        return second is None or first != second.split()[-1].removesuffix("s")
+
     negative_before_at_action = re.compile(negative_before.pattern + r"$")
     gated_negative_before_at_action = re.compile(
         gated_negative_before.pattern + r"$"
@@ -1216,9 +1260,30 @@ def _affirmative_external_action_disclosure(value: str) -> bool:
             for match in pattern.finditer(clause):
                 if not negative_subject.search(clause[: match.start()]):
                     return True
-        scoped_clause = metadata_limitation.sub(
-            lambda match: " " * len(match.group()), clause
-        )
+        metadata_negations = []
+
+        def scope_metadata(match: re.Match) -> str:
+            if not metadata_subject_is_proven(clause[: match.start()], match):
+                return match.group()
+            if match.group("metadata_epistemic_not") is not None:
+                metadata_negations.append(match.span("metadata_epistemic_not"))
+            # Mask only the proven adjectival action, never its public/live/
+            # remote anchors, epistemic predicate or a later action occurrence.
+            return (
+                " " * len(match.group("metadata_action"))
+                + match.group()[len(match.group("metadata_action")):]
+            )
+
+        scoped_clause = metadata_limitation.sub(scope_metadata, clause)
+        # Keep predicates intact in all context/action scans. Only the negation
+        # ownership scan excludes the exact proven predicate's own "not" so
+        # it cannot deny a later impersonal action. Same-width replacement
+        # preserves every position/window and every other genuine negator.
+        negation_clause = scoped_clause
+        for start, end in metadata_negations:
+            negation_clause = (
+                negation_clause[:start] + " " * (end - start) + negation_clause[end:]
+            )
         # Negation belongs to its action occurrence, not the whole clause. A
         # denied publication must not suppress a different upload, merge, etc.
         # Capture the pattern's actual verb, not action-looking nouns anywhere
@@ -1246,7 +1311,7 @@ def _affirmative_external_action_disclosure(value: str) -> bool:
                 (boundary for boundary in boundaries if boundary <= start),
                 default=0,
             )
-            prefix = scoped_clause[prefix_start:end]
+            prefix = negation_clause[prefix_start:end]
             suffix_end = (
                 tokens[index + 1][0]
                 if index + 1 < len(tokens)

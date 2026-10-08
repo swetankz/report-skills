@@ -68,7 +68,7 @@ class Gate1EvidenceTests(unittest.TestCase):
         self.assertEqual(self.plan["reasoning_effort"], "ultra")
         self.assertEqual(
             self.plan["evaluation_method_version"],
-            "report-skills-release-evaluation-v50",
+            "report-skills-release-evaluation-v51",
         )
         self.assertEqual(
             validate_gate1_plan(
