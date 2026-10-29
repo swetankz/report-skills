@@ -19,6 +19,8 @@ tokens:
   layout: {}
 components: []
 section_map: []
+# Map every component to source content and a destination, or give a system-only reason.
+component_content_map: []
 assets: []
 accessibility_constraints: []
 export_targets: []

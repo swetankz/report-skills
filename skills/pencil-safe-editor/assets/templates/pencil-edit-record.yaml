@@ -3,6 +3,10 @@ artifact_id: "synthetic-pencil-edit-001"
 intended_file: "private-runtime-value"
 active_file_confirmed: false
 connectivity_confirmed: false
+observed_state: "not-verified"
+requested_state: "not-verified"
+blocker_state: "Connection and exact target identity have not been verified."
+proposed_next_step: "Confirm the connection and requested target identity before any write."
 original_hash: null
 backup_path: null
 backup_hash: null
