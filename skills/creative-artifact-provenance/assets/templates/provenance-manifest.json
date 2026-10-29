@@ -15,10 +15,20 @@
       "sha256": "synthetic-hash",
       "parent_ids": [],
       "transformations": [],
-      "visibility": "public",
+      "visibility": "private",
       "rights_status": "synthetic-owned",
-      "notes": null
+      "notes": "Synthetic example only; replace with observed artifact and lineage evidence.",
+      "creation_status": "succeeded",
+      "relationship_status": "root",
+      "projection_eligibility": {
+        "status": "redact",
+        "reason": "Remove private provider identifiers before creating a separate public projection."
+      },
+      "unknown_fields": [],
+      "evidence": [
+        "synthetic-provider-receipt"
+      ]
     }
-  ]
+  ],
+  "public_projection_created": false
 }
-

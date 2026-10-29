@@ -2,10 +2,13 @@
 
 All notable repository-level changes are documented here.
 
-## 0.2.0
+## 0.2.0 — Unreleased
 
+- Reconcile release status and client/platform support claims with the recorded evidence. Fresh qualification and installation checks remain pending for this candidate.
+- Synchronize canonical templates and shared artifact contracts so generated skill packages carry the same required fields and handoff rules.
+- Explain existing inspection boundaries to graders and blind comparators, and distinguish a complete fixture-only filename listing that excludes `SKILL.md` from reading an injected skill. Content reads, compound commands, and ambiguous commands remain subject to the existing boundary checks; release thresholds are unchanged.
 - Resolve bundled CSV writers, the repurposing validator, and the motion-trace summarizer from the activated skill's own directory, independently of benchmark, plugin-cache, standalone-install, or task-workspace layout. Validate executable references in isolated packages and regression-test relocated helpers against synthetic valid and invalid inputs without changing artifact schemas, safety rules, or release thresholds.
-- Require current release qualification to use evaluation method v49 and its hash-pinned private execution-profile anchor. Preserve full selected-model identity checks, reject drift before paid calls, and retain discovery diagnostics privately; earlier or partial evidence is not reused.
+- Require fresh qualification under the candidate's current canonical evaluation method and its hash-pinned private execution-profile anchor. Preserve full selected-model identity checks, reject drift before paid calls, and retain discovery diagnostics privately; earlier or partial evidence is not reused.
 - Bind evaluation method v48 to bounded grammatical handling of unverified participial metadata phrases, while preserving rejection of affirmative actor/passive external-action claims. Scope negation to each action occurrence so unrelated limitations or denials cannot hide a completed action. Earlier failed evidence remains diagnostic; all qualification must be fresh on a clean v48 candidate, with the selected GPT 6.1 Sol Ultra Fast profile and unchanged release gates.
 - Bind evaluation method v47 to the selected GPT 6.1 Sol Ultra profile with explicit Fast service-tier controls in every invocation, prompt probe, and identity receipt. Recognize only complete literal PowerShell numeric index ranges in the trace guard, without exempting adjacent paths or other boundary controls; earlier receipts are not reused and release thresholds are unchanged.
 - Include both Codex and ZCode manifests plus the marketplace descriptor in the plugin archive, and independently reject archives missing either client metadata even when their inventory is self-consistent.
@@ -18,7 +21,7 @@ All notable repository-level changes are documented here.
 - Prohibit parent-relative reference literals in every behavioral command, including lookup tables and regular expressions, while preserving fail-closed traversal detection.
 - Name the prohibited parent-directory computation forms in behavioral task contracts, preserving fail-closed rejection of computed parent paths while making the workspace-relative path requirement explicit.
 - Require an explicit result verb before treating a scheduled action followed by “done” or “successful” as an external-action disclosure, while preserving rejection of affirmative publication language.
-- Finalize the stable release identity for the validated behavioral evaluation and release-validation system.
+- Reserve the stable `0.2.0` release identity for the behavioral evaluation and release-validation system; final qualification and publication remain pending.
 - Add the complete Windows, macOS, and Linux installation guide and link it from the repository readme.
 - Require benchmark task receipts to identify each disclosed artifact as one concrete regular file, rejecting directory-style paths.
 - Distinguish rejected fixture requests for fabricated release state from affirmative fabrication claims in task receipts.

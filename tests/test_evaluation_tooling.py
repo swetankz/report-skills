@@ -885,6 +885,79 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertIn(".agents/skills/<validated-name>/SKILL.md", trigger)
         self.assertIn("Do not construct an absolute path", trigger)
 
+    def test_reviewer_trace_guards_reject_observed_commands_and_allow_staged_reads(self) -> None:
+        # These are synthetic trace records, never executed shell commands. The
+        # failed discovery probes and Git's diff exit 1 must still be rejected.
+        forbidden = (
+            (
+                r"git diff --no-index -- workspace\artifacts\report-draft-v0.1.md workspace\artifacts\report-draft-v0.2.md",
+                "Git command",
+            ),
+            (
+                r"git diff --no-index -- workspace\artifacts\report-draft-v0.2.md workspace\artifacts\report-draft-v0.3.md",
+                "Git command",
+            ),
+            (
+                r"git diff --no-index -- workspace\artifacts\report-draft-v0.3.md workspace\artifacts\report-draft.md",
+                "Git command",
+            ),
+            (
+                "Get-Command magick,rsvg-convert,inkscape -ErrorAction SilentlyContinue "
+                "| Select-Object Name,Source,Version | Format-Table -AutoSize",
+                "host capability discovery",
+            ),
+            (
+                "Get-Command chrome,msedge,chromium,firefox -ErrorAction SilentlyContinue "
+                "| Select-Object Name,Source | Format-Table -AutoSize",
+                "host capability discovery",
+            ),
+        )
+        allowed = (
+            "Select-String -LiteralPath 'workspace/artifacts/report-draft.md' "
+            "-Pattern 'git diff --no-index|Get-Command magick,rsvg-convert,inkscape|"
+            "Get-Command chrome,msedge,chromium,firefox'",
+            "$left = [System.IO.File]::ReadAllText('workspace/artifacts/report-draft-v0.1.md'); "
+            "$right = [System.IO.File]::ReadAllText('workspace/artifacts/report-draft-v0.2.md'); "
+            r"Compare-Object ($left -split '\r?\n') ($right -split '\r?\n')",
+            "[System.IO.File]::ReadAllBytes('A/artifacts/chart.svg')",
+            "Get-Content -LiteralPath 'B/artifacts/chart.svg' -Raw",
+            "Select-String -LiteralPath 'A/artifacts/chart.svg' -Pattern 'viewBox|width|height|title|desc'",
+        )
+        validators = (
+            ("grader", grade_behavioral_benchmark.grader_trace_isolation_validation_errors),
+            ("comparator", run_blind_comparisons.comparison_trace_isolation_validation_errors),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            transcript = root / "reviewer-transcript.jsonl"
+            durable_target = root / "durable" / "runs" / "observation"
+
+            def write_command(command: str, *, failed: bool) -> None:
+                transcript.write_text(
+                    json.dumps({
+                        "type": "item.completed",
+                        "item": {
+                            "type": "command_execution",
+                            "command": command,
+                            "status": "failed" if failed else "completed",
+                            "exit_code": 1 if failed else 0,
+                            "aggregated_output": "",
+                        },
+                    }) + "\n",
+                    encoding="utf-8",
+                )
+
+            for stage, validate in validators:
+                for command, violation in forbidden:
+                    with self.subTest(stage=stage, command=command):
+                        write_command(command, failed=True)
+                        errors = validate(transcript, durable_target)
+                        self.assertTrue(any(violation in error for error in errors), errors)
+                for command in allowed:
+                    with self.subTest(stage=stage, command=command):
+                        write_command(command, failed=False)
+                        self.assertEqual(validate(transcript, durable_target), [])
+
     def test_model_invocation_preflight_requires_exact_collaboration_controls(self) -> None:
         valid = [
             "codex",

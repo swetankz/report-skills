@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import stat
 import sys
 import tempfile
@@ -172,6 +173,77 @@ from the fixture and general reasoning.
 """
 
 
+def is_fixture_filename_inventory(command: str) -> bool:
+    """Recognize only a complete fixture-local, metadata-only PS inventory.
+
+    Never remove a filename comparison from an arbitrary expression: a later
+    disjunction, body read, or chained command could make that unsafe. Unknown
+    syntax falls through to the existing named-skill guard. Other independent
+    transcript guards still inspect the original command unchanged.
+    """
+
+    payload = command
+    if not re.match(r"\s*Get-ChildItem\s", command, re.IGNORECASE):
+        # The native transcript can serialize argv as adjacent POSIX quoting
+        # fragments. Decode exactly three constant tokens, without evaluation.
+        # Expansion outside single quotes, extra arguments and shell operators
+        # are not accepted as an inert serialization envelope.
+        quote: str | None = None
+        index = 0
+        while index < len(command):
+            character = command[index]
+            if quote == "'":
+                if character == "'":
+                    quote = None
+                index += 1
+                continue
+            if character == "\\":
+                if index + 1 == len(command) or command[index + 1] in "\r\n":
+                    return False
+                if quote is None or command[index + 1] in '\\"$`':
+                    index += 2
+                    continue
+            if character in "$`":
+                return False
+            if quote == '"':
+                if character == '"':
+                    quote = None
+            elif character in {"'", '"'}:
+                quote = character
+            index += 1
+        if quote is not None:
+            return False
+        try:
+            lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            tokens = list(lexer)
+        except ValueError:
+            return False
+        if (
+            len(tokens) != 3
+            or tokens[0].replace("\\", "/").rsplit("/", 1)[-1].casefold()
+            not in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
+            or tokens[1].casefold() != "-command"
+        ):
+            return False
+        payload = tokens[2]
+
+    # Deliberately a whole-command grammar, not a general PowerShell parser.
+    # Both filters use case-insensitive -ne; -cne, -or, extra statements,
+    # computed roots, aliases, content readers and redirection stay rejected.
+    return re.fullmatch(
+        r"\s*Get-ChildItem\s+-LiteralPath\s+'\.[\\/]fixture'"
+        r"\s+-Recurse\s+-File\s*\|\s*Where-Object\s*\{\s*"
+        r"\$_\.Name\s+-ne\s+'SKILL\.md'\s+-and\s+"
+        r"\$_\.Name\s+-ne\s+'AGENTS\.md'\s*\}\s*\|\s*"
+        r"ForEach-Object\s*\{\s*\[string\]\$_\.FullName\.Replace\(\s*"
+        r"\[System\.IO\.Path\]::GetFullPath\(\s*'\.[\\/]'\s*\)\s*,\s*''\s*\)\s*\}\s*",
+        payload,
+        re.IGNORECASE,
+    ) is not None
+
+
 def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str]:
     """Flag named SKILL.md command references outside the allowed injected copy."""
 
@@ -196,6 +268,8 @@ def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str
         if item.get("type") != "command_execution":
             continue
         command = str(item.get("command", ""))
+        if is_fixture_filename_inventory(command):
+            continue
         normalized = re.sub(r"/+", "/", command.replace("\\", "/")).casefold()
         # PowerShell transcript serialization can surround an argument with
         # adjacent quote tokens (`'"'!*SKILL.md'"'`). Collapse those wrappers

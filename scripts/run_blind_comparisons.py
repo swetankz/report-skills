@@ -119,6 +119,20 @@ workspace. Do not inspect its parent, run Git, inspect repository metadata,
 delegate, use collaboration tools, or access a network or live service. Return
 one expectation comparison per assertion. Your final response must match the
 supplied JSON schema.
+
+Do not discover or enumerate host tools, runtimes, modules, renderers, or
+browsers. Do not run capability probes such as Get-Command, Get-Module,
+command -v, which, or where.exe, including searches for image/SVG renderers
+or web browsers. Do not inspect host processes, PATH, or other environment
+values. Inspect the existing staged files under A/ and B/ and the supplied
+case contract through the provided tools and direct file reads. If a supplied
+tool cannot display an existing artifact, use static inspection of its staged
+source, structure, and metadata where applicable; do not locate or install
+another renderer, browser, or runtime. Report rendering or other verification
+that remains unavailable, and assess each assertion only from observed
+evidence; do not infer success or treat static inspection as rendered review.
+Do not request additional permissions, modify staged inputs, or write
+auxiliary scripts or artifacts. Return the normal structured comparison only.
 """
 
 

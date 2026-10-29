@@ -1,16 +1,18 @@
 # Installation
 
-Report Skills ships as one plugin with identical skill bodies for Codex and ZCode. The repository carries a Codex manifest at `.codex-plugin/plugin.json`, a ZCode manifest at `.zcode-plugin/plugin.json`, and a root `marketplace.json` so the repository itself can be added as a ZCode plugin marketplace.
+Report Skills is packaged as one plugin with shared skill bodies for Codex and ZCode. The repository carries a Codex manifest at `.codex-plugin/plugin.json`, a ZCode manifest at `.zcode-plugin/plugin.json`, and a root `marketplace.json`. These files define the intended installation paths; they do not establish that either client has passed end-to-end installation and activation checks for the current candidate.
 
-Use the latest stable [GitHub release](https://github.com/swetankz/report-skills/releases) for normal installation. A release tag and matching checksum provide a version-pinned installation target; `main` is the moving development branch. Install a GitHub pre-release only when intentionally evaluating a release candidate.
+Use a published stable [GitHub release](https://github.com/swetankz/report-skills/releases) for normal installation when one is available. Version `0.2.0` is currently unreleased and awaits fresh qualification. A published release tag and matching checksum provide a version-pinned installation target; `main` is the moving development branch. Install a GitHub pre-release only when intentionally evaluating a release candidate. See [Platform validation status](#platform-validation-status) for the evidence recorded so far.
 
 This guide covers both clients. For ZCode, see [Install in ZCode](#install-in-zcode). The remaining sections walk through the Codex complete-plugin flow on Windows, macOS, and Linux, followed by selected-skill alternatives.
 
 ## Install in ZCode
 
-The repository root is a ZCode plugin marketplace, and the same release assets work through the local-directory path.
+The repository root includes a ZCode plugin marketplace descriptor, and current plugin builds include it alongside both client manifests. The steps below describe the intended flow and still require end-to-end validation against the actual candidate ZIP.
 
 ### Marketplace install from GitHub
+
+This path is for development testing unless the client records an exact published release ref. For a reproducible candidate installation, use the checksum-verified release ZIP through the local-directory path below.
 
 1. Open ZCode **Settings → Plugin Management → Discover**.
 2. Select **+** and add a marketplace from the GitHub repository `swetankz/report-skills`.
@@ -20,7 +22,7 @@ Skills appear namespaced as `report-skills:<skill-name>`, for example `report-sk
 
 ### Local directory install
 
-For testing `main` or an extracted release package, select **+** in the Discover tab, choose a local directory as the marketplace source, and point it at this repository checkout or an extracted release folder. Install the `report-skills` plugin from it.
+For a version-pinned candidate, verify and extract its plugin ZIP, then select **+** in the Discover tab, choose a local directory as the marketplace source, and point it at the extracted release folder. Confirm that the folder contains `.zcode-plugin/plugin.json` and `marketplace.json`, then install `report-skills` from it. A checkout of `main` can be used separately for development testing; record its commit rather than treating it as a released version.
 
 ### Individual skills and cross-tool use
 
@@ -389,7 +391,16 @@ The complete plugin should expose the `report-skills` router and the ten special
 
 ### Platform validation status
 
-The personal-marketplace registration and installation flow was verified on Windows using an extracted `v0.2.0-rc.1` source snapshot. The released plugin ZIP's checksum, extraction, and root manifest were clean-smoke-tested separately on Windows. An end-to-end marketplace installation from the plugin ZIP, and the complete macOS and Linux flows, have not yet been recorded as release evidence.
+Recorded checks cover the earlier `v0.2.0-rc.1` Windows candidate: personal-marketplace registration and installation used an extracted source snapshot, while the released plugin ZIP's checksum, extraction, and root manifest were checked separately. Those checks do not qualify the current unreleased `0.2.0` candidate.
+
+The following checks remain pending for the current candidate:
+
+- Complete Codex marketplace installation and activation from the actual plugin ZIP.
+- Complete ZCode installation and activation from the actual plugin ZIP.
+- End-to-end macOS and Linux installation flows.
+- Representative standalone skills installed from the exact release tag, including helper execution without the source checkout.
+
+Treat these as documented installation paths awaiting validation. Record the exact candidate, client version, operating system, and observed results before claiming a supported release path.
 
 ## Troubleshooting
 
