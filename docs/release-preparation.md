@@ -40,6 +40,25 @@ The combined changes use evaluation method `report-skills-release-evaluation-v56
 to avoid reusing any earlier method identity. They do not adopt all changes from
 the intervening unpublished branches. All earlier raw runs remain diagnostics.
 
+## Phase III runtime-compatibility update
+
+The active method is now `report-skills-release-evaluation-v57`, superseding the
+v56 preparation identity above. Codex 0.166.0 renders a typed `additional_tools`
+item with developer role but no message content. The model-free preflight must
+validate that declaration separately, not discard it or treat it as an empty
+text message. The ordered profile receipt now binds complete tool declarations
+alongside real developer-message content. Unknown variants, malformed reviewed
+envelopes, duplicate tool identities/JSON keys, nonfinite JSON values, duplicated
+sentinel material, and known collaboration declarations fail closed. The native
+cell waiter is distinguished from agent waiting by its reviewed parameter shape.
+
+This update does not certify opaque or deferred tools as harmless, authorize MCP,
+browser or plugin operations, waive the official plugin-validator gap, or change
+release thresholds, model settings, task coverage, deadlines or capacity-only
+retry limits. Fresh clean-commit anchors and fresh future Gate 2 evidence are
+required; model-free diagnostics are not behavioral qualification. The earlier
+offline matrix below describes its original preparation revision, not a v57 pass.
+
 ## Blocker register
 
 The historical [v35 full evaluation](../evals/results/gate2-5363af9-v35.md)

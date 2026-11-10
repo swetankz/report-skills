@@ -160,8 +160,8 @@ def safe_task_output() -> dict:
 def model_isolation_profile_receipt(probe_hash: str = "9" * 64) -> dict:
     return {
         "service_tier": "fast",
-        "model_isolation_prompt_probe": "debug-prompt-input-no-agent-context-v2",
-        "model_isolation_prompt_schema": "prompt-input-list-with-sentinel-v1",
+        "model_isolation_prompt_probe": "debug-prompt-input-no-agent-context-v3",
+        "model_isolation_prompt_schema": "prompt-input-list-with-typed-tools-and-sentinel-v2",
         "model_isolation_prompt_probe_sha256": probe_hash,
     }
 
@@ -765,9 +765,9 @@ class EvaluationToolingTests(unittest.TestCase):
                 "service_tier": "fast",
                 "service_tier_override": '--config service_tier="fast"',
                 "prompt_context_probe": {
-                    "method": "debug-prompt-input-no-agent-context-v2",
-                    "schema": "prompt-input-list-with-sentinel-v1",
-                    "profile_receipt": "normalized-developer-context-sha256-v1",
+                    "method": "debug-prompt-input-no-agent-context-v3",
+                    "schema": "prompt-input-list-with-typed-tools-and-sentinel-v2",
+                    "profile_receipt": "normalized-developer-context-and-tools-sha256-v2",
                 },
                 "collaboration_guard": "no-collaboration-tool-events-v1",
             },
@@ -3375,11 +3375,11 @@ class EvaluationToolingTests(unittest.TestCase):
         self.assertEqual(profile["codex_invocation"], CODEX_INVOCATION_MODE)
         self.assertEqual(
             profile["model_isolation_prompt_probe"],
-            "debug-prompt-input-no-agent-context-v2",
+            "debug-prompt-input-no-agent-context-v3",
         )
         self.assertEqual(
             profile["model_isolation_prompt_schema"],
-            "prompt-input-list-with-sentinel-v1",
+            "prompt-input-list-with-typed-tools-and-sentinel-v2",
         )
         self.assertRegex(
             profile["model_isolation_prompt_probe_sha256"], r"^[0-9a-f]{64}$"
@@ -7554,6 +7554,15 @@ class EvaluationToolingTests(unittest.TestCase):
             require_matching_context(
                 profile, repository, mismatched_probe, repository, "test"
             )
+        for field, previous, suffix in (
+            ("model_isolation_prompt_probe", "debug-prompt-input-no-agent-context-v2", "probe"),
+            ("model_isolation_prompt_schema", "prompt-input-list-with-sentinel-v1", "schema"),
+        ):
+            with self.subTest(previous_identity=field):
+                with self.assertRaisesRegex(EvaluationError, f"unsupported prompt-isolation {suffix}"):
+                    require_matching_context(
+                        profile, repository, dict(profile, **{field: previous}), repository, "test"
+                    )
         issues: list[str] = []
         self.assertIsNotNone(
             aggregate_benchmark.evidence_identity(
