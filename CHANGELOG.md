@@ -4,6 +4,8 @@ All notable repository-level changes are documented here.
 
 ## 0.2.0 — Unreleased
 
+- Document a manual Codex local-marketplace wrapper for Windows, macOS, and Linux so installation does not require the optional plugin-creator skill. Keep the ZCode catalog and extracted plugin payload unchanged, distinguish available from installed plugins, and retain pending host-installation and qualification claims.
+
 - Reconcile release status and client/platform support claims with the recorded evidence. Fresh qualification and installation checks remain pending for this candidate.
 - Synchronize canonical templates and shared artifact contracts so generated skill packages carry the same required fields and handoff rules.
 - Explain existing inspection boundaries to graders and blind comparators, and distinguish a complete fixture-only filename listing that excludes `SKILL.md` from reading an injected skill. Content reads, compound commands, and ambiguous commands remain subject to the existing boundary checks; release thresholds are unchanged.
