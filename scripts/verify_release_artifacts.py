@@ -11,9 +11,9 @@ import sys
 import zipfile
 import zlib
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
-from release_inventory import tracked_head_inventory, validate_release_path
+from release_inventory import hash_inventory, tracked_head_inventory, validate_release_path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -69,7 +69,15 @@ def verify_archive(
     expected_tracked_paths: Iterable[str],
     version: str,
     authorized_tag: str | None,
+    *,
+    expected_source_hashes: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
+    """Check archive structure; main also supplies independent Git-blob hashes.
+
+    The names-only helper contract remains usable for structural fixture checks;
+    it does not establish source-byte identity without expected_source_hashes.
+    """
+
     with zipfile.ZipFile(archive, "r") as source:
         infos = source.infolist()
         names = [info.filename for info in infos]
@@ -161,11 +169,22 @@ def verify_archive(
             set(file_hashes) == payload_names,
             f"Archive manifest entry set mismatch: {archive.name}",
         )
-        for name, expected_hash in sorted(file_hashes.items()):
+        if expected_source_hashes is not None:
             require(
-                isinstance(expected_hash, str) and sha256_bytes(source.read(name)) == expected_hash,
+                set(expected_source_hashes) == payload_names,
+                f"Trusted source inventory mismatch: {archive.name}",
+            )
+        for name, expected_hash in sorted(file_hashes.items()):
+            actual_hash = sha256_bytes(source.read(name))
+            require(
+                isinstance(expected_hash, str) and actual_hash == expected_hash,
                 f"Archive manifest hash mismatch: {name}",
             )
+            if expected_source_hashes is not None:
+                require(
+                    actual_hash == expected_source_hashes[name],
+                    f"Trusted source blob hash mismatch: {name}",
+                )
 
     expected_names = set(expected_tracked_paths) | {manifest_name}
     require(set(names) == expected_names, f"Clean-HEAD inventory mismatch: {archive.name}")
@@ -203,26 +222,27 @@ def main() -> int:
         (
             f"report-skills-{version}.zip",
             "RELEASE_MANIFEST.json",
-            [item.path.as_posix() for item in plugin_inventory()],
+            hash_inventory(REPO_ROOT, plugin_inventory()),
         ),
         (
             f"report-skills-source-{version}.zip",
             "SOURCE_SNAPSHOT_MANIFEST.json",
-            [item.path.as_posix() for item in tracked_head_inventory(REPO_ROOT)],
+            hash_inventory(REPO_ROOT, tracked_head_inventory(REPO_ROOT)),
         ),
     )
     results: list[dict[str, Any]] = []
     asset_names: list[str] = []
-    for archive_name, manifest_name, expected_paths in specs:
+    for archive_name, manifest_name, expected_hashes in specs:
         archive = args.directory / archive_name
         sidecar = archive.with_suffix(".zip.sha256")
         digest = verify_sidecar(archive, sidecar)
         result = verify_archive(
             archive,
             manifest_name,
-            expected_paths,
+            expected_hashes,
             version,
             args.authorized_release_tag,
+            expected_source_hashes=expected_hashes,
         )
         require(result["sha256"] == digest, f"Archive digest drift: {archive_name}")
         results.append(result)

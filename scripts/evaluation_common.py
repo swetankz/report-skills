@@ -49,7 +49,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v58"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v60"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -80,7 +80,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v11"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v13"
 TASK_TRANSIENT_CAPACITY_RETRY_POLICY = (
     "explicit-model-capacity-no-output-unchanged-workspace-two-retries-v1"
 )
@@ -2274,6 +2274,152 @@ def task_trace_isolation_validation_errors(
             )
         )
 
+    def contains_process_invocation(command: str) -> bool:
+        """Add bounded Get-Process invocation detection, not a shell parser.
+
+        Only complete constant native -Command serialization is unfolded. Quote
+        spans affect this additive detector alone: the older property-word scan
+        and every other boundary guard still inspect the original command.
+        Ambiguous syntax or executable string consumers retain a conservative
+        refusal when the plainly named command is visible, rather than gaining
+        a quote exemption. No encoded/obfuscated-command confinement is claimed.
+        """
+        visible_name = re.compile(r"(?<![\w-])get-process(?![\w-])", re.IGNORECASE)
+        if not visible_name.search(command):
+            return False
+        payload = command
+        launcher = re.fullmatch(
+            r'\s*(?:"[^"\r\n]+"|[^\s\'";|&()<>]+)\s+'
+            r'-(?:command|c)\s+.+',
+            command,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if launcher is not None:
+            # shlex is used only for constant transcript serialization, never
+            # as a PowerShell parser. Expansion outside a single-quoted source
+            # fragment, malformed quoting and additional tokens are unsupported.
+            quote: str | None = None
+            index = 0
+            while index < len(command):
+                character = command[index]
+                if quote == "'":
+                    if character == "'":
+                        quote = None
+                    index += 1
+                    continue
+                if character == "\\":
+                    if index + 1 >= len(command) or command[index + 1] in "\r\n":
+                        return True
+                    if quote is None or command[index + 1] in '\\"$`':
+                        index += 2
+                        continue
+                if character in {"$", "`"}:
+                    return True
+                if quote == '"':
+                    if character == '"':
+                        quote = None
+                elif character in {"'", '"'}:
+                    quote = character
+                index += 1
+            if quote is not None:
+                return True
+            try:
+                serialized = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+                serialized.whitespace_split = True
+                serialized.commenters = ""
+                tokens = list(serialized)
+            except ValueError:
+                return True
+            if (
+                len(tokens) != 3
+                or tokens[0].replace("\\", "/").rsplit("/", 1)[-1].casefold()
+                not in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
+                or tokens[1].casefold() not in {"-command", "-c"}
+            ):
+                return True
+            payload = tokens[2]
+
+        # Recognize only ordinary ASCII PS strings. Backslashes never escape
+        # their closing quote; backticks inside single quotes are ordinary data.
+        # Comments, here-strings, smart quotes and escapes need a real parser and
+        # therefore receive no inert-data exemption here.
+        ranges: list[tuple[int, int]] = []
+        index = 0
+        while index < len(payload):
+            character = payload[index]
+            if character in "#`\u2018\u2019\u201c\u201d" or payload.startswith(("--%", "<<"), index):
+                return True
+            if character not in {"'", '"'}:
+                index += 1
+                continue
+            if index and payload[index - 1] == "@":
+                return True
+            start = index
+            quote = character
+            index += 1
+            while index < len(payload):
+                character = payload[index]
+                if character in "\u2018\u2019\u201c\u201d" or (quote == '"' and character == "`"):
+                    return True
+                if character == quote:
+                    if index + 1 < len(payload) and payload[index + 1] == quote:
+                        index += 2
+                        continue
+                    break
+                index += 1
+            if index >= len(payload):
+                return True
+            end = index + 1
+            if quote == '"' and "$(" in payload[start:end]:
+                return True  # Expandable subexpressions are not inert operands.
+            ranges.append((start, end))
+            index = end
+
+        def outside_literal(position: int) -> bool:
+            return not any(start <= position < end for start, end in ranges)
+
+        # These keywords introduce executable pipelines only at a command
+        # boundary. CR, CRLF and LF can each separate PowerShell statements.
+        boundary = r"(?:^|[;&|({\r\n=])\s*(?:(?i:return|throw|exit)\s+)?"
+        tool = r"(?:[A-Za-z_][A-Za-z0-9_.-]*\\)?get-process"
+        invocation = re.compile(
+            rf"{boundary}(?:[&.]\s*)?(?P<tool>{tool})(?=$|[\s;&|)}})])",
+            re.IGNORECASE,
+        )
+        if any(outside_literal(match.start("tool")) for match in invocation.finditer(payload)):
+            return True
+        for start, end in ranges:
+            if re.fullmatch(tool, payload[start + 1:end - 1], re.IGNORECASE) and re.search(
+                rf"{boundary}[&.]\s*(?:\(\s*)?$", payload[:start]
+            ):
+                return True  # & 'Get-Process' and & ('Get-Process') execute.
+
+        string_consumer = (
+            r"(?:[A-Za-z_][A-Za-z0-9_.-]*\\)?"
+            r"(?:iex|invoke-expression|invoke-command|add-type|start-process)"
+        )
+        shell_name = r"(?:pwsh|powershell|bash|sh|zsh|ksh|cmd)(?:\.exe)?"
+        consumers = re.compile(
+            rf"{boundary}(?:&\s*)?(?:{string_consumer}|"
+            rf"(?:[^\s'\";&|()]*[/\\])?{shell_name})(?=$|[\s;&|)])"
+            r"|\[[^]\r\n]*\bscriptblock\s*\]"
+            rf"|{boundary}[&.]\s*[$(]",
+            re.IGNORECASE,
+        )
+        if any(outside_literal(match.start()) for match in consumers.finditer(payload)):
+            return True  # Do not classify executable string operands as data.
+        for start, end in ranges:
+            name = payload[start + 1:end - 1].replace("\\", "/").rsplit("/", 1)[-1]
+            is_shell = re.fullmatch(shell_name, name, re.IGNORECASE)
+            if is_shell or re.fullmatch(string_consumer, name, re.IGNORECASE):
+                if re.search(rf"{boundary}[&.]\s*(?:\(\s*)?$", payload[:start]):
+                    return True  # Quoted consumers with call operators execute.
+                if is_shell and re.search(rf"{boundary}$", payload[:start]) and re.match(
+                    r"\s+-", payload[end:]
+                ):
+                    return True  # Unsupported quoted native launcher envelope.
+        return False
+
     def contains_git_metadata_path(command: str) -> bool:
         """Detect Git metadata access without rejecting an exclusion glob as access."""
 
@@ -2519,7 +2665,7 @@ def task_trace_isolation_validation_errors(
             re.IGNORECASE,
         ):
             command_violations.add("computed parent path")
-        if re.search(
+        if contains_process_invocation(command) or re.search(
             r"(?:get-ciminstance|get-wmiobject)\s+(?:-class(?:name)?\s+)?win32_process"
             r"|\bwmic(?:\.exe)?\s+process\b"
             r"|\bget-process\b.*\b(?:path|commandline|startinfo)\b"

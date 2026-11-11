@@ -520,6 +520,12 @@ For the manual route, follow the [registration steps](#register-the-manual-marke
 
 Codex CLI includes a plugin browser, but plugins are not supported in the Codex IDE extension. See OpenAI's [Plugins guide](https://learn.chatgpt.com/docs/plugins).
 
+## Bundled helper runtimes
+
+The bundled `.ps1` CSV writers and derivative-package validator require PowerShell 7 (`pwsh`); Windows PowerShell 5.1 (`powershell.exe`) is not a supported interpreter for those scripts. The bundled Python helpers require Python 3.11 or later. These are helper prerequisites, not proof of plugin installation or platform qualification.
+
+If a required interpreter is unavailable or execution policy blocks a helper, do not install a runtime, launch a nested shell to bypass policy, or change the main client environment without separate approval. Use a permitted existing Python helper or equivalent structured serializer and strict readback that satisfies the complete contract. If no permitted runtime can do so, report the artifact blocked or not verified rather than weakening validation.
+
 ## Test the installation
 
 In a new Codex task, run this self-contained synthetic test:
@@ -552,14 +558,12 @@ The complete plugin should expose the `report-skills` router and the ten special
 
 Recorded checks cover the earlier `v0.2.0-rc.1` Windows candidate: personal-marketplace registration and installation used an extracted source snapshot, while the released plugin ZIP's checksum, extraction, and root manifest were checked separately. Those checks do not qualify the current unreleased `0.2.0` candidate.
 
-The following checks remain pending for the current candidate:
+The approved v0.2.0 verification target is Codex on Windows plus standalone packages. These checks remain pending for the current candidate:
 
-- Complete Codex marketplace installation and activation from the actual plugin ZIP.
-- Complete ZCode installation and activation from the actual plugin ZIP.
-- End-to-end macOS and Linux installation flows.
+- Complete Codex-on-Windows marketplace installation and activation from the actual plugin ZIP.
 - Representative standalone skills installed from the exact release tag, including helper execution without the source checkout.
 
-Treat these as documented installation paths awaiting validation. Record the exact candidate, client version, operating system, and observed results before claiming a supported release path.
+ZCode installation/activation and end-to-end macOS/Linux flows are documented but unverified; they are not additional claimed support or automatically added release-verification scope. Record the exact candidate, client version, operating system, and observed results before claiming a supported release path.
 
 ## Troubleshooting
 

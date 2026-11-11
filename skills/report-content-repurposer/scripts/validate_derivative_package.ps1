@@ -48,29 +48,51 @@ if (-not $StructuralOnly -and -not $SourceReport) {
 
 function Read-StrictCsv {
     param([Parameter(Mandatory = $true)][string]$Path)
-    # TextFieldParser skips blank physical lines. Reject empty logical records
-    # first, while retaining embedded line breaks inside quoted fields.
-    $rawCsv = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
-    $insideQuotes = $false
+    # TextFieldParser permits malformed quoting and bare-CR record endings.
+    # Validate field boundaries first; quoted line breaks remain literal data.
+    # Decode exactly once without BOM-based UTF-16/32 auto-detection or lossy
+    # replacement. Only the optional UTF-8 signature is removed.
+    $csvBytes = [System.IO.File]::ReadAllBytes($Path)
+    $offset = 0
+    if ($csvBytes.Length -ge 3 -and $csvBytes[0] -eq 0xEF -and $csvBytes[1] -eq 0xBB -and $csvBytes[2] -eq 0xBF) { $offset = 3 }
+    try { $rawCsv = [System.Text.UTF8Encoding]::new($false, $true).GetString($csvBytes, $offset, $csvBytes.Length - $offset) }
+    catch { throw "CSV must be valid UTF-8: $($_.Exception.Message)" }
+    $state = 'start'
     $recordHasContent = $false
     for ($characterIndex = 0; $characterIndex -lt $rawCsv.Length; $characterIndex++) {
         $character = $rawCsv[$characterIndex]
-        if ($character -eq '"') {
+        if ($state -ceq 'quoted') {
+            if ($character -eq '"') {
+                if ($characterIndex + 1 -lt $rawCsv.Length -and $rawCsv[$characterIndex + 1] -eq '"') { $characterIndex++; continue }
+                $state = 'closed'
+            }
+        } elseif ($character -eq '"') {
+            if ($state -cne 'start') { throw 'CSV has an unexpected quote in an unquoted field' }
+            $state = 'quoted'
             $recordHasContent = $true
-            if ($insideQuotes -and $characterIndex + 1 -lt $rawCsv.Length -and $rawCsv[$characterIndex + 1] -eq '"') { $characterIndex++; continue }
-            $insideQuotes = -not $insideQuotes
-        } elseif (-not $insideQuotes -and ($character -eq "`r" -or $character -eq "`n")) {
+        } elseif ($character -eq ',') {
+            $state = 'start'
+            $recordHasContent = $true
+        } elseif ($character -eq "`r" -or $character -eq "`n") {
+            if ($character -eq "`r") {
+                if ($characterIndex + 1 -ge $rawCsv.Length -or $rawCsv[$characterIndex + 1] -ne "`n") { throw 'CSV has a bare carriage return outside a quoted field' }
+                $characterIndex++
+            }
             if (-not $recordHasContent) { throw 'CSV has a blank logical record' }
             $recordHasContent = $false
-            if ($character -eq "`r" -and $characterIndex + 1 -lt $rawCsv.Length -and $rawCsv[$characterIndex + 1] -eq "`n") { $characterIndex++ }
-        } elseif (-not [char]::IsWhiteSpace($character)) { $recordHasContent = $true }
+            $state = 'start'
+        } elseif ($state -ceq 'closed') {
+            throw 'CSV has characters after a closing quote'
+        } else {
+            $state = 'unquoted'
+            if (-not [char]::IsWhiteSpace($character)) { $recordHasContent = $true }
+        }
     }
+    if ($state -ceq 'quoted') { throw 'CSV ended inside a quoted field' }
+    if ($state -ceq 'unquoted' -and -not $recordHasContent) { throw 'CSV has a blank logical record' }
     Add-Type -AssemblyName Microsoft.VisualBasic
-    $parser = [Microsoft.VisualBasic.FileIO.TextFieldParser]::new(
-        $Path,
-        [System.Text.Encoding]::UTF8,
-        $true
-    )
+    # Parse the same immutable text that passed decoding and lexical validation.
+    $parser = [Microsoft.VisualBasic.FileIO.TextFieldParser]::new([System.IO.StringReader]::new($rawCsv))
     $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
     $parser.SetDelimiters([string[]]@(','))
     $parser.HasFieldsEnclosedInQuotes = $true

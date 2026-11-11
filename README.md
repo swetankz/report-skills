@@ -39,7 +39,7 @@ python scripts/run_trigger_evals.py --dry-run
 python -m unittest discover -s tests
 ```
 
-Also validate every `skills/*` folder with the current Codex skill validator and validate the repository root with the current Codex plugin validator.
+Also validate every `skills/*` folder with the current Codex skill validator. Official plugin validation for **v0.2.0 GitHub-only** is **NOT RUN—unavailable in audited tooling**, under the already approved release/channel-scoped disposition. This is not a plugin-validator pass and does not waive any other gate. Run the official plugin validator against the repository root when it becomes available; do not extend the disposition to other versions or distribution channels.
 
 ## Evaluation
 

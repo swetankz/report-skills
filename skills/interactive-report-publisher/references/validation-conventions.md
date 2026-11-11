@@ -41,6 +41,12 @@ Use severity consistently:
 
 Bind every review to an artifact ID, version, hash or exact revision, timestamp, environment, and inspected formats. Mark review evidence stale after a material change.
 
+## PowerShell helper invocation
+
+Use descriptive multi-word helper names rather than alias-prone abbreviations such as `H` or `R`; define and invoke each helper in the same script. Call the function's own script block explicitly: for a function you define as `Get-LocalArtifactDigest`, use `& ${function:Get-LocalArtifactDigest} $path`. A bare short name can select a built-in alias even when a function with that name was defined in the same script. Do not assume function state survives a later tool call.
+
+When recovering a helper invocation, do not inspect or change aliases or consult command/session history. Define a fresh descriptive helper in the current authorized script instead. This convention grants no host-discovery or outside-workspace authority, and does not excuse a failed boundary attempt.
+
 ## Runtime claims
 
 Do not infer a successful build, browser behavior, smooth motion, connectivity, deployment, or live edit from code inspection alone. Run or observe the required system and record the result.

@@ -14,8 +14,13 @@ import evaluation_common as ec
 
 class GuardMethodIdentityTests(unittest.TestCase):
     def test_repaired_guard_uses_fresh_method_and_guard_identities(self):
-        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v58")
+        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v60")
         self.assertEqual(ec.TASK_SKILL_BODY_READ_GUARD, "named-skill-path-command-events-v5")
+
+    def test_host_boundary_guard_identity_is_rebound_in_task_receipts(self):
+        self.assertEqual(ec.TASK_OUTPUT_SAFETY_GUARD, "task-output-and-host-boundary-safety-v13")
+        self.assertEqual(ec.canonical_task_isolation_receipt()["task_output_safety_guard"], ec.TASK_OUTPUT_SAFETY_GUARD)
+        self.assertEqual(ec.canonical_behavioral_task_stage_method()["isolation"]["task_output_safety_guard"], ec.TASK_OUTPUT_SAFETY_GUARD)
 
     def test_gate1_plan_and_stage_receipt_match_the_active_method(self):
         plan = json.loads((ROOT / "evals" / "gate1-release-plan.json").read_text(encoding="utf-8"))
