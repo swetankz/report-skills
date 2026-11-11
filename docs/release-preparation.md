@@ -40,10 +40,10 @@ The combined changes use evaluation method `report-skills-release-evaluation-v56
 to avoid reusing any earlier method identity. They do not adopt all changes from
 the intervening unpublished branches. All earlier raw runs remain diagnostics.
 
-## Phase III runtime-compatibility update
+## Phase III runtime-compatibility update (v57 history)
 
-The active method is now `report-skills-release-evaluation-v57`, superseding the
-v56 preparation identity above. Codex 0.166.0 renders a typed `additional_tools`
+Method `report-skills-release-evaluation-v57` superseded the v56 preparation
+identity above. Codex 0.166.0 renders a typed `additional_tools`
 item with developer role but no message content. The model-free preflight must
 validate that declaration separately, not discard it or treat it as an empty
 text message. The ordered profile receipt now binds complete tool declarations
@@ -58,6 +58,30 @@ release thresholds, model settings, task coverage, deadlines or capacity-only
 retry limits. Fresh clean-commit anchors and fresh future Gate 2 evidence are
 required; model-free diagnostics are not behavioral qualification. The earlier
 offline matrix below describes its original preparation revision, not a v57 pass.
+
+## Phase III literal provenance guard repair (v58)
+
+The active offline candidate now uses `report-skills-release-evaluation-v58` and
+`named-skill-path-command-events-v5`. A command-text guard could mistake the
+literal `.benchmark_skill/*` pattern in a provenance-role comparison for a second
+skill reference, even when the command referenced only the allowed candidate
+`SKILL.md`. The repair recognizes a bounded simple-variable PowerShell `-like`
+classifier with an exact single-quoted pattern and literal label branch. Only
+that data operand is masked for this guard; every other path/command reference
+and every independent boundary check remains visible.
+
+Actual wildcard IO, baseline skill access, other-skill reads, chained references,
+interpolation, dynamic execution and unsupported lexical/envelope forms do not
+gain an exception. This is not a general PowerShell parser. Prompt/tool probe
+identities, release thresholds, model/effort/tier, observation coverage,
+deadlines and capacity-only retries are unchanged.
+
+Saved traces are used only as unexecuted regression data. Their original receipts
+remain immutable and diagnostic: replay is not a model observation, qualification
+pass, evidence migration or permission to resume the stopped campaign. A reviewed
+clean v58 candidate, fresh private profile evidence and separately approved usage
+are required before another live qualification run. No fresh pass is claimed by
+this offline repair or the older validation matrix below.
 
 ## Blocker register
 

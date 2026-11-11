@@ -49,7 +49,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v57"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v58"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -60,7 +60,7 @@ CODEX_TIMEOUT_ENFORCEMENT_MODE = (
 )
 CODEX_TIMEOUT_POLL_INTERVAL_SECONDS = 1.0
 TASK_IGNORE_USER_CONFIG_SCOPE = "config.toml_only"
-TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v4"
+TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v5"
 TASK_COLLABORATION_GUARD = "no-collaboration-tool-events-v1"
 MODEL_MULTI_AGENT_FEATURES = ("multi_agent", "multi_agent_v2")
 MODEL_AGENT_TOOLS_CONFIG = "agents.enabled=false"

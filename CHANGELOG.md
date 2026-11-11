@@ -4,6 +4,8 @@ All notable repository-level changes are documented here.
 
 ## 0.2.0 — Unreleased
 
+- Bind evaluation method v58 and named-skill guard v5 to a bounded literal provenance-classification exception. Keep actual wildcard IO, baseline and other-skill access, chained reads, unsupported lexical forms and dynamic execution under the existing fail-closed checks. Recorded-trace replay is diagnostic only; no stopped campaign is resumed or reused, and fresh qualification remains required.
+
 - Bind evaluation method v57 to typed Codex tool declarations: validate reviewed envelopes, retain nonempty developer messages and exact sentinel binding, hash complete ordered tool semantics, and reject ambiguous JSON and known collaboration declarations. Fresh anchors and qualification remain required; release thresholds and execution controls are unchanged.
 
 - Document a manual Codex local-marketplace wrapper for Windows, macOS, and Linux so installation does not require the optional plugin-creator skill. Keep the ZCode catalog and extracted plugin payload unchanged, distinguish available from installed plugins, and retain pending host-installation and qualification claims.
