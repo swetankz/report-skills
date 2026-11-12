@@ -1,0 +1,115 @@
+name: Verify release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Optional full commit SHA expected for this verification
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: report-skills-release-verification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-arm-candidate:
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+    steps:
+      - name: Check expected source commit
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ACTUAL_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:EXPECTED_SHA) {
+            if ($env:EXPECTED_SHA -notmatch '^[0-9a-fA-F]{40}$') {
+              throw 'expected_sha must be a full 40-hexadecimal commit SHA.'
+            }
+            if ($env:EXPECTED_SHA.ToLowerInvariant() -ne $env:ACTUAL_SHA.ToLowerInvariant()) {
+              throw "Selected ref resolves to $env:ACTUAL_SHA, not expected $env:EXPECTED_SHA."
+            }
+          }
+
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the exact local candidate
+        run: python scripts/create_release_package.py
+
+      - name: Build the exact local source candidate
+        run: python scripts/create_source_snapshot.py
+
+      - name: Resolve candidate artifact paths
+        id: candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $manifest = Get-Content -Raw -LiteralPath ".codex-plugin/plugin.json" | ConvertFrom-Json
+          $version = [string]$manifest.version
+          if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$') {
+            throw "Unsafe or malformed plugin version: $version"
+          }
+          $archive = Join-Path $PWD "dist/report-skills-$version.zip"
+          $source = Join-Path $PWD "dist/report-skills-source-$version.zip"
+          foreach ($target in @($archive, "$archive.sha256", $source, "$source.sha256")) {
+            if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+              throw "Candidate artifact was not created: $target"
+            }
+          }
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+          "receipt=$env:RUNNER_TEMP/report-skills-release-verification-$version.json" >> $env:GITHUB_OUTPUT
+
+      - name: Verify candidate archives and hashes
+        run: python scripts/verify_release_artifacts.py --directory dist
+
+      - name: Verify plugin in a fresh Windows profile
+        shell: pwsh
+        env:
+          PLUGIN_ZIP: ${{ steps.candidate.outputs.archive }}
+          VERIFICATION_RECEIPT: ${{ steps.candidate.outputs.receipt }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: >
+          python scripts/verify_released_plugin.py
+          --plugin-zip $env:PLUGIN_ZIP
+          --output $env:VERIFICATION_RECEIPT
+
+      - name: Append concise verification summary
+        if: always()
+        shell: pwsh
+        env:
+          VERIFICATION_RECEIPT: ${{ steps.candidate.outputs.receipt }}
+        run: |
+          $receipt = $env:VERIFICATION_RECEIPT
+          "## Release candidate verification" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          if (Test-Path -LiteralPath $receipt -PathType Leaf) {
+            $result = Get-Content -Raw -LiteralPath $receipt | ConvertFrom-Json
+            "- Candidate source commit: $($result.source_commit)" >> $env:GITHUB_STEP_SUMMARY
+            "- Plugin ZIP SHA-256: $($result.candidate.sha256)" >> $env:GITHUB_STEP_SUMMARY
+            "- Model calls: $($result.model_free_discovery.model_calls_requested)" >> $env:GITHUB_STEP_SUMMARY
+            "- Skills discovered: $($result.model_free_discovery.total_discovered_skills)" >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "- Verification did not produce a receipt; inspect the failed step." >> $env:GITHUB_STEP_SUMMARY
+          }
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "This result is candidate verification only. Publication authorization and post-publication verification remain separate approval gates." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload verification receipt
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-skills-release-verification-${{ github.sha }}
+          path: ${{ steps.candidate.outputs.receipt }}
+          retention-days: 30
+          if-no-files-found: error
