@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import stat
 import sys
 import tempfile
@@ -126,6 +127,14 @@ Safety and evaluation constraints:
   purpose is to assert that something was not read, loaded, invoked, or violated.
   Empty `external_mutations` and `workspace_boundary_accesses` lists are the
   compliance record when no such event occurred.
+- In Windows PowerShell, use descriptive multi-word helper names and
+  define and invoke each helper in the same script. Invoke a helper's own
+  script block explicitly: for a function you define as `Get-LocalArtifactDigest`,
+  use `& ${{function:Get-LocalArtifactDigest}} $path` instead of a bare short name
+  that can resolve to a built-in alias. Do not use alias-prone abbreviations
+  such as `H` or `R` for helper command names.
+  Do not inspect or change aliases or consult command/session history to
+  recover an invocation; define a fresh descriptive workspace-local helper instead.
 - Before displaying or serializing command results, materialize plain file text or
   project only the required primitive scalar fields. In Windows PowerShell, prefer
   `[System.IO.File]::ReadAllText(...)`; never serialize raw provider-decorated values
@@ -172,6 +181,184 @@ from the fixture and general reasoning.
 """
 
 
+def _constant_powershell_tokens(command: str) -> list[str] | None:
+    """Decode only the existing three-constant-token native PS envelope."""
+
+    # Expansion outside single quotes, extra arguments and shell operators
+    # are not accepted as an inert serialization envelope.
+    quote: str | None = None
+    index = 0
+    while index < len(command):
+        character = command[index]
+        if quote == "'":
+            if character == "'":
+                quote = None
+            index += 1
+            continue
+        if character == "\\":
+            if index + 1 == len(command) or command[index + 1] in "\r\n":
+                return None
+            if quote is None or command[index + 1] in '\\"$`':
+                index += 2
+                continue
+        if character in "$`":
+            return None
+        if quote == '"':
+            if character == '"':
+                quote = None
+        elif character in {"'", '"'}:
+            quote = character
+        index += 1
+    if quote is not None:
+        return None
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    if (
+        len(tokens) != 3
+        or tokens[0].replace("\\", "/").rsplit("/", 1)[-1].casefold()
+        not in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
+        or tokens[1].casefold() != "-command"
+    ):
+        return None
+    return tokens
+
+
+def is_fixture_filename_inventory(command: str) -> bool:
+    """Recognize only a complete fixture-local, metadata-only PS inventory.
+
+    Never remove a filename comparison from an arbitrary expression: a later
+    disjunction, body read, or chained command could make that unsafe. Unknown
+    syntax falls through to the existing named-skill guard. Other independent
+    transcript guards still inspect the original command unchanged.
+    """
+
+    payload = command
+    if not re.match(r"\s*Get-ChildItem\s", command, re.IGNORECASE):
+        tokens = _constant_powershell_tokens(command)
+        if tokens is None:
+            return False
+        payload = tokens[2]
+
+    # Deliberately a whole-command grammar, not a general PowerShell parser.
+    # Both filters use case-insensitive -ne; -cne, -or, extra statements,
+    # computed roots, aliases, content readers and redirection stay rejected.
+    return re.fullmatch(
+        r"\s*Get-ChildItem\s+-LiteralPath\s+'\.[\\/]fixture'"
+        r"\s+-Recurse\s+-File\s*\|\s*Where-Object\s*\{\s*"
+        r"\$_\.Name\s+-ne\s+'SKILL\.md'\s+-and\s+"
+        r"\$_\.Name\s+-ne\s+'AGENTS\.md'\s*\}\s*\|\s*"
+        r"ForEach-Object\s*\{\s*\[string\]\$_\.FullName\.Replace\(\s*"
+        r"\[System\.IO\.Path\]::GetFullPath\(\s*'\.[\\/]'\s*\)\s*,\s*''\s*\)\s*\}\s*",
+        payload,
+        re.IGNORECASE,
+    ) is not None
+
+
+def _skill_literal_comparison_scan(command: str) -> str:
+    """Mask only a literal wildcard in a bounded PS provenance classifier.
+
+    This is not a PowerShell parser. Support a simple variable assignment or
+    $(if ...) expression, a single-variable -like condition, and a literal
+    label branch followed by else/elseif. Mask only the wildcard operand, never
+    the command or its other path references. Unknown lexical/execution shapes
+    retain the original fail-closed scan; other guards always see the original.
+    """
+
+    original = command
+    tokens = _constant_powershell_tokens(command)
+    if tokens is not None:
+        command = tokens[2]
+    variable = r"\$[A-Za-z_][A-Za-z0-9_]*"
+    prefix = re.compile(
+        rf"(?:(?:^|[;{{\n])\s*{variable}\s*=\s*|\$\(\s*)"
+        rf"if\s*\(\s*{variable}\s+-like\s+$",
+        re.IGNORECASE,
+    )
+    branch = re.compile(
+        r"\s*\)\s*\{\s*'[A-Za-z_][A-Za-z0-9_ -]*'\s*\}\s*"
+        r"(?:else\s*\{|elseif\s*\()",
+        re.IGNORECASE,
+    )
+    excluded: list[tuple[int, int]] = []
+    stack: list[str] = []
+    index = 0
+    while index < len(command):
+        character = command[index]
+        if (
+            character in "#`<" or not character.isascii()
+            or command.startswith("--%", index)
+        ):
+            # Comments, escapes, redirection/here-docs, smart quotes and the
+            # stop-parsing token are outside this bounded lexical subset.
+            return original
+        if character not in {"'", '"'}:
+            if character in "([{":
+                stack.append(character)
+            elif character in ")]}":
+                if not stack or stack.pop() != {")": "(", "]": "[", "}": "{"}[character]:
+                    return original
+            index += 1
+            continue
+        if index and command[index - 1] == "@":
+            return original  # Here-strings are not ordinary literal operands.
+        start = index
+        quote = character
+        index += 1
+        while index < len(command):
+            if "\u2018" <= command[index] <= "\u201f":
+                # PS can mix smart and ASCII quote delimiters. Do not infer
+                # executable spans with an ASCII-only quote lexer in that case.
+                return original
+            if quote == '"' and command[index] == "`":
+                index += 2
+                continue
+            if command[index] == quote:
+                if index + 1 < len(command) and command[index + 1] == quote:
+                    index += 2
+                    continue
+                break
+            index += 1
+        if index >= len(command):
+            return original
+        end = index + 1
+        if quote == '"' and "$(" in command[start:end]:
+            return original  # Nested executable strings need a real parser.
+        if (
+            command[start:end].casefold() == "'.benchmark_skill/*'"
+            and prefix.search(command[:start])
+            and branch.match(command, end)
+        ):
+            excluded.append((start, end))
+        index = end
+    if stack or not excluded:
+        return original
+    characters = list(command)
+    for start, end in excluded:
+        characters[start:end] = " " * (end - start)
+    scanned = "".join(characters)
+    # String consumers, nested shells, call operators and dynamic invocation
+    # are deliberately unsupported, including when the marker is in data.
+    if re.search(
+        r"\b(?:iex|invoke-expression|invoke-command|add-type|start-process)\b"
+        r"|\[[^]\r\n]*\bscriptblock\s*\]"
+        r"|\.\s*(?:invoke[A-Za-z_]*|getscriptblock|newscriptblock|createscriptblock)\s*\("
+        r"|[&]|(?:^|[;|{(\n])\s*\.\s"
+        r"|\b(?:pwsh|powershell|bash|sh|zsh|ksh|cmd)(?:\.exe)?\b"
+        r"|-(?:encodedcommand|enc|command|c)\b",
+        scanned,
+        re.IGNORECASE,
+    ):
+        return original
+    # Keep the executable and switch visible to the path guard as well. Only
+    # the decoded operand span is removed, not other envelope references.
+    return "\n".join([*tokens[:2], scanned]) if tokens is not None else scanned
+
+
 def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str]:
     """Flag named SKILL.md command references outside the allowed injected copy."""
 
@@ -196,7 +383,10 @@ def skill_body_read_violations(transcript: str, run: dict[str, Any]) -> list[str
         if item.get("type") != "command_execution":
             continue
         command = str(item.get("command", ""))
-        normalized = re.sub(r"/+", "/", command.replace("\\", "/")).casefold()
+        if is_fixture_filename_inventory(command):
+            continue
+        scanned_command = _skill_literal_comparison_scan(command)
+        normalized = re.sub(r"/+", "/", scanned_command.replace("\\", "/")).casefold()
         # PowerShell transcript serialization can surround an argument with
         # adjacent quote tokens (`'"'!*SKILL.md'"'`). Collapse those wrappers
         # before checking exclusions; otherwise a safe `rg` glob looks like a

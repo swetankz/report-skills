@@ -13,13 +13,19 @@ Choose the classification from evidence, not filename, folder, resolution, or ap
 
 ## Private record
 
-Record fields when known and authorized:
+Keep the required row fields even when their values are unknown: `artifact_id`, `classification`, `status`, `creation_status`, `relationship_status`, `parent_ids`, `model`, and `projection_eligibility`. Use the literal string `unknown` with an explanation in `unknown_fields` for missing required metadata. Optional inapplicable fields may be null. Record other fields only when known and authorized:
 
 ```json
 {
   "artifact_id": "synthetic-artifact-001",
   "classification": "local-derivative",
   "status": "succeeded",
+  "creation_status": "succeeded",
+  "relationship_status": "parent-established",
+  "projection_eligibility": {
+    "status": "redact",
+    "reason": "Remove private paths and provider identifiers from the separate public projection."
+  },
   "provider": "Synthetic Provider",
   "tool": "Synthetic Tool",
   "model": "synthetic-model",

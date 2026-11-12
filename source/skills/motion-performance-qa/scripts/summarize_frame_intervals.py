@@ -10,7 +10,7 @@ import math
 import statistics
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,27 +48,68 @@ def load_json(path: Path) -> tuple[str, list[float]]:
     raise ValueError("JSON object must contain intervals_ms or timestamps_ms")
 
 
+def checked_csv_lines(lines: Iterable[str]) -> Iterable[str]:
+    """Reject quoting/ending forms that csv.reader(strict=True) still accepts."""
+    state = "start"
+    for line in lines:
+        index = 0
+        while index < len(line):
+            char = line[index]
+            if state == "quoted":
+                if char == '"':
+                    if index + 1 < len(line) and line[index + 1] == '"':
+                        index += 2
+                        continue
+                    state = "closed"
+            elif char == '"':
+                if state != "start":
+                    raise csv.Error("unexpected quote in an unquoted field")
+                state = "quoted"
+            elif char == ",":
+                state = "start"
+            elif char in "\r\n":
+                if char == "\r":
+                    if index + 1 >= len(line) or line[index + 1] != "\n":
+                        raise csv.Error("bare carriage return outside a quoted field")
+                    index += 1
+                state = "start"
+            elif state == "closed":
+                raise csv.Error("characters after a closing quote")
+            else:
+                state = "unquoted"
+            index += 1
+        yield line
+    if state == "quoted":
+        raise csv.Error("CSV ended inside a quoted field")
+
+
 def load_csv(path: Path) -> tuple[str, list[float]]:
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        fields = reader.fieldnames or []
-        if "interval_ms" in fields:
-            column, kind = "interval_ms", "intervals"
-        elif "timestamp_ms" in fields:
-            column, kind = "timestamp_ms", "timestamps"
-        else:
-            raise ValueError("CSV must contain interval_ms or timestamp_ms")
-        values: list[float] = []
-        for row_number, row in enumerate(reader, start=2):
-            raw = row.get(column, "")
-            try:
-                number = float(raw)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"{column} at row {row_number} must be numeric") from exc
-            if not math.isfinite(number):
-                raise ValueError(f"{column} at row {row_number} must be finite")
-            values.append(number)
-    return kind, values
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.reader(checked_csv_lines(handle), strict=True)
+            fields = next(reader, [])
+            if not fields or any(not field.strip() for field in fields) or len({field.casefold() for field in fields}) != len(fields):
+                raise ValueError("CSV has an empty or duplicate header name")
+            if "interval_ms" not in fields and "timestamp_ms" not in fields:
+                raise ValueError("CSV must contain interval_ms or timestamp_ms")
+            column, kind = ("interval_ms", "intervals") if "interval_ms" in fields else ("timestamp_ms", "timestamps")
+            index = fields.index(column)
+            values: list[float] = []
+            for row_number, row in enumerate(reader, start=2):
+                if not any(value.strip() for value in row):
+                    raise ValueError(f"CSV row {row_number} is an empty or whitespace-only logical record")
+                if len(row) != len(fields):
+                    raise ValueError(f"CSV row {row_number} has the wrong field count")
+                try:
+                    number = float(row[index])
+                except ValueError as exc:
+                    raise ValueError(f"{column} at row {row_number} must be numeric") from exc
+                if not math.isfinite(number):
+                    raise ValueError(f"{column} at row {row_number} must be finite")
+                values.append(number)
+        return kind, values
+    except csv.Error as exc:
+        raise ValueError(f"cannot parse CSV: {exc}") from exc
 
 
 def intervals_from(kind: str, values: list[float]) -> list[float]:

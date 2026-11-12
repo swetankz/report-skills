@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import unicodedata
 from dataclasses import dataclass
@@ -164,6 +165,21 @@ def select_inventory(
     inventory: Iterable[TrackedFile], predicate: Callable[[PurePosixPath], bool]
 ) -> list[TrackedFile]:
     return [item for item in inventory if predicate(item.path)]
+
+
+def hash_inventory(repo_root: Path, inventory: Iterable[TrackedFile]) -> dict[str, str]:
+    """Hash raw selected Git blobs, never their mutable worktree representations."""
+
+    repo_root = repo_root.resolve()
+    items = list(inventory)
+    validate_portable_collisions(items)
+    hashes: dict[str, str] = {}
+    for item in items:
+        blob_result = _run_git(repo_root, "cat-file", "blob", item.object_id)
+        if blob_result.returncode:
+            raise SystemExit(f"Unable to read tracked release blob: {item.path.as_posix()}")
+        hashes[item.path.as_posix()] = hashlib.sha256(blob_result.stdout).hexdigest()
+    return hashes
 
 
 def copy_inventory(repo_root: Path, stage: Path, inventory: Iterable[TrackedFile]) -> None:

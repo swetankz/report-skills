@@ -26,7 +26,7 @@ List required matrix entries and mark each `observed`, `not-available`, or `out-
 - Inspect chart labels, scales, annotations, captions, source notes, and non-color meaning.
 - Inspect image crop, resolution, caption association, and decorative competition.
 
-## Pass 3: reader
+## Pass 3: reader-comprehension
 
 - Walk the artifact in intended reading order.
 - Test orientation, navigation, pacing, evidence-to-interpretation transitions, and limitation discovery.
@@ -46,6 +46,7 @@ observation: "directly observed condition"
 evidence: "capture or measurement reference"
 inference: null
 severity: "high"
+impact: "specific consequence for readers or the artifact"
 remedy: "specific corrective action"
 owner: "responsible skill or discipline"
 disposition: "open"

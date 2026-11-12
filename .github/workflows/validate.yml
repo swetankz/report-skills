@@ -56,6 +56,20 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Require PowerShell 7 for Windows helper coverage
+        run: python -c "import shutil; assert shutil.which('pwsh'), 'PowerShell 7 is required for helper coverage'"
+
+      - name: Validate Windows helpers and alias-safe invocation without model calls
+        run: >-
+          python -m unittest -v
+          tests.test_task_shell_helpers
+          tests.test_phase_i_csv_contracts
+          tests.test_phase_i_powershell_csv_parity
+          tests.test_phase_i_process_guard
+          tests.test_phase_i_review_csv_regressions
+          tests.test_skill_csv_writer
+          tests.test_skill_portability
+
       - name: Validate cross-platform host-discovery classification
         run: >-
           python -m unittest

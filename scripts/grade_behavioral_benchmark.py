@@ -357,6 +357,10 @@ Assertions and weights:
 
 Rules:
 - Do not delegate, spawn sub-agents, or use collaboration tools; complete the grade in one top-level trace.
+- Do not run Git in any form, including `git diff --no-index`, or inspect repository metadata.
+- For file comparison, read the exact provided staged file paths and compare their bytes or text directly. For example, PowerShell `[System.IO.File]::ReadAllText` or `ReadAllBytes` can read the inputs; text can be split into lines and corresponding lines compared in memory. No repository tool is needed.
+- Keep inspection inside the supplied grader workspace. Do not access original task locations from transcript paths, inspect parent directories, or discover repositories, host processes, environment values, or tool/runtime availability, including renderer and browser availability.
+- Do not request additional permissions, access a network or live service, or mutate any external state. Do not modify staged inputs or task artifacts, and do not write auxiliary scripts, comparison files, or other artifacts; return the normal structured grading response only.
 - Return exactly one expectation result for every assertion: use each contract assertion_id once, with no missing or extra rows and no duplicated rows. Preserve assertion_id and text exactly.
 - `evidence` must cite a concrete file/path, output field, transcript event, or clearly state that evidence is missing.
 - Missing evidence fails the assertion.

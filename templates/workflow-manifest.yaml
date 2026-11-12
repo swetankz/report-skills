@@ -19,5 +19,5 @@ selected_skills: []
 stages: []
 approval_gates: []
 blockers: []
-external_actions:
-  publication_authorized: false
+external_actions: []
+publication_authorized: false

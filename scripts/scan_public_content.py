@@ -15,7 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
 TEXT_EXTENSIONS = {
-    ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py", ".toml", ".html", ".css", ".js", ".jsx", ".ts", ".tsx", ".svg"
+    ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".py", ".ps1", ".toml", ".html", ".css", ".js", ".jsx", ".ts", ".tsx", ".svg"
 }
 BLOCKED_BINARY_EXTENSIONS = {".pen", ".pdf", ".docx", ".pptx", ".zip", ".7z", ".mov", ".mp4", ".webm", ".ttf", ".otf", ".woff", ".woff2"}
 SKIP_DIRS = {".git", ".build", "__pycache__", ".venv", "dist"}

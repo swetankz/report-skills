@@ -1,16 +1,18 @@
 # Installation
 
-Report Skills ships as one plugin with identical skill bodies for Codex and ZCode. The repository carries a Codex manifest at `.codex-plugin/plugin.json`, a ZCode manifest at `.zcode-plugin/plugin.json`, and a root `marketplace.json` so the repository itself can be added as a ZCode plugin marketplace.
+Report Skills is packaged as one plugin with shared skill bodies for Codex and ZCode. The repository carries a Codex manifest at `.codex-plugin/plugin.json`, a ZCode manifest at `.zcode-plugin/plugin.json`, and a root `marketplace.json`. These files define the intended installation paths; they do not establish that either client has passed end-to-end installation and activation checks for the current candidate.
 
-Use the latest stable [GitHub release](https://github.com/swetankz/report-skills/releases) for normal installation. A release tag and matching checksum provide a version-pinned installation target; `main` is the moving development branch. Install a GitHub pre-release only when intentionally evaluating a release candidate.
+Use a published stable [GitHub release](https://github.com/swetankz/report-skills/releases) for normal installation when one is available. Version `0.2.0` is currently unreleased and awaits fresh qualification. A published release tag and matching checksum provide a version-pinned installation target; `main` is the moving development branch. Install a GitHub pre-release only when intentionally evaluating a release candidate. See [Platform validation status](#platform-validation-status) for the evidence recorded so far.
 
 This guide covers both clients. For ZCode, see [Install in ZCode](#install-in-zcode). The remaining sections walk through the Codex complete-plugin flow on Windows, macOS, and Linux, followed by selected-skill alternatives.
 
 ## Install in ZCode
 
-The repository root is a ZCode plugin marketplace, and the same release assets work through the local-directory path.
+The repository root includes a ZCode plugin marketplace descriptor, and current plugin builds include it alongside both client manifests. The steps below describe the intended flow and still require end-to-end validation against the actual candidate ZIP.
 
 ### Marketplace install from GitHub
+
+This path is for development testing unless the client records an exact published release ref. For a reproducible candidate installation, use the checksum-verified release ZIP through the local-directory path below.
 
 1. Open ZCode **Settings → Plugin Management → Discover**.
 2. Select **+** and add a marketplace from the GitHub repository `swetankz/report-skills`.
@@ -20,7 +22,7 @@ Skills appear namespaced as `report-skills:<skill-name>`, for example `report-sk
 
 ### Local directory install
 
-For testing `main` or an extracted release package, select **+** in the Discover tab, choose a local directory as the marketplace source, and point it at this repository checkout or an extracted release folder. Install the `report-skills` plugin from it.
+For a version-pinned candidate, verify and extract its plugin ZIP, then select **+** in the Discover tab, choose a local directory as the marketplace source, and point it at the extracted release folder. Confirm that the folder contains `.zcode-plugin/plugin.json` and `marketplace.json`, then install `report-skills` from it. A checkout of `main` can be used separately for development testing; record its commit rather than treating it as a released version.
 
 ### Individual skills and cross-tool use
 
@@ -42,9 +44,10 @@ The following Codex flow installs the complete Report Skills plugin into a perso
 You need:
 
 - Codex in the ChatGPT desktop app or Codex CLI.
-- The built-in `$plugin-creator` skill.
-- Permission to create files in your user profile.
+- Permission to create local files and register/install a local marketplace plugin.
 - The Report Skills plugin archive and its matching SHA-256 sidecar.
+
+The manual route does not require `$plugin-creator` or a model call. The optional creator-assisted route requires that skill to be available. The CLI commands below follow Codex CLI 0.166.0; inspect `codex plugin --help` if your installed version differs.
 
 Choose one release and download both of these files from that same release:
 
@@ -252,6 +255,155 @@ If `unzip` is unavailable, install it using your distribution's package manager 
 
 ## Add the plugin to a personal marketplace
 
+You can create a local marketplace without `$plugin-creator`. Use a new wrapper directory containing a Codex catalog and an unchanged copy of the checksum-verified, extracted plugin. The plugin ZIP is not itself a Codex marketplace: its root `marketplace.json` is the ZCode catalog, not the nested catalog Codex discovers. Do not rename that file or change the plugin payload.
+
+Keep the wrapper directory after installation; Codex needs it to refresh the local source. The example below uses `report-skills-local` as the marketplace name and creates this layout:
+
+```text
+report-skills-marketplace/
+  .agents/plugins/marketplace.json
+  plugins/report-skills/
+    .codex-plugin/plugin.json
+    skills/
+```
+
+The catalog's `source.path` is relative to the wrapper root, not to `.agents/plugins/`. Creating the wrapper only writes local files. Registering or installing it later changes Codex configuration/cache; none of these actions publishes the plugin.
+
+### Create the wrapper on Windows
+
+Replace the quoted source marker with the absolute extracted plugin path from the checksum/extraction steps. Run this in PowerShell. It stops instead of overwriting an existing wrapper:
+
+```powershell
+$ErrorActionPreference = "Stop"
+$pluginSource = (Resolve-Path -LiteralPath "PASTE_THE_ABSOLUTE_EXTRACTED_PATH_HERE").Path
+$marketplaceRoot = Join-Path $env:USERPROFILE "report-skills-marketplace"
+$sourceManifest = Join-Path $pluginSource ".codex-plugin/plugin.json"
+
+if (-not (Test-Path -LiteralPath $sourceManifest -PathType Leaf)) {
+    throw "The source is not an extracted Report Skills plugin."
+}
+if (Test-Path -LiteralPath $marketplaceRoot) {
+    throw "The marketplace directory already exists. Inspect it or choose a new empty path."
+}
+
+$catalogDirectory = Join-Path $marketplaceRoot ".agents/plugins"
+[System.IO.Directory]::CreateDirectory($catalogDirectory) | Out-Null
+[System.IO.Directory]::CreateDirectory((Join-Path $marketplaceRoot "plugins")) | Out-Null
+Copy-Item -LiteralPath $pluginSource -Destination (Join-Path $marketplaceRoot "plugins/report-skills") -Recurse -Force
+
+$catalogJson = @'
+{
+  "name": "report-skills-local",
+  "interface": {"displayName": "Report Skills local"},
+  "plugins": [
+    {
+      "name": "report-skills",
+      "source": {"source": "local", "path": "./plugins/report-skills"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Productivity"
+    }
+  ]
+}
+'@
+$catalogPath = Join-Path $catalogDirectory "marketplace.json"
+[System.IO.File]::WriteAllText($catalogPath, $catalogJson + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+"Marketplace root: $marketplaceRoot"
+```
+
+The catalog is written as UTF-8 without a byte-order mark. Confirm that `plugins/report-skills/.codex-plugin/plugin.json` exists beneath the printed root before registering it.
+
+### Create the wrapper on macOS or Linux
+
+Replace the source marker with the absolute extracted plugin path. This block stops on a missing source or an existing wrapper, including a dangling link:
+
+```bash
+set -eu
+plugin_source='PASTE_THE_ABSOLUTE_EXTRACTED_PATH_HERE'
+marketplace_root="$HOME/report-skills-marketplace"
+
+case "$plugin_source" in
+  /*) ;;
+  *) printf '%s\n' "Use the absolute extracted plugin path."; exit 1 ;;
+esac
+if [ ! -f "$plugin_source/.codex-plugin/plugin.json" ]; then
+    printf '%s\n' "The source is not an extracted Report Skills plugin."
+    exit 1
+fi
+if [ -e "$marketplace_root" ] || [ -L "$marketplace_root" ]; then
+    printf '%s\n' "The marketplace directory already exists. Inspect it or choose a new empty path."
+    exit 1
+fi
+
+mkdir -p "$marketplace_root/.agents/plugins" "$marketplace_root/plugins"
+cp -R "$plugin_source" "$marketplace_root/plugins/report-skills"
+catalog_path="$marketplace_root/.agents/plugins/marketplace.json"
+cat > "$catalog_path" <<'JSON'
+{
+  "name": "report-skills-local",
+  "interface": {"displayName": "Report Skills local"},
+  "plugins": [
+    {
+      "name": "report-skills",
+      "source": {"source": "local", "path": "./plugins/report-skills"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Productivity"
+    }
+  ]
+}
+JSON
+printf 'Marketplace root: %s\n' "$marketplace_root"
+```
+
+Confirm that `plugins/report-skills/.codex-plugin/plugin.json` exists beneath the printed root before registering it.
+
+### Register the manual marketplace
+
+Use the wrapper **directory**, not the JSON file or the extracted plugin directory, as the marketplace source. Replace the root marker below with the exact absolute `Marketplace root` printed by the creation step. If you chose an alternate location, use that new location here; do not reset it to an older default wrapper. Run the matching block in the operating-system shell. Registration writes Codex configuration/cache but does not install or publish Report Skills.
+
+On Windows:
+
+```powershell
+$ErrorActionPreference = "Stop"
+$marketplaceRoot = (Resolve-Path -LiteralPath "PASTE_THE_ABSOLUTE_MARKETPLACE_ROOT_HERE").Path
+$catalogPath = Join-Path $marketplaceRoot ".agents/plugins/marketplace.json"
+$pluginManifest = Join-Path $marketplaceRoot "plugins/report-skills/.codex-plugin/plugin.json"
+if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $pluginManifest -PathType Leaf)) {
+    throw "This is not the completed wrapper root printed by the creation step."
+}
+codex plugin marketplace add "$marketplaceRoot" --json
+if ($LASTEXITCODE -ne 0) {
+    throw "Codex could not register the marketplace. Resolve the reported error before continuing."
+}
+codex plugin marketplace list
+codex plugin list --marketplace report-skills-local --available --json
+```
+
+On macOS or Linux:
+
+```bash
+set -eu
+marketplace_root='PASTE_THE_ABSOLUTE_MARKETPLACE_ROOT_HERE'
+case "$marketplace_root" in
+  /*) ;;
+  *) printf '%s\n' "Use the absolute wrapper root printed by the creation step."; exit 1 ;;
+esac
+if [ ! -f "$marketplace_root/.agents/plugins/marketplace.json" ] ||
+   [ ! -f "$marketplace_root/plugins/report-skills/.codex-plugin/plugin.json" ]; then
+    printf '%s\n' "This is not the completed wrapper root printed by the creation step."
+    exit 1
+fi
+codex plugin marketplace add "$marketplace_root" --json
+codex plugin marketplace list
+codex plugin list --marketplace report-skills-local --available --json
+```
+
+Read back the results: the marketplace should resolve to the wrapper root and expose `report-skills`. Stop on a command error or a missing plugin; do not infer success from files existing on disk. This setup has not established activation or behavioral qualification. For an organization-managed restriction, ask the administrator rather than bypass the policy.
+
+### Optional creator-assisted setup
+
+If `$plugin-creator` is available, it can create the personal marketplace instead. Do not run both setup routes for the same plugin unless you deliberately want separate marketplace sources.
+
 Open a new Codex task. This step happens in Codex, not in PowerShell or Terminal.
 
 Paste the following prompt and replace the quoted marker with the absolute extracted path printed in the previous section:
@@ -326,7 +478,7 @@ Confirm that the output includes the Report Skills entry and the plugin path rep
 
 1. Fully quit and reopen the ChatGPT desktop app.
 2. Open the **Plugins Directory**.
-3. Select **Personal**.
+3. Select the local marketplace created above, or **Personal** for the creator-assisted route.
 4. Open **Report Skills**.
 5. Select the plus button to install it.
 6. Start a new Codex task after installation.
@@ -335,7 +487,16 @@ The restart reloads the local marketplace. A new task makes the newly installed 
 
 ### Codex CLI
 
-Start Codex from Terminal or PowerShell:
+For the manual marketplace above, run these commands in Terminal or PowerShell, outside an interactive Codex session:
+
+```text
+codex plugin add report-skills@report-skills-local --json
+codex plugin list --marketplace report-skills-local --json
+```
+
+Stop if installation reports an error. Read back the installed entry and record the installed version and cache/source information actually returned by the client. Do not count the earlier `--available` listing as an installation. If you used the creator-assisted route, substitute the marketplace name it reported; do not assume it is `report-skills-local`.
+
+Start a new session after installation. You can also inspect the plugin through the interactive browser. Start Codex from Terminal or PowerShell:
 
 ```text
 codex
@@ -355,9 +516,15 @@ If it does not appear, exit the interactive Codex session or open a second Power
 codex plugin marketplace list
 ```
 
-Then use the desktop workflow or follow OpenAI's local marketplace CLI guidance rather than editing Codex configuration by hand.
+For the manual route, follow the [registration steps](#register-the-manual-marketplace) and check the `report-skills-local` source. For the creator-assisted route, use its reported marketplace name or the desktop workflow. Do not edit Codex configuration by hand to work around a failed command.
 
 Codex CLI includes a plugin browser, but plugins are not supported in the Codex IDE extension. See OpenAI's [Plugins guide](https://learn.chatgpt.com/docs/plugins).
+
+## Bundled helper runtimes
+
+The bundled `.ps1` CSV writers and derivative-package validator require PowerShell 7 (`pwsh`); Windows PowerShell 5.1 (`powershell.exe`) is not a supported interpreter for those scripts. The bundled Python helpers require Python 3.11 or later. These are helper prerequisites, not proof of plugin installation or platform qualification.
+
+If a required interpreter is unavailable or execution policy blocks a helper, do not install a runtime, launch a nested shell to bypass policy, or change the main client environment without separate approval. Use a permitted existing Python helper or equivalent structured serializer and strict readback that satisfies the complete contract. If no permitted runtime can do so, report the artifact blocked or not verified rather than weakening validation.
 
 ## Test the installation
 
@@ -389,7 +556,14 @@ The complete plugin should expose the `report-skills` router and the ten special
 
 ### Platform validation status
 
-The personal-marketplace registration and installation flow was verified on Windows using an extracted `v0.2.0-rc.1` source snapshot. The released plugin ZIP's checksum, extraction, and root manifest were clean-smoke-tested separately on Windows. An end-to-end marketplace installation from the plugin ZIP, and the complete macOS and Linux flows, have not yet been recorded as release evidence.
+Recorded checks cover the earlier `v0.2.0-rc.1` Windows candidate: personal-marketplace registration and installation used an extracted source snapshot, while the released plugin ZIP's checksum, extraction, and root manifest were checked separately. Those checks do not qualify the current unreleased `0.2.0` candidate.
+
+The approved v0.2.0 verification target is Codex on Windows plus standalone packages. These checks remain pending for the current candidate:
+
+- Complete Codex-on-Windows marketplace installation and activation from the actual plugin ZIP.
+- Representative standalone skills installed from the exact release tag, including helper execution without the source checkout.
+
+ZCode installation/activation and end-to-end macOS/Linux flows are documented but unverified; they are not additional claimed support or automatically added release-verification scope. Record the exact candidate, client version, operating system, and observed results before claiming a supported release path.
 
 ## Troubleshooting
 
@@ -413,7 +587,7 @@ Confirm that you downloaded `report-skills-<version>.zip`, not the source archiv
 
 ### Report Skills does not appear under Personal
 
-Confirm that `~/.agents/plugins/marketplace.json` exists, inspect the Report Skills entry's `source.path`, and verify that the referenced plugin directory contains `.codex-plugin/plugin.json`. Then fully restart the desktop app.
+For the creator-assisted route, confirm that `~/.agents/plugins/marketplace.json` exists and inspect the Report Skills entry's `source.path`. For the manual route, check the wrapper's `.agents/plugins/marketplace.json`, then follow the [registration steps](#register-the-manual-marketplace) and select that local source rather than assuming it appears under Personal. Verify that the resolved plugin directory contains `.codex-plugin/plugin.json`, then fully restart the desktop app.
 
 ### The plugin is installed but the skills are unavailable
 
@@ -421,7 +595,7 @@ Start a completely new Codex task or CLI session. Existing sessions may not relo
 
 ### The CLI does not show the personal marketplace
 
-Run `codex plugin marketplace list`. If the marketplace is absent, use the desktop workflow or configure the marketplace through the supported Codex CLI marketplace commands.
+Run `codex plugin marketplace list`. If the manual `report-skills-local` source is absent, follow the [registration steps](#register-the-manual-marketplace). If registration fails, resolve that error before installing. For a creator-assisted marketplace, use its reported source name or the desktop workflow.
 
 ### Personal plugins are unavailable
 

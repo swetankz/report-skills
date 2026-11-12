@@ -22,10 +22,12 @@ import time
 import uuid
 import hashlib
 import unicodedata
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from release_inventory import TrackedFile, validate_portable_collisions, validate_release_path
 
@@ -47,7 +49,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v51"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v60"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -58,15 +60,15 @@ CODEX_TIMEOUT_ENFORCEMENT_MODE = (
 )
 CODEX_TIMEOUT_POLL_INTERVAL_SECONDS = 1.0
 TASK_IGNORE_USER_CONFIG_SCOPE = "config.toml_only"
-TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v4"
+TASK_SKILL_BODY_READ_GUARD = "named-skill-path-command-events-v5"
 TASK_COLLABORATION_GUARD = "no-collaboration-tool-events-v1"
 MODEL_MULTI_AGENT_FEATURES = ("multi_agent", "multi_agent_v2")
 MODEL_AGENT_TOOLS_CONFIG = "agents.enabled=false"
 MODEL_SERVICE_TIER = "fast"
 MODEL_SERVICE_TIER_CONFIG = 'service_tier="fast"'
 MODEL_MULTI_AGENT_GUARD = "feature-and-agent-tools-disabled-v2"
-MODEL_PROMPT_ISOLATION_PROBE_METHOD = "debug-prompt-input-no-agent-context-v2"
-MODEL_PROMPT_ISOLATION_PROBE_SCHEMA = "prompt-input-list-with-sentinel-v1"
+MODEL_PROMPT_ISOLATION_PROBE_METHOD = "debug-prompt-input-no-agent-context-v3"
+MODEL_PROMPT_ISOLATION_PROBE_SCHEMA = "prompt-input-list-with-typed-tools-and-sentinel-v2"
 MODEL_PROMPT_ISOLATION_SENTINEL = (
     "Report Skills model-isolation preflight sentinel v1."
 )
@@ -78,7 +80,7 @@ MODEL_PROMPT_ISOLATION_MARKERS = (
 )
 TASK_WORKSPACE_GUARD = "external-system-temp-workspace-v1"
 TASK_GIT_DISCOVERY_GUARD = "external-workspace-git-env-scrub-and-ceiling-v1"
-TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v11"
+TASK_OUTPUT_SAFETY_GUARD = "task-output-and-host-boundary-safety-v13"
 TASK_TRANSIENT_CAPACITY_RETRY_POLICY = (
     "explicit-model-capacity-no-output-unchanged-workspace-two-retries-v1"
 )
@@ -599,7 +601,7 @@ def canonical_model_isolation_receipt() -> dict[str, Any]:
         "prompt_context_probe": {
             "method": MODEL_PROMPT_ISOLATION_PROBE_METHOD,
             "schema": MODEL_PROMPT_ISOLATION_PROBE_SCHEMA,
-            "profile_receipt": "normalized-developer-context-sha256-v1",
+            "profile_receipt": "normalized-developer-context-and-tools-sha256-v2",
         },
         "collaboration_guard": TASK_COLLABORATION_GUARD,
     }
@@ -2272,6 +2274,152 @@ def task_trace_isolation_validation_errors(
             )
         )
 
+    def contains_process_invocation(command: str) -> bool:
+        """Add bounded Get-Process invocation detection, not a shell parser.
+
+        Only complete constant native -Command serialization is unfolded. Quote
+        spans affect this additive detector alone: the older property-word scan
+        and every other boundary guard still inspect the original command.
+        Ambiguous syntax or executable string consumers retain a conservative
+        refusal when the plainly named command is visible, rather than gaining
+        a quote exemption. No encoded/obfuscated-command confinement is claimed.
+        """
+        visible_name = re.compile(r"(?<![\w-])get-process(?![\w-])", re.IGNORECASE)
+        if not visible_name.search(command):
+            return False
+        payload = command
+        launcher = re.fullmatch(
+            r'\s*(?:"[^"\r\n]+"|[^\s\'";|&()<>]+)\s+'
+            r'-(?:command|c)\s+.+',
+            command,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if launcher is not None:
+            # shlex is used only for constant transcript serialization, never
+            # as a PowerShell parser. Expansion outside a single-quoted source
+            # fragment, malformed quoting and additional tokens are unsupported.
+            quote: str | None = None
+            index = 0
+            while index < len(command):
+                character = command[index]
+                if quote == "'":
+                    if character == "'":
+                        quote = None
+                    index += 1
+                    continue
+                if character == "\\":
+                    if index + 1 >= len(command) or command[index + 1] in "\r\n":
+                        return True
+                    if quote is None or command[index + 1] in '\\"$`':
+                        index += 2
+                        continue
+                if character in {"$", "`"}:
+                    return True
+                if quote == '"':
+                    if character == '"':
+                        quote = None
+                elif character in {"'", '"'}:
+                    quote = character
+                index += 1
+            if quote is not None:
+                return True
+            try:
+                serialized = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+                serialized.whitespace_split = True
+                serialized.commenters = ""
+                tokens = list(serialized)
+            except ValueError:
+                return True
+            if (
+                len(tokens) != 3
+                or tokens[0].replace("\\", "/").rsplit("/", 1)[-1].casefold()
+                not in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
+                or tokens[1].casefold() not in {"-command", "-c"}
+            ):
+                return True
+            payload = tokens[2]
+
+        # Recognize only ordinary ASCII PS strings. Backslashes never escape
+        # their closing quote; backticks inside single quotes are ordinary data.
+        # Comments, here-strings, smart quotes and escapes need a real parser and
+        # therefore receive no inert-data exemption here.
+        ranges: list[tuple[int, int]] = []
+        index = 0
+        while index < len(payload):
+            character = payload[index]
+            if character in "#`\u2018\u2019\u201c\u201d" or payload.startswith(("--%", "<<"), index):
+                return True
+            if character not in {"'", '"'}:
+                index += 1
+                continue
+            if index and payload[index - 1] == "@":
+                return True
+            start = index
+            quote = character
+            index += 1
+            while index < len(payload):
+                character = payload[index]
+                if character in "\u2018\u2019\u201c\u201d" or (quote == '"' and character == "`"):
+                    return True
+                if character == quote:
+                    if index + 1 < len(payload) and payload[index + 1] == quote:
+                        index += 2
+                        continue
+                    break
+                index += 1
+            if index >= len(payload):
+                return True
+            end = index + 1
+            if quote == '"' and "$(" in payload[start:end]:
+                return True  # Expandable subexpressions are not inert operands.
+            ranges.append((start, end))
+            index = end
+
+        def outside_literal(position: int) -> bool:
+            return not any(start <= position < end for start, end in ranges)
+
+        # These keywords introduce executable pipelines only at a command
+        # boundary. CR, CRLF and LF can each separate PowerShell statements.
+        boundary = r"(?:^|[;&|({\r\n=])\s*(?:(?i:return|throw|exit)\s+)?"
+        tool = r"(?:[A-Za-z_][A-Za-z0-9_.-]*\\)?get-process"
+        invocation = re.compile(
+            rf"{boundary}(?:[&.]\s*)?(?P<tool>{tool})(?=$|[\s;&|)}})])",
+            re.IGNORECASE,
+        )
+        if any(outside_literal(match.start("tool")) for match in invocation.finditer(payload)):
+            return True
+        for start, end in ranges:
+            if re.fullmatch(tool, payload[start + 1:end - 1], re.IGNORECASE) and re.search(
+                rf"{boundary}[&.]\s*(?:\(\s*)?$", payload[:start]
+            ):
+                return True  # & 'Get-Process' and & ('Get-Process') execute.
+
+        string_consumer = (
+            r"(?:[A-Za-z_][A-Za-z0-9_.-]*\\)?"
+            r"(?:iex|invoke-expression|invoke-command|add-type|start-process)"
+        )
+        shell_name = r"(?:pwsh|powershell|bash|sh|zsh|ksh|cmd)(?:\.exe)?"
+        consumers = re.compile(
+            rf"{boundary}(?:&\s*)?(?:{string_consumer}|"
+            rf"(?:[^\s'\";&|()]*[/\\])?{shell_name})(?=$|[\s;&|)])"
+            r"|\[[^]\r\n]*\bscriptblock\s*\]"
+            rf"|{boundary}[&.]\s*[$(]",
+            re.IGNORECASE,
+        )
+        if any(outside_literal(match.start()) for match in consumers.finditer(payload)):
+            return True  # Do not classify executable string operands as data.
+        for start, end in ranges:
+            name = payload[start + 1:end - 1].replace("\\", "/").rsplit("/", 1)[-1]
+            is_shell = re.fullmatch(shell_name, name, re.IGNORECASE)
+            if is_shell or re.fullmatch(string_consumer, name, re.IGNORECASE):
+                if re.search(rf"{boundary}[&.]\s*(?:\(\s*)?$", payload[:start]):
+                    return True  # Quoted consumers with call operators execute.
+                if is_shell and re.search(rf"{boundary}$", payload[:start]) and re.match(
+                    r"\s+-", payload[end:]
+                ):
+                    return True  # Unsupported quoted native launcher envelope.
+        return False
+
     def contains_git_metadata_path(command: str) -> bool:
         """Detect Git metadata access without rejecting an exclusion glob as access."""
 
@@ -2517,7 +2665,7 @@ def task_trace_isolation_validation_errors(
             re.IGNORECASE,
         ):
             command_violations.add("computed parent path")
-        if re.search(
+        if contains_process_invocation(command) or re.search(
             r"(?:get-ciminstance|get-wmiobject)\s+(?:-class(?:name)?\s+)?win32_process"
             r"|\bwmic(?:\.exe)?\s+process\b"
             r"|\bget-process\b.*\b(?:path|commandline|startinfo)\b"
@@ -3106,19 +3254,312 @@ def _codex_package_manager(package_root: Path, entrypoint: Path) -> str:
     return "npm"
 
 
+def _validate_prompt_tool_declarations(
+    tools: Any, identities: set[str] | None = None,
+) -> None:
+    """Fail closed on declaration shapes outside the reviewed prompt protocol."""
+
+    if identities is None:
+        identities = set()
+
+    def validate(entries: Any, namespace: str = "") -> None:
+        if not isinstance(entries, list):
+            raise EvaluationError("Codex model-isolation prompt probe has malformed tools")
+        for tool in entries:
+            if not isinstance(tool, dict):
+                raise EvaluationError("Codex model-isolation prompt probe has malformed tool")
+            kind, name = tool.get("type"), tool.get("name")
+            if (
+                not isinstance(name, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]+", name) is None
+                or not isinstance(tool.get("description"), str)
+            ):
+                raise EvaluationError("Codex model-isolation prompt probe has malformed tool identity")
+            collaboration_names = {
+                "spawn_agent", "send_input", "resume_agent", "close_agent",
+                "spawn_agents_on_csv", "wait_agent", "list_agents",
+            }
+            namespace_tokens = set(re.split(r"[^a-z0-9]+", name.casefold()))
+            if (
+                name.casefold() in collaboration_names
+                or (kind == "namespace" and namespace_tokens & {"agent", "agents", "collab", "collaboration"})
+                or (name.casefold() == "wait" and (kind != "function" or namespace != "functions"))
+            ):
+                raise EvaluationError("Codex model-isolation prompt probe exposes collaboration tools")
+            identity = f"{namespace}.{name}" if namespace else name
+            if identity in identities:
+                raise EvaluationError("Codex model-isolation prompt probe has duplicate tool identities")
+            identities.add(identity)
+            if kind == "namespace":
+                # Codex 0.166.0 tools/src/responses_api.rs:
+                # ResponsesApiNamespaceTool has only Function and Custom.
+                if namespace:
+                    raise EvaluationError("Codex model-isolation prompt probe has unsupported nested namespace")
+                if set(tool) != {"type", "name", "description", "tools"}:
+                    raise EvaluationError("Codex model-isolation prompt probe has unsupported namespace fields")
+                validate(tool["tools"], identity)
+            elif kind == "function":
+                if set(tool) != {"type", "name", "description", "parameters", "strict"}:
+                    raise EvaluationError("Codex model-isolation prompt probe has unsupported function fields")
+                parameters = tool["parameters"]
+                if (
+                    not isinstance(tool["strict"], bool)
+                    or not isinstance(parameters, dict)
+                    or parameters.get("type") != "object"
+                    or not isinstance(parameters.get("properties", {}), dict)
+                ):
+                    raise EvaluationError("Codex model-isolation prompt probe has malformed function parameters")
+                if (
+                    not isinstance(parameters.get("additionalProperties", True), (dict, bool))
+                    or any(
+                        not isinstance(schema, (dict, bool))
+                        for schema in parameters.get("properties", {}).values()
+                    )
+                ):
+                    raise EvaluationError("Codex model-isolation prompt probe has malformed parameter schemas")
+                required = parameters.get("required", [])
+                if (
+                    not isinstance(required, list)
+                    or not all(isinstance(key, str) for key in required)
+                    or len(set(required)) != len(required)
+                    or not set(required).issubset(parameters.get("properties", {}))
+                ):
+                    raise EvaluationError("Codex model-isolation prompt probe has malformed required parameters")
+                if name.casefold() == "wait":
+                    cell_properties = {
+                        "cell_id": "string", "max_tokens": "number",
+                        "yield_time_ms": "number", "terminate": "boolean",
+                    }
+                    properties = parameters.get("properties", {})
+                    if (
+                        name != "wait"
+                        or required != ["cell_id"]
+                        or parameters.get("additionalProperties") is not False
+                        or set(parameters) - {"type", "properties", "required", "additionalProperties"}
+                        or not set(properties).issubset(cell_properties)
+                        or "cell_id" not in properties
+                        or any(
+                            not isinstance(schema, dict)
+                            or schema.get("type") != cell_properties[key]
+                            for key, schema in properties.items()
+                        )
+                    ):
+                        raise EvaluationError("Codex model-isolation prompt probe exposes an unverified collaboration waiter")
+            elif kind == "custom":
+                if set(tool) != {"type", "name", "description", "format"}:
+                    raise EvaluationError("Codex model-isolation prompt probe has unsupported custom tool fields")
+                grammar = tool["format"]
+                if (
+                    not isinstance(grammar, dict)
+                    or set(grammar) != {"type", "syntax", "definition"}
+                    or grammar.get("type") != "grammar"
+                    or grammar.get("syntax") != "lark"
+                    or not isinstance(grammar.get("definition"), str)
+                    or not grammar["definition"].strip()
+                ):
+                    raise EvaluationError("Codex model-isolation prompt probe has unsupported custom grammar")
+            else:
+                raise EvaluationError("Codex model-isolation prompt probe has unsupported tool type")
+
+    validate(tools)
+
+
+def _validate_native_prompt_environment(text: str) -> None:
+    """Validate the reviewed Codex 0.166.0 single-environment prelude.
+
+    Legacy native environment messages remain excluded from the developer/tools
+    receipt only after this check. This is not a general XML or Codex-context
+    allowlist: network, multi-environment/subagent context, glob rules and unknown
+    special paths require separate review and fail closed here.
+
+    Source: openai/codex rust-v0.166.0, codex-rs/core/src/context/
+    world_state/environment.rs (body/push_environment_values) and
+    environment_context.rs (FileSystemContext/render_file_system_entry).
+    """
+
+    def require(condition: bool) -> None:
+        if not condition:
+            raise EvaluationError("Codex model-isolation prompt probe has unsupported native environment")
+
+    # ElementTree otherwise discards comments/PIs and can expand internal DTD
+    # entities. Native rendering uses escaped text, never these XML constructs.
+    require(len(text) <= 65536 and "<!" not in text and "<?" not in text)
+    try:
+        parsed = ET.iterparse(io.StringIO(text), events=("start-ns",))
+        # Namespace declarations are absent from native output and disappear
+        # from Element.attrib even when their unbound values carry instructions.
+        for _event, _namespace in parsed:
+            require(False)
+        root = parsed.root
+    except ET.ParseError as error:
+        raise EvaluationError("Codex model-isolation prompt probe has malformed native environment") from error
+
+    def whitespace(value: str | None) -> bool:
+        return re.fullmatch(r"[ \t\r\n]*", value or "") is not None
+
+    def container(node: ET.Element, attributes: dict[str, str]) -> None:
+        require(node.attrib == attributes and whitespace(node.text))
+
+    def leaf(node: ET.Element) -> str:
+        value = node.text or ""
+        require(
+            not node.attrib and not len(node) and bool(value)
+            and value == value.strip()
+            and not any(unicodedata.category(char)[0] == "C" or char in "<>\u2028\u2029" for char in value)
+        )
+        return value
+
+    def absolute_path(node: ET.Element) -> None:
+        value = leaf(node)
+        if re.match(r"^[A-Za-z]:[/\\]", value) or value.startswith("\\\\"):
+            require(
+                PureWindowsPath(value).is_absolute()
+                and not any(char in '<>"|?*' for char in value)
+                and ":" not in (value[2:] if value[1:2] == ":" else value)
+                and not set(re.split(r"[/\\]", value)) & {".", ".."}
+            )
+        else:
+            require(value.startswith("/") and "\\" not in value and not set(value.split("/")) & {".", ".."})
+
+    def filesystem(node: ET.Element) -> None:
+        container(node, {})
+        tags = [child.tag for child in node]
+        require(tags in (["permission_profile"], ["workspace_roots", "permission_profile"]))
+        if tags[0] == "workspace_roots":
+            roots = node[0]
+            container(roots, {})
+            require(bool(len(roots)))
+            for path in roots:
+                require(path.tag == "root")
+                absolute_path(path)
+        profile = node[-1]
+        profile_type = profile.get("type", "")
+        require(profile_type in {"managed", "disabled", "external"})
+        container(profile, {"type": profile_type})
+        require(len(profile) == 1 and profile[0].tag == "file_system")
+        rules = profile[0]
+        rules_type = rules.get("type", "")
+        require(rules_type in {"managed": {"restricted", "unrestricted"}, "disabled": {"unrestricted"}, "external": {"external"}}[profile_type])
+        container(rules, {"type": rules_type})
+        require(rules_type == "restricted" or not len(rules))
+        for entry in rules:
+            require(entry.tag == "entry")
+            access = entry.get("access", "")
+            require(access in {"read", "write", "deny"})
+            attributes = {"access": access}
+            if access == "deny":
+                attributes["escalatable"] = "false"
+            container(entry, attributes)
+            require(len(entry) == 1 and entry[0].tag in {"path", "special"})
+            if entry[0].tag == "path":
+                absolute_path(entry[0])
+            else:
+                require(leaf(entry[0]) in {":root", ":minimal", ":workspace_roots", ":tmpdir", ":slash_tmp"})
+
+    require(root.tag == "environment_context")
+    container(root, {})
+    # All tails, including those after scalar leaves, must be XML whitespace.
+    require(all(whitespace(node.tail) for node in root.iter()))
+    order = ("cwd", "shell", "shell_version", "current_date", "timezone", "filesystem")
+    tags = [node.tag for node in root]
+    require(bool(tags) and tags[0] == "cwd" and tags == [tag for tag in order if tag in tags])
+    fields = {node.tag: node for node in root}
+    absolute_path(fields["cwd"])
+    if "shell" in fields:
+        # codex-rs/shell-command/src/shell_detect.rs, ShellType::name.
+        require(leaf(fields["shell"]) in {"zsh", "bash", "powershell", "sh", "cmd"})
+    if "shell_version" in fields:
+        version = leaf(fields["shell_version"])
+        require("shell" in fields and fields["shell"].text == "powershell")
+        require(re.fullmatch(r"[0-9]{1,5}\.[0-9]{1,5}", version) is not None)
+        require(all(int(component) <= 65535 for component in version.split(".")))
+    if "current_date" in fields:
+        value = leaf(fields["current_date"])
+        require(re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is not None)
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError as error:
+            raise EvaluationError("Codex model-isolation prompt probe has malformed native environment date") from error
+    if "timezone" in fields:
+        value = leaf(fields["timezone"])
+        require(re.fullmatch(r"[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*", value) is not None)
+        # Windows stdlib may have no IANA database. Keep only these reviewed
+        # native/source-fixture names as fallback; never accept arbitrary text.
+        if value not in {"UTC", "Etc/UTC", "Asia/Kolkata", "Asia/Calcutta", "America/Los_Angeles"}:
+            try:
+                ZoneInfo(value)
+            except (ValueError, ZoneInfoNotFoundError) as error:
+                raise EvaluationError("Codex model-isolation prompt probe has unreviewed native environment timezone") from error
+    if "filesystem" in fields:
+        filesystem(fields["filesystem"])
+
+
+def _validated_prompt_developer_entries(
+    prompt_input: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize only reviewed volatile envelopes, preserving all tool semantics."""
+
+    entries: list[dict[str, Any]] = []
+    developer_messages = 0
+    environment_seen = False
+    identities: set[str] = set()
+    for item in prompt_input:
+        kind, role = item.get("type", "message"), item.get("role")
+        if role not in ("developer", "user"):
+            raise EvaluationError("Codex model-isolation prompt probe has unsupported role")
+        if item.get("id") is not None and (
+            not isinstance(item["id"], str) or not item["id"]
+        ):
+            raise EvaluationError("Codex model-isolation prompt probe has malformed envelope ID")
+        if kind == "additional_tools":
+            if role != "developer" or set(item) - {"type", "role", "id", "tools"}:
+                raise EvaluationError("Codex model-isolation prompt probe has unsupported tools envelope")
+            _validate_prompt_tool_declarations(item.get("tools"), identities)
+            entries.append({"type": kind, "role": role, "tools": item["tools"]})
+        elif kind == "message":
+            if set(item) - {"type", "role", "content", "id", "internal_chat_message_metadata_passthrough"}:
+                raise EvaluationError("Codex model-isolation prompt probe has unsupported message fields")
+            if not _nonempty_prompt_text_content(item.get("content")):
+                raise EvaluationError("Codex model-isolation prompt probe has empty or malformed message content")
+            if role == "user":
+                content = item["content"]
+                if content not in (
+                    MODEL_PROMPT_ISOLATION_SENTINEL,
+                    [{"type": "input_text", "text": MODEL_PROMPT_ISOLATION_SENTINEL}],
+                ):
+                    texts = [content] if isinstance(content, str) else [part["text"] for part in content]
+                    if (
+                        environment_seen or len(texts) != 1
+                        or (isinstance(content, list) and set(content[0]) != {"type", "text"})
+                    ):
+                        raise EvaluationError("Codex model-isolation prompt probe has unbound user instructions")
+                    _validate_native_prompt_environment(texts[0])
+                    environment_seen = True
+            if role == "developer":
+                developer_messages += 1
+                entries.append({"type": kind, "role": role, "content": item["content"]})
+        else:
+            raise EvaluationError("Codex model-isolation prompt probe has unsupported item type")
+    if not developer_messages:
+        raise EvaluationError("Codex model-isolation prompt probe requires a real developer message")
+    return entries
+
+
 def model_isolation_prompt_receipt_sha256(
     prompt_input: list[dict[str, Any]],
 ) -> str:
-    """Hash stable isolation-relevant prompt semantics, excluding volatile message data."""
+    """Hash ordered developer messages and complete validated tool declarations."""
 
     receipt = {
         "probe_method": MODEL_PROMPT_ISOLATION_PROBE_METHOD,
         "schema": MODEL_PROMPT_ISOLATION_PROBE_SCHEMA,
-        "developer_content": [
-            item.get("content") for item in prompt_input if item.get("role") == "developer"
-        ],
+        "developer_entries": _validated_prompt_developer_entries(prompt_input),
         "sentinel": MODEL_PROMPT_ISOLATION_SENTINEL,
     }
+    try:
+        json.dumps(receipt, allow_nan=False)
+    except (ValueError, TypeError) as error:
+        raise EvaluationError("Codex model-isolation prompt probe has nonfinite or invalid JSON") from error
     return canonical_json_sha256(receipt)
 
 
@@ -3181,9 +3622,19 @@ def _codex_model_isolation_prompt_probe(
             "Cannot inspect the model-visible Codex prompt before evaluation: "
             + (result.stderr.strip() or "prompt inspection exited nonzero")
         )
+
+    def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON keys in prompt input")
+            value[key] = item
+        return value
+
     try:
-        prompt_input = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
+        prompt_input = json.loads(result.stdout, object_pairs_hook=unique_keys)
+        json.dumps(prompt_input, allow_nan=False)
+    except ValueError as error:
         raise EvaluationError(
             f"Codex returned invalid JSON for the model-isolation prompt probe: {error}"
         ) from error
@@ -3195,12 +3646,13 @@ def _codex_model_isolation_prompt_probe(
         raise EvaluationError(
             "Codex model-isolation prompt probe returned an unsupported prompt-list schema"
         )
-    roles = [item.get("role") for item in prompt_input]
-    developer_items = [item for item in prompt_input if item.get("role") == "developer"]
+    _validated_prompt_developer_entries(prompt_input)
     exact_sentinel_indexes: list[int] = []
     sentinel_mention_indexes: list[int] = []
+    sentinel_occurrences = 0
     for index, item in enumerate(prompt_input):
         serialized_item = json.dumps(item, ensure_ascii=True, sort_keys=True)
+        sentinel_occurrences += serialized_item.count(MODEL_PROMPT_ISOLATION_SENTINEL)
         if MODEL_PROMPT_ISOLATION_SENTINEL in serialized_item:
             sentinel_mention_indexes.append(index)
         content = item.get("content")
@@ -3210,12 +3662,8 @@ def _codex_model_isolation_prompt_probe(
         ):
             exact_sentinel_indexes.append(index)
     if (
-        "developer" not in roles
-        or any(
-            not _nonempty_prompt_text_content(item.get("content"))
-            for item in developer_items
-        )
-        or len(exact_sentinel_indexes) != 1
+        len(exact_sentinel_indexes) != 1
+        or sentinel_occurrences != 1
         or sentinel_mention_indexes != exact_sentinel_indexes
     ):
         raise EvaluationError(

@@ -52,7 +52,8 @@ Record at minimum:
 | `selected_skills` | List only skills required by the plan. |
 | `stages` | Record skill, inputs, outputs, status, blockers, and dependencies. |
 | `approval_gates` | Record gate type, artifact version, state, and decision evidence. |
-| `external_actions` | Default every action to unauthorized. |
+| `external_actions` | List planned or blocked actions separately from actual mutations; default every action to unauthorized. |
+| `publication_authorized` | Top-level boolean; default to `false` unless an explicit human record authorizes the exact publication. |
 
 ## Stage record
 

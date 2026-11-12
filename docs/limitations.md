@@ -10,6 +10,7 @@
 - Motion thresholds in synthetic evaluations are fixture-specific, not universal performance guarantees.
 - Synthetic examples demonstrate behavior and are not real-world evidence.
 - A generated standalone skill intentionally duplicates selected shared references; maintainers edit only canonical source.
-- Tag-based installation is verified as part of each release; later installer or platform changes may require retesting.
-- ZCode support covers the skill catalog and activation behavior; host-specific skills (`sites-release-manager` for OpenAI Sites, `pencil-safe-editor` for Pencil) still require the corresponding tools to be available in the client that runs them.
+- Version `0.2.0` is unreleased and requires fresh qualification. Earlier RC receipts do not establish the current candidate's quality or installation support.
+- Tag-based installation and actual plugin-ZIP installation must be verified for each release. Current candidate checks remain pending as described in the [installation validation status](installation.md#platform-validation-status); later installer or platform changes require retesting.
+- ZCode packaging includes the skill catalog and intended activation contract; candidate-specific end-to-end behavior has not yet been established. Host-specific skills (`sites-release-manager` for OpenAI Sites, `pencil-safe-editor` for Pencil) require the corresponding tools to be available in the client that runs them.
 - Original bundled material is licensed under MIT by Swetank Gawde. Third-party and private material remains excluded.

@@ -10,12 +10,18 @@ $rows = @($payload.rows)
 if ($header.Count -eq 0 -or $rows.Count -eq 0) {
     throw 'The CSV contract requires a nonempty header and at least one data row.'
 }
+$headerNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($name in $header) {
+    if ([string]::IsNullOrWhiteSpace($name) -or -not $headerNames.Add($name)) { throw 'CSV has an empty or duplicate header name.' }
+}
 foreach ($row in $rows) {
     if ($null -eq $row -or $row -isnot [System.Collections.IDictionary]) {
         throw 'Every row must be a JSON object keyed by the exact header names.'
     }
     $keys = @($row.Keys | ForEach-Object { [string]$_ })
-    if ($keys.Count -ne $header.Count -or (@($keys | Where-Object { $_ -notin $header }).Count -gt 0) -or (@($header | Where-Object { $_ -notin $keys }).Count -gt 0)) {
+    $rowNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($key in $keys) { [void]$rowNames.Add($key) }
+    if ($keys.Count -ne $header.Count -or -not $rowNames.SetEquals([string[]]$header)) {
         throw 'A row does not have exactly the required header fields.'
     }
 }
@@ -111,9 +117,16 @@ if ($parsedHeader.Count -ne $header.Count) { throw 'Serialized CSV header width 
 for ($i = 0; $i -lt $header.Count; $i++) {
     if ($parsedHeader[$i] -cne $header[$i]) { throw 'Serialized CSV header differs from the contract.' }
 }
+if ($records.Count -ne ($rows.Count + 1)) { throw 'Serialized CSV data-row count differs from the structured input.' }
 for ($rowIndex = 1; $rowIndex -lt $records.Count; $rowIndex++) {
     if ($records[$rowIndex].Count -ne $header.Count) {
         throw "CSV logical record $($rowIndex + 1) has $($records[$rowIndex].Count) fields; expected $($header.Count)."
+    }
+    for ($columnIndex = 0; $columnIndex -lt $header.Count; $columnIndex++) {
+        $expectedValue = [string]$rows[$rowIndex - 1][$header[$columnIndex]]
+        if (-not [string]::Equals($records[$rowIndex][$columnIndex], $expectedValue, [System.StringComparison]::Ordinal)) {
+            throw "Serialized CSV data field at record $($rowIndex + 1), column $($columnIndex + 1) differs from the structured input."
+        }
     }
 }
 Write-Output "Wrote and strictly validated $($records.Count - 1) CSV records at $fullOutputPath"

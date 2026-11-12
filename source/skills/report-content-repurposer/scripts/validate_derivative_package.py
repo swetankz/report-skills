@@ -90,24 +90,68 @@ def safe_file(root: Path, relative: str) -> Path:
     return resolved
 
 
+def checked_csv_lines(lines: Iterable[str]) -> Iterable[str]:
+    """Reject quoting/ending forms that csv.reader(strict=True) still accepts."""
+    state = "start"
+    for line in lines:
+        index = 0
+        while index < len(line):
+            char = line[index]
+            if state == "quoted":
+                if char == '"':
+                    if index + 1 < len(line) and line[index + 1] == '"':
+                        index += 2
+                        continue
+                    state = "closed"
+            elif char == '"':
+                if state != "start":
+                    raise csv.Error("unexpected quote in an unquoted field")
+                state = "quoted"
+            elif char == ",":
+                state = "start"
+            elif char in "\r\n":
+                if char == "\r":
+                    if index + 1 >= len(line) or line[index + 1] != "\n":
+                        raise csv.Error("bare carriage return outside a quoted field")
+                    index += 1
+                state = "start"
+            elif state == "closed":
+                raise csv.Error("characters after a closing quote")
+            else:
+                state = "unquoted"
+            index += 1
+        yield line
+    if state == "quoted":
+        raise csv.Error("CSV ended inside a quoted field")
+
+
+def read_csv_records(lines: Iterable[str]) -> tuple[list[str], list[list[str]]]:
+    """Validate logical records before projecting them onto header names."""
+    reader = csv.reader(checked_csv_lines(lines), strict=True)
+    headers = next(reader, [])
+    if not headers or any(not header.strip() for header in headers) or len({header.casefold() for header in headers}) != len(headers):
+        raise csv.Error("CSV has an empty or duplicate header name")
+    rows = []
+    for number, values in enumerate(reader, start=2):
+        if not any(value.strip() for value in values):
+            raise csv.Error(f"CSV row {number} is an empty or whitespace-only logical record")
+        if len(values) != len(headers):
+            raise csv.Error(f"CSV row {number} has the wrong field count")
+        rows.append(values)
+    return headers, rows
+
+
 def read_mapping(path: Path) -> tuple[list[dict[str, str]], list[str]]:
     errors: list[str] = []
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.DictReader(handle, strict=True)
-            headers = set(reader.fieldnames or [])
-            missing = sorted(REQUIRED_COLUMNS - headers)
+            headers, records = read_csv_records(handle)
+            missing = sorted(REQUIRED_COLUMNS - set(headers))
             if missing:
                 return [], [f"mapping CSV is missing required columns: {', '.join(missing)}"]
             rows: list[dict[str, str]] = []
-            for number, row in enumerate(reader, start=2):
-                if None in row:
-                    errors.append(f"mapping row {number} has extra fields")
-                    continue
-                normalized = {key: (value or "").strip() for key, value in row.items() if key is not None}
-                if any(value is None for value in row.values()):
-                    errors.append(f"mapping row {number} has missing fields")
-                rows.append(normalized)
+            for values in records:
+                rows.append(dict(zip(headers, (value.strip() for value in values))))
             return rows, errors
     except (OSError, UnicodeError, csv.Error) as exc:
         return [], [f"cannot read mapping CSV: {exc}"]
@@ -120,8 +164,8 @@ def read_deliverable(path: Path) -> tuple[dict[str, str], list[str]]:
     if suffix == ".csv":
         try:
             with path.open("r", encoding="utf-8-sig", newline="") as handle:
-                reader = csv.DictReader(handle, strict=True)
-                headers = set(reader.fieldnames or [])
+                fieldnames, records = read_csv_records(handle)
+                headers = set(fieldnames)
                 needed = {"statement_id", "output_text"}
                 if not needed <= headers:
                     return {}, [f"{path.name}: CSV deliverables need statement_id and output_text columns"]
@@ -134,10 +178,8 @@ def read_deliverable(path: Path) -> tuple[dict[str, str], list[str]]:
                         errors.append(f"{path.name}: frame CSV is missing production-plan columns: {', '.join(missing_frame_fields)}")
                 statements: dict[str, str] = {}
                 frame_types: dict[str, list[str]] = {}
-                for number, row in enumerate(reader, start=2):
-                    if None in row or any(value is None for value in row.values()):
-                        errors.append(f"{path.name}: CSV row {number} has the wrong field count")
-                        continue
+                for number, values in enumerate(records, start=2):
+                    row = dict(zip(fieldnames, values))
                     statement_id = (row.get("statement_id") or "").strip()
                     output_text = (row.get("output_text") or "").strip()
                     if not statement_id or not output_text:
@@ -512,8 +554,10 @@ def validate_source_contract(
     errors: list[str] = []
     try:
         root = root.resolve(strict=True)
-        inventory_file = safe_file(root, inventory_path.absolute().relative_to(root).as_posix())
-        support_file = safe_file(root, support_path.absolute().relative_to(root).as_posix())
+        inventory_resolved = inventory_path.resolve(strict=True)
+        support_resolved = support_path.resolve(strict=True)
+        inventory_file = safe_file(root, inventory_resolved.relative_to(root).as_posix())
+        support_file = safe_file(root, support_resolved.relative_to(root).as_posix())
         if source_report_path.is_symlink() or not source_report_path.is_file():
             return ["source report must be a regular non-link file"]
         source = source_report_path.read_text(encoding="utf-8-sig")
@@ -643,16 +687,10 @@ def validate_source_contract(
             errors.append(f"requested format {format_id} must bind exactly one copy-bearing output file")
     try:
         with support_file.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.reader(handle, strict=True)
-            headers = next(reader, [])
-            if any(not header.strip() for header in headers) or len({header.casefold() for header in headers}) != len(headers) or not SUPPORT_COLUMNS <= set(headers):
+            headers, records = read_csv_records(handle)
+            if not SUPPORT_COLUMNS <= set(headers):
                 return errors + ["statement support CSV is missing required columns"]
-            support_rows = []
-            for number, values in enumerate(reader, 2):
-                if len(values) != len(headers) or not any(value.strip() for value in values):
-                    errors.append(f"statement support row {number} has the wrong field count")
-                    continue
-                support_rows.append(dict(zip(headers, (value.strip() for value in values))))
+            support_rows = [dict(zip(headers, (value.strip() for value in values))) for values in records]
     except (OSError, UnicodeError, csv.Error) as exc:
         return errors + [f"cannot read statement support CSV: {exc}"]
     supports: dict[str, list[dict[str, str]]] = {}
