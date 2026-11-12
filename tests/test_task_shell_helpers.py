@@ -113,7 +113,9 @@ $script:helperCalls = 0
 function Get-LocalArtifactDigest {
     param([string]$path)
     $script:helperCalls += 1
-    (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+    [System.BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
 }
 $path = 'fixture/input.txt'
 $digest = """ + example + r"""

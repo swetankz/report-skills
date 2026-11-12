@@ -257,8 +257,10 @@ function Test-SourceContract {
     # This checks a reviewed inventory. Clause boundaries, classification,
     # entailment and materiality remain the declared manual review.
     try {
-        $inventoryRelative = [System.IO.Path]::GetRelativePath($Root, [System.IO.Path]::GetFullPath($InventoryPath))
-        $supportRelative = [System.IO.Path]::GetRelativePath($Root, [System.IO.Path]::GetFullPath($SupportPath))
+        $inventoryFull = (Resolve-Path -LiteralPath $InventoryPath).ProviderPath
+        $supportFull = (Resolve-Path -LiteralPath $SupportPath).ProviderPath
+        $inventoryRelative = [System.IO.Path]::GetRelativePath($Root, $inventoryFull)
+        $supportRelative = [System.IO.Path]::GetRelativePath($Root, $supportFull)
         $inventoryFile = Resolve-SafeArtifact -Root $Root -RelativePath $inventoryRelative
         $supportFile = Resolve-SafeArtifact -Root $Root -RelativePath $supportRelative
         $inventory = [System.IO.File]::ReadAllText($inventoryFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json -AsHashtable

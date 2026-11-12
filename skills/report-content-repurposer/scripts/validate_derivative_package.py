@@ -554,8 +554,10 @@ def validate_source_contract(
     errors: list[str] = []
     try:
         root = root.resolve(strict=True)
-        inventory_file = safe_file(root, inventory_path.absolute().relative_to(root).as_posix())
-        support_file = safe_file(root, support_path.absolute().relative_to(root).as_posix())
+        inventory_resolved = inventory_path.resolve(strict=True)
+        support_resolved = support_path.resolve(strict=True)
+        inventory_file = safe_file(root, inventory_resolved.relative_to(root).as_posix())
+        support_file = safe_file(root, support_resolved.relative_to(root).as_posix())
         if source_report_path.is_symlink() or not source_report_path.is_file():
             return ["source report must be a regular non-link file"]
         source = source_report_path.read_text(encoding="utf-8-sig")
