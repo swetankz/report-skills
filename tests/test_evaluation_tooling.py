@@ -3634,7 +3634,7 @@ class EvaluationToolingTests(unittest.TestCase):
             self.assertIn('service_tier="fast"', prompt_probe_command)
             self.assertFalse(prompt_probe_cwd.exists())
             environment = codex_runtime_environment(profile)
-            self.assertEqual(environment["CODEX_MANAGED_PACKAGE_ROOT"], str(native.parents[6]))
+            self.assertEqual(environment["CODEX_MANAGED_PACKAGE_ROOT"], str(native.parents[6].resolve()))
             self.assertEqual(environment["CODEX_MANAGED_BY_NPM"], "1")
             tampered = dict(profile, codex_managed_by="pnpm")
             with self.assertRaisesRegex(EvaluationError, "receipt does not match"):
@@ -4963,7 +4963,7 @@ class EvaluationToolingTests(unittest.TestCase):
                         "type": "item.completed",
                         "item": {
                             "type": "command_execution",
-                            "command": f"Get-Content '{root / 'secret.txt'}'",
+                            "command": f"Get-Content '{root.resolve() / 'secret.txt'}'",
                         },
                     }
                 )
