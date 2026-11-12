@@ -257,8 +257,8 @@ function Test-SourceContract {
     # This checks a reviewed inventory. Clause boundaries, classification,
     # entailment and materiality remain the declared manual review.
     try {
-        $inventoryFull = (Resolve-Path -LiteralPath $InventoryPath).ProviderPath
-        $supportFull = (Resolve-Path -LiteralPath $SupportPath).ProviderPath
+        $inventoryFull = [System.IO.Path]::GetFullPath($InventoryPath)
+        $supportFull = [System.IO.Path]::GetFullPath($SupportPath)
         $inventoryRelative = [System.IO.Path]::GetRelativePath($Root, $inventoryFull)
         $supportRelative = [System.IO.Path]::GetRelativePath($Root, $supportFull)
         $inventoryFile = Resolve-SafeArtifact -Root $Root -RelativePath $inventoryRelative
@@ -701,9 +701,9 @@ function Get-ProvenanceHashes {
 }
 
 try {
-    $root = (Resolve-Path -LiteralPath $ArtifactsRoot).Path
+    $root = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $ArtifactsRoot).ProviderPath)
     if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw 'artifacts root is not a directory' }
-    $mappingFull = (Resolve-Path -LiteralPath $Mapping).Path
+    $mappingFull = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Mapping).ProviderPath)
     $rootPrefix = $root.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
     if (-not $mappingFull.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'mapping CSV must be inside artifacts root' }
     $mappingItem = Get-Item -LiteralPath $mappingFull -Force

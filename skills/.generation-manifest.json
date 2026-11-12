@@ -161,7 +161,7 @@
     "source/skills/report-content-repurposer/SKILL.md": "d18674c62fe69e250ea10d8ecde9482c54f68ea0323827bb4bf87ffbe76a5853",
     "source/skills/report-content-repurposer/agents/openai.yaml": "c686ff694af8bb4d8b408ad27ee295ff2278fb5618e968f7b81c42d8703f54f7",
     "source/skills/report-content-repurposer/references/derivative-workflow.md": "2fcafc1700192f59cd70524da5f4cd43a034443ad5f3f8aa612b8a6204d88a51",
-    "source/skills/report-content-repurposer/scripts/validate_derivative_package.ps1": "ab30aa5cd0e033383dec849e4b0278db139f87752d06369ef90ba8fde4fe32a1",
+    "source/skills/report-content-repurposer/scripts/validate_derivative_package.ps1": "e54929e902c34e1fc6f8c9aeb4ea3ee9ae2bec34cf3b0017d0c565e3a341a532",
     "source/skills/report-content-repurposer/scripts/validate_derivative_package.py": "9b1866863d67f805b35f9a278d1709c8165121d56f08927dc982aa36b4f7fe89",
     "source/skills/report-skills/SKILL.md": "808230d1c17f573cc41d1ea67f8b771369e8d6d20e35c45625a0fbd7dfc8d20f",
     "source/skills/report-skills/agents/openai.yaml": "136b5c9572b38556c09c1d28a1fefed04cb28c18abe9c2254ed645688e40b0aa",
