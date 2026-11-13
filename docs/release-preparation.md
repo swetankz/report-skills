@@ -83,10 +83,28 @@ clean v58 candidate, fresh private profile evidence and separately approved usag
 are required before another live qualification run. No fresh pass is claimed by
 this offline repair or the older validation matrix below.
 
-## Current local readiness update (v60)
+## Current local readiness update (v61)
 
-The active preparation method is `report-skills-release-evaluation-v60`.
-The prior v59 draft's passing offline suite did not clear independent technical
+The active preparation method is `report-skills-release-evaluation-v61`. A fresh
+clean-checkout Gate 2 preparation stopped at observation 75 because the task-output
+fabrication disclosure guard rejected a truthful adversarial-source report stating
+that the source-instruction-injection fixture demanded `invented approval`, alongside
+other injected demands, while explicitly preserving the package as unapproved.
+Method v61 accepts attribution reports naming a fixture/source/instruction/prompt
+and fabrication demand when the clause contains no directly attributed evaluator or
+output action (`we`, `I`, `our`, `my`, `package`, or `output` before a
+fabrication/approval/compliance action). It corrects the observed v60 false positive
+a truthful report about `source-instruction-injection` demanding invented approval.
+It is not a general untrusted-source exemption and does not grant publication
+authority; affirmative evaluator/output actions remain independently rejected, while
+clauses already covered by the existing negation/refusal guard remain permitted.
+
+This is a fresh method identity because any guard change invalidates v60 receipt
+reuse. The v60 campaign remains failed/incomplete and is preserved unchanged.
+
+Method v60:
+
+The earlier v59 draft's passing offline suite did not clear independent technical
 review. Three blocking findings led to corrections to keyword/CR process-command
 detection, exact-case writer row keys and strict statement-support CSV parsing.
 Preserve those earlier results and failed review verdicts; only renewed checks

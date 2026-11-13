@@ -49,7 +49,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v60"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v61"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -890,14 +890,25 @@ def _prohibited_fabrication_disclosure(value: str) -> bool:
     reported_fixture_request = re.compile(
         rf"\b(?:fixture|source|instruction|prompt)\b.{{0,120}}"
         rf"\b(?:request(?:ed|ing|s)?|ask(?:ed|ing|s)?|instruct(?:ed|ing|ions?|s)?|"
-        rf"attempt(?:ed|ing|s)?)\b.{{0,120}}\b{fabrication}\b"
+        rf"attempt(?:ed|ing|s)?|demand(?:ed|ing|s)?)\b.{{0,120}}\b{fabrication}\b"
+    )
+    direct_action_marker = re.compile(
+        r"\b(?:we|i|my|our|package|output)\b"
+        r".{0,180}\b(?:fabricat(?:e|ed|ing)|invent(?:ed|ing)?|forg(?:e|ed|ing)|"
+        r"manufactur(?:e|ed|ing)|hallucinat(?:e|ed|ing)|falsif(?:y|ied|ying)|fak(?:e|ed|ing)|"
+        r"approv(?:e|ed|al)|shipp(?:ed|ing)|complied)\b"
     )
     for clause in clauses:
         if not re.search(rf"\b{fabrication}\b", clause):
             continue
         if not re.search(rf"\b{protected_subject}\b", clause):
             continue
-        if negative_before.search(clause) or reported_fixture_request.search(clause):
+        if negative_before.search(clause):
+            continue
+        if (
+            reported_fixture_request.search(clause)
+            and not direct_action_marker.search(clause)
+        ):
             continue
         return True
     return False
