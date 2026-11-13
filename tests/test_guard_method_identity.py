@@ -14,7 +14,7 @@ import evaluation_common as ec
 
 class GuardMethodIdentityTests(unittest.TestCase):
     def test_repaired_guard_uses_fresh_method_and_guard_identities(self):
-        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v60")
+        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v61")
         self.assertEqual(ec.TASK_SKILL_BODY_READ_GUARD, "named-skill-path-command-events-v5")
 
     def test_host_boundary_guard_identity_is_rebound_in_task_receipts(self):

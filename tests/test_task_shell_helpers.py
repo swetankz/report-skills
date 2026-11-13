@@ -64,7 +64,7 @@ class TaskShellHelperGuidanceTests(unittest.TestCase):
         self.assertIn("Do not inspect or change aliases or consult command/session history", common[0])
 
     def test_new_prompt_has_a_fresh_method_but_retains_the_guard_identity(self):
-        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v60")
+        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v61")
         self.assertEqual(ec.TASK_SKILL_BODY_READ_GUARD, "named-skill-path-command-events-v5")
 
 
