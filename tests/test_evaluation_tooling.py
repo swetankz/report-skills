@@ -2157,6 +2157,9 @@ class EvaluationToolingTests(unittest.TestCase):
                 "$parts[ (2 - 1)..(3 + 1) ]",
                 "$parts[ ($parts.Length - 6)..($parts.LENGTH - 1) ]",
                 "$parts[($parts.Count-6+1)..($parts.Count-1)]",
+                "$lines[0..([math]::Floor($lines.Length / 2) - 1)]",
+                "$lines[([math]::Floor($lines.Length / 2))..($lines.Length-1)]",
+                "$lines[([math]::Floor($parts.Count / 3)-1)..($parts.Count-1)]",
                 'powershell.exe -Command "$last = '
                 '$parts[($parts.Count-6)..($parts.Count-1)]"',
                 "pwsh.exe -Command '$last = "
@@ -2222,6 +2225,75 @@ class EvaluationToolingTests(unittest.TestCase):
                     self.assertTrue(
                         any(
                             "parent path traversal" in error
+                            for error in task_trace_isolation_validation_errors(
+                                transcript_path
+                            )
+                        )
+                    )
+
+    def test_task_trace_math_floor_slices_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            for command in (
+                "$lines[[math]::Floor($x)..($lines.Length-1)]",
+                "$lines[[math]::Floor($lines.Count ../secret.txt)..($lines.Length-1)]",
+                "$lines[[math]::Floor(Get-Content ../secret.txt)..(2)]",
+                "$lines[[math]::Floor((../secret.txt))..($lines.Length-1)]",
+                "$lines[[math]::Floor($lines.Length + $secret)..($lines.Length-1)]",
+                "$lines[[math]::Floor($lines.Length / 0.5)..($lines.Length-1)]",
+                "$lines[0..[math]::Floor($lines.Length / 2)..(2)]/../secret.txt",
+                "$lines[[math]::Ceiling($lines.Length / 2)..($lines.Length-1)]",
+                "$lines[0..[math]::Floor($lines.Length / 2)..(2)]../secret.txt",
+                "$lines[([math]::Floor($lines.Length / 2) .. $lines.Length)]; Get-Content ../secret.txt",
+            ):
+                with self.subTest(command=command):
+                    transcript_path.write_text(
+                        json.dumps(
+                            {
+                                "type": "item.completed",
+                                "item": {
+                                    "type": "command_execution",
+                                    "command": command,
+                                },
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(
+                        task_trace_isolation_validation_errors(transcript_path), command
+                    )
+
+    def test_task_trace_math_floor_slices_preserve_other_boundary_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            transcript_path = Path(directory) / "transcript.jsonl"
+            safe_slice = "$lines[[math]::Floor($lines.Length / 2)..($lines.Length-1)]"
+            for unsafe_command, violation in (
+                ("git status", "Git command"),
+                ("Get-Content .git/HEAD", "Git metadata path"),
+                (str(REPO_ROOT / "fixture" / "secret.txt"), "candidate repository path"),
+                ("Remove-Item Env:GIT_CEILING_DIRECTORIES", "Git isolation override"),
+                ("(Get-Location).Parent.GetFiles()", "computed parent path"),
+                ("Get-ChildItem Env:", "environment enumeration"),
+                ("Get-Command ruby", "host capability discovery"),
+            ):
+                with self.subTest(command=unsafe_command):
+                    transcript_path.write_text(
+                        json.dumps(
+                            {
+                                "type": "item.completed",
+                                "item": {
+                                    "type": "command_execution",
+                                    "command": f"{safe_slice}; {unsafe_command}",
+                                },
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(
+                        any(
+                            violation in error
                             for error in task_trace_isolation_validation_errors(
                                 transcript_path
                             )

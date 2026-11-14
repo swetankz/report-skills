@@ -56,7 +56,7 @@ class PhaseIDocumentationTests(unittest.TestCase):
         self.assertEqual((ROOT / "skills" / "visual-hygiene-auditor" / "references" / "three-pass-audit-protocol.md").read_text(encoding="utf-8"), protocol)
     def test_local_readiness_repairs_are_documented_without_a_release_pass(self):
         text = (ROOT / "docs" / "release-preparation.md").read_text(encoding="utf-8")
-        current = text.split("## Current local readiness update (v61)", 1)[1].split("## Blocker register", 1)[0]
+        current = text.split("## Current local readiness update (v62)", 1)[1].split("## Blocker register", 1)[0]
         for fragment in ("PowerShell `.ps1`", "exact Git blobs", "row count", "field-for-field", "strict UTF-8", "same decoded snapshot", "not universal CSV equivalence", "requires combined full-suite and independent-review gates"):
             self.assertIn(fragment, current)
 
