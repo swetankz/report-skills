@@ -340,7 +340,7 @@ class PromptToolDeclarationTests(unittest.TestCase):
 
 
     def test_typed_tools_protocol_uses_a_fresh_method_identity(self):
-        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v61")
+        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v62")
         self.assertEqual(ec.MODEL_PROMPT_ISOLATION_PROBE_METHOD, "debug-prompt-input-no-agent-context-v3")
         self.assertEqual(ec.MODEL_PROMPT_ISOLATION_PROBE_SCHEMA, "prompt-input-list-with-typed-tools-and-sentinel-v2")
         self.assertEqual(

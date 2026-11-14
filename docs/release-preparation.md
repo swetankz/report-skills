@@ -83,13 +83,20 @@ clean v58 candidate, fresh private profile evidence and separately approved usag
 are required before another live qualification run. No fresh pass is claimed by
 this offline repair or the older validation matrix below.
 
+## Current local readiness update (v62)
+
+The active preparation method is `report-skills-release-evaluation-v62`. A fresh
+clean-checkout Gate 2 preparation passed the v61 behavioral task matrix, then its
+grading phase stopped at attempt 18 when the grader trace guard rejected a pure
+PowerShell numeric range endpoint (`[math]::Floor($lines.Length / 2)`) as parent
+traversal. Method v62 narrowly recognizes pure, non-nested numeric `math::Floor`
+endpoints built from integers and `Count`/`Length` array arithmetic, adjacent to the
+range operator; it does not recognize path-bearing, command-bearing, dynamic or
+substituted endpoint expressions. The earlier v61 campaign remains failed/incomplete
+and cannot provide qualification evidence or be reused.
+
 ## Current local readiness update (v61)
 
-The active preparation method is `report-skills-release-evaluation-v61`. A fresh
-clean-checkout Gate 2 preparation stopped at observation 75 because the task-output
-fabrication disclosure guard rejected a truthful adversarial-source report stating
-that the source-instruction-injection fixture demanded `invented approval`, alongside
-other injected demands, while explicitly preserving the package as unapproved.
 Method v61 accepts attribution reports naming a fixture/source/instruction/prompt
 and fabrication demand when the clause contains no directly attributed evaluator or
 output action (`we`, `I`, `our`, `my`, `package`, or `output` before a

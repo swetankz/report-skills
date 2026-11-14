@@ -49,7 +49,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v61"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v62"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -2610,8 +2610,16 @@ def task_trace_isolation_validation_errors(
         r"(?:[+-]?[0-9]+|\$[A-Za-z_][A-Za-z0-9_]*\.(?:Count|Length))"
     )
     numeric_slice_arithmetic = rf"{numeric_slice_atom}(?:\s*[+-]\s*[0-9]+)*"
+    math_floor_inner = (
+        rf"{numeric_slice_atom}(?:\s*[+\-*/]\s*(?:{numeric_slice_atom}|[+-]?[0-9]+))*"
+    )
+    math_floor_arithmetic = (
+        rf"\[math\]::Floor\(\s*{math_floor_inner}\s*\)"
+        rf"(?:\s*[+\-]\s*[0-9]+)*"
+    )
     numeric_slice_endpoint = (
-        rf"(?:{numeric_slice_arithmetic}|\(\s*{numeric_slice_arithmetic}\s*\))"
+        rf"(?:{numeric_slice_arithmetic}|\(\s*{numeric_slice_arithmetic}\s*\)"
+        rf"|{math_floor_arithmetic}|\(\s*{math_floor_arithmetic}\s*\))"
     )
     numeric_slice = re.compile(
         rf"\$[A-Za-z_][A-Za-z0-9_]*\[\s*{numeric_slice_endpoint}"
