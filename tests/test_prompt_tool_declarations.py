@@ -5,6 +5,7 @@ import copy
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -82,6 +83,27 @@ class PromptToolDeclarationTests(unittest.TestCase):
 
     def probe(self, prompt):
         return self.probe_raw(json.dumps(prompt))
+
+    def test_prompt_probe_retries_windows_directory_cleanup_without_rerunning_probe(self):
+        lock = PermissionError("temporary sharing violation")
+        lock.winerror = 32
+        temporary_directory = tempfile.TemporaryDirectory()
+        cleanup = temporary_directory.cleanup
+
+        def cleanup_after_sharing_violation():
+            if cleanup_call.call_count == 1:
+                raise lock
+            cleanup()
+
+        with temporary_directory:
+            with (
+                patch.object(temporary_directory, "cleanup", side_effect=cleanup_after_sharing_violation) as cleanup_call,
+                patch.object(ec.tempfile, "TemporaryDirectory", return_value=temporary_directory),
+                patch.object(ec.time, "sleep"),
+            ):
+                self.probe(self.prompt)
+            self.assertEqual(cleanup_call.call_count, 2)
+            self.assertFalse(Path(temporary_directory.name).exists())
 
     def test_prompt_probe_accepts_typed_tools_with_a_real_developer_message(self):
         prompt = self.prompt
@@ -340,7 +362,7 @@ class PromptToolDeclarationTests(unittest.TestCase):
 
 
     def test_typed_tools_protocol_uses_a_fresh_method_identity(self):
-        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v62")
+        self.assertEqual(ec.EVALUATION_METHOD_VERSION, "report-skills-release-evaluation-v63")
         self.assertEqual(ec.MODEL_PROMPT_ISOLATION_PROBE_METHOD, "debug-prompt-input-no-agent-context-v3")
         self.assertEqual(ec.MODEL_PROMPT_ISOLATION_PROBE_SCHEMA, "prompt-input-list-with-typed-tools-and-sentinel-v2")
         self.assertEqual(

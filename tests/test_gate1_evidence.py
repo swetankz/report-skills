@@ -49,6 +49,7 @@ from gate1_contract import (  # noqa: E402
 from validate_gate1_evidence import (  # noqa: E402
     _identity_errors,
     gate1_grade_validation_errors,
+    gate1_task_no_retry_validation_errors,
     validate_gate1_master_and_summary,
     validate_gate1_trigger_evidence,
 )
@@ -68,7 +69,7 @@ class Gate1EvidenceTests(unittest.TestCase):
         self.assertEqual(self.plan["reasoning_effort"], "ultra")
         self.assertEqual(
             self.plan["evaluation_method_version"],
-            "report-skills-release-evaluation-v62",
+            "report-skills-release-evaluation-v63",
         )
         self.assertEqual(
             validate_gate1_plan(
@@ -144,6 +145,20 @@ class Gate1EvidenceTests(unittest.TestCase):
             self.assertEqual(task["case_id"], GATE1_BEHAVIORAL_CASE_IDS[index])
             self.assertEqual(task["run_id"], grader["run_id"])
             self.assertEqual(task["evidence_root"], grader["evidence_root"])
+            self.assertIs(type(task["capacity_retry_limit"]), int)
+            self.assertEqual(task["capacity_retry_limit"], 0)
+
+    def test_gate1_task_rejects_missing_limit_and_capacity_retry_evidence(self) -> None:
+        clean = {"capacity_retry_limit": 0, "retry_attempts": []}
+        self.assertEqual(gate1_task_no_retry_validation_errors(clean, "task"), [])
+        for limit in (None, False, True, 1, 2, "0"):
+            with self.subTest(limit=limit):
+                mutated = {**clean, "capacity_retry_limit": limit}
+                self.assertTrue(gate1_task_no_retry_validation_errors(mutated, "task"))
+        for attempts in (None, [{"retry_scheduled": False}], [{"retry_scheduled": True}]):
+            with self.subTest(attempts=attempts):
+                mutated = {**clean, "retry_attempts": attempts}
+                self.assertTrue(gate1_task_no_retry_validation_errors(mutated, "task"))
 
     def test_gate1_orchestrator_stops_after_first_nonperfect_grade(self) -> None:
         profile = {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"}
@@ -227,6 +242,11 @@ class Gate1EvidenceTests(unittest.TestCase):
                     SYNTHETIC_PROFILE_ANCHOR_SHA256,
                 )
         script_names = [Path(command[1]).name for command in commands]
+        for command in commands:
+            if Path(command[1]).name == "run_behavioral_benchmark.py":
+                self.assertEqual(command.count("--no-capacity-retries"), 1)
+            else:
+                self.assertNotIn("--no-capacity-retries", command)
         self.assertEqual(
             script_names,
             ["run_trigger_evals.py"]
@@ -373,6 +393,17 @@ class Gate1EvidenceTests(unittest.TestCase):
             )
             self.assertTrue(
                 any("document or evidence hashes do not match" in issue for issue in mutated)
+            )
+            master["calls"][15]["capacity_retry_limit"] = False
+            master_path.write_text(
+                json.dumps(master, indent=2) + "\n", encoding="utf-8"
+            )
+            mutated_limit, *_ = validate_gate1_master_and_summary(
+                self.plan, gate1_root, repository
+            )
+            self.assertIn(
+                "master-plan:task capacity_retry_limit must be integer zero",
+                mutated_limit,
             )
 
     def test_trigger_observation_plan_dry_run_is_exact_mixed_repetition(self) -> None:

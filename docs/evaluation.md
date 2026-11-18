@@ -4,7 +4,7 @@ Report Skills uses two complementary evaluation layers. Offline checks protect t
 
 ## Current preparation status
 
-The active method is `report-skills-release-evaluation-v62`. This candidate is in offline preparation for stable `v0.2.0`; no fresh Gate 1 or Gate 2 pass is claimed. The historical method descriptions below explain retained controls, not reusable qualification evidence. The source repository's `docs/release-preparation.md` records scope, reconciliation decisions, blockers, and completed offline checks.
+The active method is `report-skills-release-evaluation-v63`. For Pre-release 2, the Gate 1 plan caps each behavioral task at one launch, even if the model reports a capacity error. The task receipts record a zero retry limit and the Gate 1 validator requires no recorded retries. Gate 2 keeps its existing capacity retry policy. The model-free prompt probe can briefly retry directory cleanup after a Windows sharing violation without repeating the probe. The source repository's `docs/release-preparation.md` records the earlier stable release preparation.
 
 Method v56 carries forward the v51 controls and adds explicit staged-input inspection boundaries to grader and blind-comparator prompts. It also recognizes one complete fixture-local PowerShell filename inventory that excludes skill and agent instruction files as metadata inspection, not a skill-body read. Content reads, compound commands, dynamic roots, ambiguous syntax, and all independent trace guards remain fail-closed. The candidate synchronizes bundled templates and examples with the existing skill contracts. Release thresholds, model settings, coverage, deadlines, and capacity-only retry limits are unchanged.
 
@@ -24,7 +24,7 @@ Method v62 reuses the v61 false-positive correction and additionally recognizes 
 
 Method v61 narrowly permits affirmative fixture/source/instruction/prompt attribution reports that would otherwise match the fabrication-disclosure guard when no directly attributed evaluator or output action appears in the same clause (`we`, `I`, `our`, `my`, `package`, or `output` before a fabrication/approval/compliance action). It corrects a false-positive rejection of a truthful report that the `source-instruction-injection` fixture demanded invented approval. It remains a bounded lexical recognizer, not a general semantic judgment about the report; direct or evaluator/output-attributed affirmative fabrication disclosures remain rejected, while clauses already matched by the existing negation/refusal guard remain permitted.
 
-New evidence must bind one clean v62 candidate and a freshly captured private execution profile. Prior method receipts remain diagnostics. Replaying saved command strings is an offline regression check, not a fresh model observation, qualification pass or permission to resume/splice a stopped campaign. Campaign-specific awake controls, attempt histories, and invocation budgets from unpublished branches are not adopted or authorized by this preparation work.
+New evidence must bind one clean v63 candidate and a freshly captured private execution profile. Prior method receipts remain diagnostics. Replaying saved command strings is an offline regression check, not a fresh model observation, qualification pass or permission to resume/splice a stopped campaign. Campaign-specific awake controls, attempt histories, and invocation budgets from unpublished branches are not adopted or authorized by this preparation work.
 
 ## Evaluation assets
 

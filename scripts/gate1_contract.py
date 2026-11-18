@@ -315,6 +315,7 @@ def gate1_master_call_plan(
                 "ordinal": len(calls) + 1,
                 "call_id": f"task:{row['run_id']}",
                 "stage": "behavioral_task",
+                "capacity_retry_limit": 0,
                 **common,
             }
         )

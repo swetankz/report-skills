@@ -142,6 +142,7 @@ def run_gate1_model_sequence(
             python,
             str((REPO_ROOT / "scripts" / "run_behavioral_benchmark.py").resolve()),
             "--execute",
+            "--no-capacity-retries",
             "--suite",
             str(DEFAULT_SUITE.resolve()),
             "--thresholds",

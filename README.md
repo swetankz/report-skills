@@ -49,7 +49,7 @@ Repository CI validates evaluation contracts and expands benchmark plans without
 
 The canonical repository is [swetankz/report-skills](https://github.com/swetankz/report-skills). Install from the [latest published GitHub release](https://github.com/swetankz/report-skills/releases) rather than the moving `main` development branch.
 
-Use a published stable release for normal installation when one is available. GitHub pre-releases are opt-in candidates for evaluation and do not establish final qualification. The current `0.2.0` metadata identifies the intended stable version, not a published or qualified release. See the [installation guide](docs/installation.md) for the documented paths and their validation status.
+Use a published stable release for normal installation. The `0.2.0-rc.2` metadata identifies Pre-release 2, an opt-in candidate for evaluation ahead of stable `0.2.0`. See the [installation guide](docs/installation.md) for the documented paths and their validation status.
 
 ### ZCode
 

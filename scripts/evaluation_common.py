@@ -49,7 +49,7 @@ CANONICAL_TRIGGER_TIMEOUT_SECONDS = 600
 TRIGGER_FAIL_FAST_ON_INCORRECT_METHOD = (
     "first-semantically-incorrect-observation-v1"
 )
-EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v62"
+EVALUATION_METHOD_VERSION = "report-skills-release-evaluation-v63"
 REPOSITORY_STATE_PROBE_POLICY = "blank-git-error-retry-three-attempts-v1"
 CODEX_INVOCATION_MODE = "resolved-native-implementation-v1"
 CODEX_TIMEOUT_TERMINATION_MODE = "process-tree-force-v1"
@@ -3622,9 +3622,8 @@ def _codex_model_isolation_prompt_probe(
             MODEL_PROMPT_ISOLATION_SENTINEL,
         ]
     )
-    with tempfile.TemporaryDirectory(
-        prefix="report-skills-prompt-probe-"
-    ) as probe_directory:
+    probe_directory = tempfile.TemporaryDirectory(prefix="report-skills-prompt-probe-")
+    try:
         result = subprocess.run(
             command,
             capture_output=True,
@@ -3634,8 +3633,19 @@ def _codex_model_isolation_prompt_probe(
             check=False,
             timeout=60,
             env=environment,
-            cwd=probe_directory,
+            cwd=probe_directory.name,
         )
+    finally:
+        # Windows can briefly hold the directory after the diagnostic exits.
+        # Retry cleanup only. Never rerun the diagnostic or a model call here.
+        for retry_delay in (0.1, 0.3, 0.7, 1.5, None):
+            try:
+                probe_directory.cleanup()
+                break
+            except PermissionError as error:
+                if getattr(error, "winerror", None) != 32 or retry_delay is None:
+                    raise
+                time.sleep(retry_delay)
     if result.returncode != 0:
         raise EvaluationError(
             "Cannot inspect the model-visible Codex prompt before evaluation: "
@@ -5018,7 +5028,14 @@ def behavioral_task_retry_receipt_validation_errors(
         errors.append(f"{label} has an invalid last-attempt timeout receipt")
 
     attempts = receipt.get("retry_attempts")
-    max_attempts = len(TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS) + 1
+    retry_limit = len(TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS)
+    if "capacity_retry_limit" in receipt:
+        declared_limit = receipt["capacity_retry_limit"]
+        if type(declared_limit) is not int or declared_limit != 0:
+            errors.append(f"{label} has an invalid explicit capacity-retry limit")
+        else:
+            retry_limit = 0
+    max_attempts = retry_limit + 1
     if not isinstance(attempts, list) or len(attempts) > max_attempts:
         return errors + [f"{label} has an invalid transient-capacity retry ledger"]
 
@@ -5107,7 +5124,7 @@ def behavioral_task_retry_receipt_validation_errors(
         retry_delay = attempt.get("retry_delay_seconds")
         if retry_scheduled:
             if (
-                index > len(TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS)
+                index > retry_limit
                 or not workspace_unchanged
                 or not task_output_absent
                 or retry_delay

@@ -169,6 +169,20 @@ def gate1_behavioral_plan_rows_raw(
     return [row for row in rows if row.get("case_id") == case_id]
 
 
+def gate1_task_no_retry_validation_errors(
+    receipt: dict[str, Any], label: str
+) -> list[str]:
+    """A passing Gate 1 task must be a single, successful native invocation."""
+
+    errors: list[str] = []
+    if type(receipt.get("capacity_retry_limit")) is not int or receipt["capacity_retry_limit"] != 0:
+        errors.append(f"{label}:capacity retry limit must explicitly be integer zero")
+    # The generic ledger records capacity failures only, not successful calls.
+    if receipt.get("retry_attempts") != []:
+        errors.append(f"{label}:Gate 1 cannot contain capacity failures or retries")
+    return errors
+
+
 def validate_gate1_behavioral_case_evidence(
     plan: dict[str, Any],
     suite_run_dir: Path,
@@ -200,6 +214,7 @@ def validate_gate1_behavioral_case_evidence(
         "pair_count": 1,
         "timeout_seconds": CANONICAL_BEHAVIORAL_TIMEOUT_SECONDS,
         "configurations": ["with_skill"],
+        "capacity_retry_limit": 0,
         "baseline_contamination_risk": [],
         "skill_hashes": expected["skill_hashes"],
         "workspace_input_hashes": expected["workspace_input_hashes"],
@@ -219,6 +234,8 @@ def validate_gate1_behavioral_case_evidence(
     for key, value in expected_plan_values.items():
         if run_plan.get(key) != value:
             issues.append(f"run-plan:{key} does not match the exact Gate 1 contract")
+    if type(run_plan.get("capacity_retry_limit")) is not int:
+        issues.append("run-plan:capacity_retry_limit must be integer zero")
     if not _same_path(run_plan.get("suite"), DEFAULT_SUITE):
         issues.append("run-plan:suite is not the canonical benchmark suite")
     if not _same_path(
@@ -262,6 +279,7 @@ def validate_gate1_behavioral_case_evidence(
         issues.append("behavioral:task inventory is not the exact one-case Gate 1 plan")
     for record in records:
         run_id = str(record.get("run_id"))
+        issues.extend(gate1_task_no_retry_validation_errors(record, f"task {run_id}"))
         issues.extend(_identity_errors(record, profile, repository, f"task {run_id}"))
         issues.extend(
             f"task {run_id}:{error}"
@@ -640,6 +658,13 @@ def validate_gate1_master_and_summary(
     )
     if master != expected_master:
         issues.append("master-plan:document does not match the exact 25-call contract")
+    calls = master.get("calls")
+    if isinstance(calls, list):
+        for call in calls:
+            if isinstance(call, dict) and call.get("stage") == "behavioral_task":
+                limit = call.get("capacity_retry_limit")
+                if type(limit) is not int or limit != 0:
+                    issues.append("master-plan:task capacity_retry_limit must be integer zero")
     if profile.get("model") != GATE1_MODEL:
         issues.append("master-plan:model is not gpt-6.1-sol")
     if profile.get("reasoning_effort") != GATE1_REASONING_EFFORT:

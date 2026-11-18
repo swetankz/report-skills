@@ -676,6 +676,8 @@ def run_one(
     timeout: int,
     storage_id: str,
     expected_workspace_inputs: dict[str, str | None],
+    *,
+    no_capacity_retries: bool = False,
 ) -> dict[str, Any]:
     require_unchanged_repository(repo_receipt)
     run_dir = suite_run_dir / "runs" / storage_id
@@ -731,9 +733,11 @@ def run_one(
         task_start_wall_clock = time.time()
         retry_attempts: list[dict[str, Any]] = []
         attempt_token_usage: list[dict[str, int | None]] = []
-        for attempt_index in range(
-            len(TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS) + 1
-        ):
+        capacity_retry_limit = (
+            0 if no_capacity_retries
+            else len(TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS)
+        )
+        for attempt_index in range(capacity_retry_limit + 1):
             elapsed_before_attempt = max(
                 time.monotonic() - task_start_monotonic,
                 time.time() - task_start_wall_clock,
@@ -761,9 +765,7 @@ def run_one(
             task_output_absent = (
                 safe_regular_file_sha256(staged_output_path) is None
             )
-            has_retry_budget = attempt_index < len(
-                TASK_TRANSIENT_CAPACITY_RETRY_BACKOFF_SECONDS
-            )
+            has_retry_budget = attempt_index < capacity_retry_limit
             retry_scheduled = capacity_retry_is_safe(
                 result,
                 workspace_unchanged=workspace_unchanged,
@@ -896,6 +898,8 @@ def run_one(
         "skill_loader_diagnostics": skill_loader_diagnostics(result.stderr),
         "task_evidence": task_evidence,
     }
+    if no_capacity_retries:
+        metadata["capacity_retry_limit"] = 0
     write_json(run_dir / "run_metadata.json", metadata)
     return metadata
 
@@ -913,6 +917,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Print the run plan without invoking Codex (default)")
     parser.add_argument("--show-plan", action="store_true", help="Include every observation in dry-run JSON")
     parser.add_argument("--execute", action="store_true", help="Deliberately launch the planned Codex runs")
+    parser.add_argument("--no-capacity-retries", action="store_true", help="Permit exactly one native invocation per task; required for Gate 1")
     parser.add_argument("--profile-anchor", type=Path, help="Pinned private execution-profile anchor; required with --execute")
     parser.add_argument("--profile-anchor-sha256", help="Expected SHA-256 of the profile anchor; required with --execute")
     parser.add_argument("--codex-command", help="Codex CLI executable name or path")
@@ -1010,6 +1015,8 @@ def main() -> int:
             },
             "execution_profile": {"model": args.model, "reasoning_effort": args.reasoning_effort},
         }
+        if args.no_capacity_retries:
+            plan_document["capacity_retry_limit"] = 0
         if not args.execute:
             printable = dict(plan_document)
             if args.show_plan:
@@ -1084,6 +1091,7 @@ def main() -> int:
                         else None
                     ),
                 },
+                no_capacity_retries=args.no_capacity_retries,
             )
             completed.append(metadata)
             if metadata.get("validation_errors"):
